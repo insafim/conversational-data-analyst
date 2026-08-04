@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Environment — never commit real credentials; .env.example is the tracked template
+.env
+.env.local
+!.env.example
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+
+# Agent workspace (research notes and scratch state, not deliverables)
+.claude/work/
+.claude/agent-memory/
+
+# Runtime artifacts
+*.log
+eval/results/
