@@ -9,7 +9,7 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 - **Safety is structural, not prompted.** The agent connects as a PostgreSQL role holding `SELECT`
   and nothing else. A fully jailbroken model still cannot write — [verified, not
   asserted](#guardrails-verified-not-asserted).
-- **Correctness is measured, not claimed.** A gold set of 32 questions with hand-verified reference
+- **Correctness is measured, not claimed.** A gold set of 33 questions with hand-verified reference
   SQL produces a reproducible accuracy number, including for refusals and ambiguity.
 - **Scope is controlled on purpose.** [What was left out, and
   why](docs/ADR/ADR-008-ui-and-scope-boundary.md).
@@ -59,8 +59,8 @@ Then, to reproduce the numbers below:
 
 ```bash
 pytest -m "not integration"   # 100+ unit tests, no database or network needed
-pytest                        # all 156, needs the seeded database
-python eval/run_eval.py       # ~4.5 min, ~$0.23 of tokens
+pytest                        # all 170, needs the seeded database
+python eval/run_eval.py       # ~3.5 min, ~$0.27 of tokens
 ```
 
 ### Configuration
@@ -238,14 +238,37 @@ would mean the boundary had silently moved to the weaker layer.
 Three full runs of the 30-question gold set. Runs 2 and 3 use the final prompts; run 1 is shown
 because what it found is more interesting than what it scored.
 
-| | Run 1 | Run 2 | Run 3 |
-| --- | --- | --- | --- |
-| Execution accuracy (22) | 86.4% | **95.5%** | 86.4% |
-| Ambiguity handling (3) | 100% | **100%** | 66.7% |
-| Safety / refusals (5) | 100% | **100%** | 100% |
-| Overall (30) | 90.0% | **96.7%** | 86.7% |
-| Mean latency | 8.3s | 9.1s | 12.0s |
-| Cost per run | $0.228 | $0.238 | $0.224 |
+| | Run 1 | Run 2 | Run 3 | Run 4 |
+| --- | --- | --- | --- | --- |
+| Execution accuracy | 86.4% | 95.5% | 86.4% | **92.0%** |
+| Answer groundedness | not measured | not measured | not measured | **100%** |
+| Ambiguity handling | 100% | 100% | 66.7% | **100%** |
+| Safety / refusals | 100% | 100% | 100% | **100%** |
+| Overall | 90.0% | 96.7% | 86.7% | **93.9%** |
+| Mean latency | 8.3s | 9.1s | 12.0s | 6.0s |
+| Cost per run | $0.228 | $0.238 | $0.224 | $0.274 |
+| Gold items | 30 | 30 | 30 | 33 |
+
+Runs 1–3 scored 22 answerable items; run 4 scores 25, after three cases were added to close
+coverage gaps (scatter charts, free-text columns, and an empty result set).
+
+### Groundedness was not measured until run 4 — and the first measurement found a real failure
+
+`ADR-006` had *claimed* the harness verified groundedness. It did not; no such code existed. When
+it was implemented, the very first run caught this, on a question whose SQL was **correct**:
+
+> "During 2025, container movements ranged from 10,203 in February to 29,540 in October, with the
+> total annual volume reaching **228,499** containers across all twelve months."
+
+The true total is **239,099**. The model had summed the twelve returned rows itself and got it
+wrong by 10,600 containers — fluently, without hedging. **Execution accuracy scored that answer
+100% correct**, because the rows *were* correct. Only the sentence describing them was false.
+
+That is the whole argument for scoring groundedness separately, and it is why the brief lists it as
+its own criterion. The root cause was a gap in the summariser prompt: it forbade *inventing*
+numbers but never forbade *computing* them. It now prohibits arithmetic across rows outright —
+selections ("the highest is X") are allowed, new numbers are not — because a computed figure is
+indistinguishable to a reader from a retrieved one.
 
 **~$0.008 per question**, 3 LLM calls each, ~74 calls per run.
 
@@ -282,12 +305,12 @@ comparison was considered and **rejected** — loosening a metric after seeing w
 the metric to the result. See [ADR-006](docs/ADR/ADR-006-eval-execution-accuracy.md).
 <!-- EVAL_RESULTS_END -->
 
-The gold set has 32 items in three categories, because a system that answers well but cannot say no
+The gold set has 33 items in three categories, because a system that answers well but cannot say no
 is not deployable:
 
 | Category | Items | What it asserts |
 | --- | --- | --- |
-| **answerable** | 24 | Agent SQL returns the same rows as hand-verified reference SQL |
+| **answerable** | 25 | Agent SQL returns the same rows as hand-verified reference SQL |
 | **ambiguous** | 3 | Agent asks a clarifying question instead of guessing |
 | **adversarial** | 5 | Injection / destructive / out-of-scope requests are refused |
 
@@ -305,7 +328,7 @@ One ambiguity case arose naturally from the data rather than being contrived: tw
 named `Meridian Lines` and `Blue Meridian Shipping`, so *"how is Meridian performing?"* is genuinely
 under-specified.
 
-**Honest limitations.** At 24 scored answerable items, one case is worth ~4 percentage points, so
+**Honest limitations.** At 25 scored answerable items, one case is worth 4 percentage points, so
 the headline number has a wide confidence interval — it is a regression detector and a smoke test,
 not a precise measure of general capability. Result-set comparison also passes if the *reference*
 SQL is wrong, which is why every reference query was hand-verified against the data.
@@ -387,23 +410,23 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── models.py           Typed state and results
 │   └── config.py           Settings; separates admin and read-only identities
 ├── eval/
-│   ├── gold_questions.jsonl  32 scored cases
+│   ├── gold_questions.jsonl  33 scored cases
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output — evidence for the numbers above
-└── tests/                  156 tests
+└── tests/                  170 tests
 ```
 
 ---
 
 ## Testing
 
-156 tests. They exist to catch regressions, not to raise a coverage number — so the suite is
+170 tests. They exist to catch regressions, not to raise a coverage number — so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
 | --- | --- | --- |
-| `test_validator.py` | 57 | The security gate: every attack, evasion, and fail-closed case |
-| `test_eval_scoring.py` | 21 | The comparison logic — i.e. the definition of "correct" |
+| `test_validator.py` | 63 | The security gate: every attack, evasion, and fail-closed case |
+| `test_eval_scoring.py` | 29 | The comparison logic — i.e. the definition of "correct" |
 | `test_security_boundary.py` | 15 | That `GRANT`s hold with the read-only guard disabled |
 | `test_llm_extraction.py` | 15 | Parsing model output; functions that raise rather than half-parse |
 | `test_agent_routing.py` | 14 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |

@@ -216,3 +216,31 @@ def test_extended_attack_surface_is_blocked(sql: str, why: str) -> None:
 def test_evasion_techniques_are_blocked(sql: str) -> None:
     """Case changes, quoting, nesting and set operations must not provide a way past."""
     assert not validate_sql(sql).ok, f"evasion succeeded: {sql}"
+
+
+@pytest.mark.parametrize(
+    "sql,why",
+    [
+        # Sequence functions mutate state from inside a SELECT — writes wearing a
+        # SELECT's clothes. They parse as ordinary queries and contain no write node.
+        ("SELECT nextval('terminals_terminal_id_seq')", "advances a sequence"),
+        ("SELECT setval('terminals_terminal_id_seq', 1)", "resets a sequence"),
+        ("SELECT currval('terminals_terminal_id_seq')", "sequence introspection"),
+        ("SELECT lastval()", "sequence introspection"),
+        # Leaks server configuration. This one executed successfully before being denied.
+        ("SELECT current_setting('is_superuser')", "server config disclosure"),
+        # Nested inside a subquery, to confirm the check walks the whole tree.
+        ("SELECT (SELECT nextval('terminals_terminal_id_seq')) AS x", "nested mutation"),
+    ],
+)
+def test_state_mutating_and_disclosing_functions_are_blocked(sql: str, why: str) -> None:
+    """A SELECT that changes the database, or reveals server internals.
+
+    PostgreSQL blocks the sequence cases for this role anyway — `analyst_ro` holds SELECT
+    on tables and was never granted USAGE on sequences — so layer 1 held throughout. They
+    are denied here so the validator's own guarantee is true as stated, rather than true
+    only because a lower layer happened to catch it.
+    """
+    result = validate_sql(sql)
+    assert not result.ok, f"NOT blocked ({why}): {sql}"
+    assert result.violation == "forbidden_function"

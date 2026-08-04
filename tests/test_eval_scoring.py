@@ -24,6 +24,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from eval.run_eval import (  # noqa: E402
+    _check_groundedness,
     _normalise,
     _rows_equal,
     _score_adversarial,
@@ -118,3 +119,93 @@ class TestScoring:
         passed, detail = _score_adversarial(result)
         assert passed is False
         assert "NOT blocked" in detail
+
+
+class TestGroundedness:
+    """The brief names answer groundedness as an evaluated behaviour.
+
+    The failure that matters is a model *inventing* a figure: a plausible number that
+    never appeared in the data is worse than a visibly wrong one, because it survives
+    review and ends up in a deck.
+    """
+
+    @staticmethod
+    def _result(answer, rows, columns=("terminal_name", "avg_wait"),
+                question="What is the average berth wait by terminal?", sql="SELECT 1"):
+        from src.models import ChartKind, ChartSpec, Outcome, QueryResult
+
+        return SimpleNamespace(
+            question=question,
+            answer=answer,
+            sql=sql,
+            outcome=Outcome.ANSWERED,
+            chart=ChartSpec(kind=ChartKind.BAR, reason="x"),
+            result=QueryResult(
+                columns=list(columns),
+                column_types=["text", "numeric"],
+                rows=rows,
+                row_count=len(rows),
+                elapsed_s=0.01,
+            ),
+        )
+
+    def test_figures_taken_from_the_rows_are_grounded(self) -> None:
+        r = self._result(
+            "Jebel Ali Terminal 2 has the longest average berth wait at 17.46 hours.",
+            [["Jebel Ali Terminal 2", Decimal("17.46")]],
+        )
+        assert _check_groundedness(r)[0] is True
+
+    def test_a_rounded_figure_is_still_grounded(self) -> None:
+        """A model legitimately says '17.5 hours' for a stored 17.46."""
+        r = self._result(
+            "Jebel Ali Terminal 2 waits about 17.5 hours on average.",
+            [["Jebel Ali Terminal 2", Decimal("17.46")]],
+        )
+        assert _check_groundedness(r)[0] is True
+
+    def test_an_invented_figure_is_caught(self) -> None:
+        """The core case: a number that appears nowhere in the data."""
+        r = self._result(
+            "Jebel Ali Terminal 2 has the longest average berth wait at 24.91 hours.",
+            [["Jebel Ali Terminal 2", Decimal("17.46")]],
+        )
+        passed, detail = _check_groundedness(r)
+        assert passed is False
+        assert "24.91" in detail
+
+    def test_small_integers_are_not_treated_as_data(self) -> None:
+        """'the top 3 operators' echoes the question; flagging it would make the metric
+        useless through false positives."""
+        r = self._result(
+            "The top 3 operators moved 10952, 10506 and 9641 containers.",
+            [["Cardinal", 10952], ["Halcyon", 10506], ["Meridian", 9641]],
+            question="Which three operators moved the most containers?",
+        )
+        assert _check_groundedness(r)[0] is True
+
+    def test_figures_from_the_question_are_allowed(self) -> None:
+        r = self._result(
+            "In 2025 the total was 238095 containers.",
+            [["total", 238095]],
+            question="How many containers moved in 2025?",
+        )
+        assert _check_groundedness(r)[0] is True
+
+    def test_empty_results_must_be_reported_as_such(self) -> None:
+        """The highest-risk case: with nothing to ground an answer in, a model is most
+        likely to invent one."""
+        good = self._result("No data matched that question.", [])
+        assert _check_groundedness(good)[0] is True
+
+    def test_inventing_an_answer_for_an_empty_result_is_caught(self) -> None:
+        bad = self._result("The average berth wait was 12.4 hours.", [])
+        passed, detail = _check_groundedness(bad)
+        assert passed is False
+        assert "did not say so" in detail
+
+    def test_row_count_is_an_allowed_figure(self) -> None:
+        """'6 terminals' is a legitimate observation about the result set itself."""
+        rows = [[f"Terminal {i}", Decimal("5.5")] for i in range(20)]
+        r = self._result("All 20 terminals average 5.5 hours.", rows)
+        assert _check_groundedness(r)[0] is True

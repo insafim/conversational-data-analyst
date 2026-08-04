@@ -66,7 +66,7 @@ The three properties it is actually built around, each answering a problem above
 
 | Property | How it is achieved | Where it is proven |
 | --- | --- | --- |
-| **Correctness is measured** | Gold set of 32 questions with hand-verified reference SQL; result-set comparison | [§12](#12-evaluation), `eval/` |
+| **Correctness is measured** | Gold set of 33 questions with hand-verified reference SQL; result-set comparison | [§12](#12-evaluation), `eval/` |
 | **Safety is structural** | Read-only role beneath a code validator beneath prompt hardening | [§8](#8-the-security-model), `tests/test_security_boundary.py` |
 | **Ambiguity is answered with a question** | `classify` routes under-specified questions to a clarification exit | [§6](#6-the-agent-pipeline), scored in the gold set |
 
@@ -150,7 +150,7 @@ flowchart TB
     end
 
     subgraph Offline["Offline"]
-        EVAL["eval/run_eval.py<br/>32 gold questions"]
+        EVAL["eval/run_eval.py<br/>33 gold questions"]
     end
 
     UI --> GRAPH
@@ -665,13 +665,18 @@ brief assesses.
 ([ADR-006](ADR/ADR-006-eval-execution-accuracy.md)). It calls `src/agent.py` directly — no
 Streamlit — so it can run in CI.
 
-### The gold set: 32 items in three categories
+### The gold set: 33 items in three categories
 
 | Category | Items | What it asserts |
 | --- | --- | --- |
-| **answerable** | 24 | Agent SQL returns the same rows as hand-verified reference SQL |
+| **answerable** | 25 | Agent SQL returns the same rows as hand-verified reference SQL |
 | **ambiguous** | 3 | Agent asks a clarifying question instead of guessing |
 | **adversarial** | 5 | Injection / destructive / out-of-scope requests are refused |
+
+**Groundedness is scored separately, on every answered case**, because an answer can carry the
+right rows and still describe them with an invented figure. `_check_groundedness()` requires every
+number in the answer to appear in the returned rows (exactly or as a rounding), in the question, or
+in the SQL — and requires an empty result set to be reported as such rather than filled in.
 
 A system that answers well but cannot say no is not deployable, which is why the second and
 third categories exist at all.
@@ -688,13 +693,21 @@ so `numeric` vs `double precision`, and `date` vs midnight `timestamp`, compare 
 
 Three full runs. Runs 2 and 3 share identical code and prompts.
 
-| | Run 1 | Run 2 | Run 3 |
-| --- | --- | --- | --- |
-| Execution accuracy | 86.4% | **95.5%** | 86.4% |
-| Ambiguity handling | 100% | 100% | 66.7% |
-| Safety / refusals | 100% | 100% | 100% |
-| Mean latency | 8.3s | 9.1s | 12.0s |
-| Cost per run | $0.228 | $0.238 | $0.224 |
+| | Run 1 | Run 2 | Run 3 | Run 4 |
+| --- | --- | --- | --- | --- |
+| Execution accuracy | 86.4% | 95.5% | 86.4% | **92.0%** |
+| Answer groundedness | not measured | not measured | not measured | **100%** |
+| Ambiguity handling | 100% | 100% | 66.7% | **100%** |
+| Safety / refusals | 100% | 100% | 100% | **100%** |
+| Mean latency | 8.3s | 9.1s | 12.0s | 6.0s |
+| Cost per run | $0.228 | $0.238 | $0.224 | $0.274 |
+
+**The first groundedness measurement caught a real failure on a question whose SQL was correct.**
+The agent returned the right monthly rows, then wrote "the total annual volume reaching 228,499
+containers" — a figure it had computed itself, wrong by 10,600 (the true total is 239,099).
+Execution accuracy scored that answer 100% correct. The summariser prompt now forbids arithmetic
+across rows outright: a computed figure reads with exactly the authority of a retrieved one while
+being unverifiable.
 
 **The variance is the finding, not the maximum.** Runs 2 and 3 differ by nine points from
 nothing but re-running, at `temperature=0`. Two causes, which the harness originally conflated
@@ -813,10 +826,10 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── models.py               Typed state and results (pydantic)
 │   └── config.py               Settings; separates admin and read-only identities
 ├── eval/
-│   ├── gold_questions.jsonl    32 scored cases
+│   ├── gold_questions.jsonl    33 scored cases
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output — evidence for the README's numbers
-├── tests/                      156 tests
+├── tests/                      170 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Eight decision records
@@ -836,12 +849,12 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite — 156 tests
+### Test suite — 170 tests
 
 | File | Tests | Scope |
 | --- | --- | --- |
-| `test_validator.py` | 57 | The security gate: every attack, evasion and fail-closed case |
-| `test_eval_scoring.py` | 21 | Comparison and scoring logic — the definition of "correct" |
+| `test_validator.py` | 63 | The security gate: every attack, evasion and fail-closed case |
+| `test_eval_scoring.py` | 29 | Comparison and scoring logic — the definition of "correct" |
 | `test_security_boundary.py` | 15 | Integration: GRANTs hold with the read-only guard disabled |
 | `test_llm_extraction.py` | 15 | Parsing model output; total functions that raise rather than half-parse |
 | `test_agent_routing.py` | 14 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |

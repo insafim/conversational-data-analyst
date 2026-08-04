@@ -57,11 +57,33 @@ always producing output.
 
 ### Groundedness
 
-Groundedness is checked structurally rather than by another model: the summariser receives only the
-returned rows, and the harness asserts that numeric claims in the answer appear in the result set,
-and that empty results produce an explicit "no matching data" rather than an invented figure. This
-catches the failure that matters — inventing numbers — without importing a second model's judgement
-into the scoring.
+Groundedness is checked structurally rather than by another model. `_check_groundedness()` asserts
+that every figure in the answer appears in the returned rows (exactly, or as a rounding of one), in
+the question, or in the SQL — and that an empty result set produces an explicit "no matching data"
+rather than an invented figure. This catches the failure that matters, inventing numbers, without
+importing a second model's judgement into the scoring.
+
+**It is scored separately from execution accuracy, and the first run proved why.** Asked for monthly
+container volumes in 2025, the agent produced *correct SQL* returning *correct rows*, and then
+described them with:
+
+> "...with the total annual volume reaching **228,499** containers across all twelve months."
+
+The true total is **239,099**. The model had summed the twelve rows itself and got it wrong by
+10,600 containers — stated fluently, with no hedging, in an answer that execution accuracy scored
+**100% correct**. Comparing result sets cannot see this class of failure at all, because the result
+set was right.
+
+The root cause was a gap in the summariser prompt: it forbade inventing numbers but never forbade
+*computing* them. It now prohibits arithmetic across rows outright — selections from the rows
+("the highest is X") are permitted, new numbers are not. The reasoning is that a computed figure is
+indistinguishable to a reader from a retrieved one: it carries identical authority while being
+unverifiable, and in practice is often wrong.
+
+**Known limitation, stated rather than hidden.** A genuinely derived figure — "three times higher",
+"up 12%" — is not in the result set and will be reported as ungrounded. That is a false positive.
+It is tolerated because the alternative, permitting arithmetic, permits exactly the invented numbers
+this exists to catch. The metric is a *floor* on groundedness, not a precise measure of it.
 
 ## Alternatives considered
 

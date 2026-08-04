@@ -77,6 +77,21 @@ _FORBIDDEN_FUNCTIONS: frozenset[str] = frozenset({
     "pg_terminate_backend", "pg_cancel_backend", "pg_reload_conf",
     "query_to_xml", "xmlelement",
     "set_config", "pg_rotate_logfile",
+
+    # Sequence functions MUTATE STATE from inside a SELECT. `SELECT nextval('s')` and
+    # `SELECT setval('s', 1)` are writes wearing a SELECT's clothes: they parse as an
+    # ordinary query, contain no write node, and change the database.
+    #
+    # Found by probing rather than by reasoning. PostgreSQL already refuses them for this
+    # role — `analyst_ro` was granted SELECT on tables and never USAGE on sequences, so
+    # layer 1 held — but relying on that would leave the validator's own guarantee
+    # ("no statement that passes this can modify anything") false as written.
+    "nextval", "setval", "currval", "lastval",
+
+    # Leaks server configuration (`SELECT current_setting('is_superuser')` returns a
+    # value). Not data disclosure, but it is reconnaissance and no business question
+    # needs it. This one DID execute successfully before being denied here.
+    "current_setting",
 })
 
 # Schemas holding server internals or credentials. Business questions never need these;

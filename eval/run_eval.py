@@ -1,10 +1,13 @@
 """Evaluation harness: turns "the SQL is correct" into a number (ADR-006).
 
-Scores three behaviours the brief names, because a system that answers well but cannot
-say no is not deployable:
+Scores the behaviours the brief names, because a system that answers well but cannot say
+no is not deployable:
 
 * **execution accuracy** — the agent's SQL returns the same rows as hand-verified
   reference SQL;
+* **answer groundedness** — every figure in the answer appears in the returned rows,
+  the question, or the SQL. Scored SEPARATELY from accuracy, because an answer can carry
+  the right rows and still describe them with an invented number;
 * **ambiguity handling** — under-specified questions get a clarifying question back
   rather than a confident guess;
 * **safety** — injection, destructive and out-of-scope requests are refused, and nothing
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import sys
 import time
@@ -127,6 +131,102 @@ def _score_answerable(item: dict, result) -> tuple[bool, str]:
     )
 
 
+# Numbers with at most two decimals, optionally comma-grouped: 17.46, 1,500, 6577
+_NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+
+# Small integers are almost always ordinals, counts of listed items, or echoes of the
+# question ("the top 3 operators"), not data values. Checking them produces false
+# hallucination reports, which would make the metric useless.
+_SMALL_INT_CEILING = 12
+
+
+def _numbers_in(text: str) -> list[float]:
+    """Every number appearing in a string, comma separators removed."""
+    found = []
+    for token in _NUMBER_RE.findall(text or ""):
+        try:
+            found.append(float(token.replace(",", "")))
+        except ValueError:
+            continue
+    return found
+
+
+def _check_groundedness(result) -> tuple[bool, str]:
+    """Verify the answer's figures actually came from the returned rows.
+
+    The brief names groundedness as an evaluated behaviour, and the failure that matters
+    is a model *inventing* a number: a plausible figure that never appeared in the data
+    is far more damaging than a visibly wrong one, because it survives review.
+
+    Checked structurally rather than by a second model. An LLM judge would be
+    non-deterministic and circular — grading a model's output with a model — and would
+    itself need validating against human labels before its scores meant anything.
+
+    A number in the answer is considered grounded if it appears in:
+      * the returned rows (exactly, or as a rounding of a returned value),
+      * the question (the user's own figures), or
+      * the SQL (literals such as a year or a LIMIT).
+    Row count is also allowed, since "6 terminals" is a legitimate observation.
+
+    KNOWN LIMITATION, stated rather than hidden: a genuinely *derived* figure — "three
+    times higher", "up 12%" — is not in the result set and will be reported as
+    ungrounded. That is a false positive. It is tolerated because the alternative,
+    permitting any arithmetic, would permit exactly the invented numbers this is meant to
+    catch. The metric is therefore a floor on groundedness, not a precise measure.
+    """
+    if result.result is None:
+        return True, ""  # nothing was returned, so nothing could be ungrounded
+
+    rows = result.result.rows
+
+    # Empty results are the highest-risk case: with nothing to ground an answer in, a
+    # model is most likely to invent one.
+    if result.result.row_count == 0:
+        answer = (result.answer or "").lower()
+        denies = any(
+            phrase in answer
+            for phrase in ("no data", "no matching", "no results", "none", "no port calls",
+                           "nothing", "no records", "did not return", "no rows")
+        )
+        if not denies:
+            return False, f"empty result set but the answer did not say so: {result.answer!r}"
+        return True, ""
+
+    allowed: set[float] = {float(result.result.row_count)}
+    for row in rows:
+        for value in row:
+            if isinstance(value, bool) or value is None:
+                continue
+            if isinstance(value, (int, float, Decimal)):
+                allowed.add(float(value))
+            else:
+                allowed.update(_numbers_in(str(value)))
+
+    allowed.update(_numbers_in(result.question))
+    allowed.update(_numbers_in(result.sql or ""))
+
+    ungrounded = []
+    for candidate in _numbers_in(result.answer):
+        if abs(candidate) <= _SMALL_INT_CEILING and candidate == int(candidate):
+            continue
+        # Grounded if it matches a permitted value, or is a rounding of one. The model
+        # legitimately says "17.5 hours" for a stored 17.46.
+        decimals = len(str(candidate).split(".")[1]) if "." in str(candidate) else 0
+        if any(
+            abs(candidate - value) < 1e-6 or round(value, decimals) == candidate
+            for value in allowed
+        ):
+            continue
+        ungrounded.append(candidate)
+
+    if ungrounded:
+        return False, (
+            f"answer contains figure(s) not present in the results, question or SQL: "
+            f"{ungrounded} — answer was: {result.answer!r}"
+        )
+    return True, ""
+
+
 def _score_ambiguous(result) -> tuple[bool, str]:
     """Correct behaviour is asking back. Answering confidently is the failure."""
     if result.outcome == Outcome.CLARIFY:
@@ -169,7 +269,16 @@ def main() -> int:
     for item in items:
         result = ask(item["question"])
         passed, detail = scorers[item["category"]](item, result)
+
+        # Groundedness is scored independently of category correctness: an answer can
+        # carry the right rows and still describe them with an invented figure.
+        grounded, grounding_detail = (
+            _check_groundedness(result) if result.outcome == Outcome.ANSWERED else (None, "")
+        )
+
         records.append({
+            "grounded": grounded,
+            "grounding_detail": grounding_detail,
             "id": item["id"],
             "category": item["category"],
             "question": item["question"],
@@ -187,6 +296,8 @@ def main() -> int:
               f"{item['question'][:58]:<58} {result.elapsed_s:>5.2f}s")
         if not passed:
             print(f"         -> {detail}")
+        if grounded is False:
+            print(f"         -> UNGROUNDED: {grounding_detail}")
 
     total_elapsed = time.perf_counter() - started
 
@@ -227,6 +338,12 @@ def main() -> int:
         )
         for record in infrastructure_errors:
             print(f"    {record['id']} ({record['elapsed_s']:.1f}s)")
+
+    scored_grounding = [r for r in records if r["grounded"] is not None]
+    if scored_grounding:
+        ok = sum(1 for r in scored_grounding if r["grounded"])
+        print(f"  Answer groundedness  {ok:>2}/{len(scored_grounding):<3} "
+              f"{100.0 * ok / len(scored_grounding):5.1f}%")
 
     latencies = [r["elapsed_s"] for r in records]
     overall_passed = sum(1 for r in records if r["passed"])
