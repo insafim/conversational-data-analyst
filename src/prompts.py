@@ -82,12 +82,26 @@ Rules:
    real date type, which lets the application render a proper time axis.
 5. Always give computed columns a readable alias (avg_berth_wait_hours, not "avg").
    Aliases are shown directly to a non-technical user as chart labels.
+5b. Select ONLY the columns needed to answer the question — normally one label column
+   plus the measure(s). Extra descriptive columns push the result into a table where a
+   chart would have communicated better.
 6. Round averages and other fractional aggregates to 2 decimal places.
-7. When the question implies a ranking or "top N", include ORDER BY and LIMIT.
+7. Match the LIMIT to the question's grammar:
+   - A singular superlative ("WHICH terminal has the longest...", "the busiest crane")
+     asks for ONE row: ORDER BY ... LIMIT 1.
+   - An explicit count ("top 5", "three operators") uses that number.
+   - A per-group question ("...for each terminal", "...by operator") returns every
+     group: no LIMIT.
 8. Resolve relative dates against the data-coverage ranges given in the schema, NOT
    against today's date. This database holds a fixed historical window.
-9. Exclude cancelled port calls when the question is about operational performance,
-   unless the user explicitly asks about cancellations.
+9. Cancelled port calls: do NOT filter them out by default.
+   - Counting port calls ("how many port calls...") includes cancelled ones — a
+     cancelled call is still a call that was made, and filtering silently changes what
+     the number means.
+   - Duration metrics need no filter at all: berth_wait_hours, berth_ts and
+     departure_ts are NULL for cancelled calls, so AVG and SUM already ignore them.
+   - Only filter on status when the user asks about cancellations, or about work that
+     was actually completed.
 
 Respond with ONLY the SQL in a ```sql fenced block. No explanation.
 """

@@ -124,3 +124,35 @@ def test_decimal_columns_become_floats_for_plotting() -> None:
     ))
     assert frame["avg_wait"].dtype.kind == "f"
     assert frame["avg_wait"].iloc[0] == 17.46
+
+
+def test_descriptive_companion_column_still_charts() -> None:
+    """Models add descriptive columns unasked: `terminal_name, port_name, avg_wait`.
+
+    A strict "exactly one categorical" rule sends that to a table where a bar chart is
+    plainly right. Observed on the first live query. Tolerated only because the first
+    column uniquely labels each row.
+    """
+    spec = pick_chart(result(
+        ["terminal_name", "port_name", "avg_wait"], ["text", "text", "numeric"],
+        [["Jebel Ali Terminal 2", "Jebel Ali", Decimal("17.46")],
+         ["Felixstowe South", "Felixstowe", Decimal("5.94")]],
+    ))
+    assert spec.kind == ChartKind.BAR
+    assert spec.x == "terminal_name"
+
+
+def test_genuine_two_dimensional_breakdown_stays_a_table() -> None:
+    """The relaxation must not collapse a real dimension.
+
+    Here terminal_name repeats across move types, so a single-axis bar chart would
+    silently hide the second dimension. A table is the honest rendering.
+    """
+    spec = pick_chart(result(
+        ["terminal_name", "move_type", "containers"], ["text", "text", "int8"],
+        [["Rotterdam Delta Terminal", "load", 100],
+         ["Rotterdam Delta Terminal", "discharge", 120],
+         ["Felixstowe South", "load", 90],
+         ["Felixstowe South", "discharge", 80]],
+    ))
+    assert spec.kind == ChartKind.TABLE

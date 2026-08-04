@@ -25,4 +25,8 @@ htmlcov/
 
 # Runtime artifacts
 *.log
-eval/results/
+!eval/results/*.log
+
+# eval/results/ IS tracked on purpose: the README cites these numbers, and the raw
+# per-question output is the evidence for them. A reviewer should be able to check the
+# claim rather than take it on trust.

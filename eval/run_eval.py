@@ -188,6 +188,26 @@ def main() -> int:
         pct = 100.0 * passed / len(subset)
         print(f"  {label}  {passed:>2}/{len(subset):<3} {pct:5.1f}%")
 
+    # Infrastructure errors are reported separately from wrong answers.
+    #
+    # A provider timeout and an incorrect query are different failures with different
+    # owners: one is an availability problem, the other an accuracy problem. Merging
+    # them makes the accuracy figure move with network conditions, which was observed
+    # directly — one run lost two items to an SSL handshake timeout and scored nine
+    # points lower for reasons that had nothing to do with SQL.
+    #
+    # Note these are NOT excluded from the headline accuracy above. Doing so would let
+    # a genuinely broken run report a flattering number. They are surfaced alongside it
+    # so the reader can tell the two apart.
+    infrastructure_errors = [r for r in records if r["outcome"] == "error"]
+    if infrastructure_errors:
+        print(
+            f"\n  Of the failures, {len(infrastructure_errors)} were provider/infrastructure "
+            f"errors rather than incorrect answers:"
+        )
+        for record in infrastructure_errors:
+            print(f"    {record['id']} ({record['elapsed_s']:.1f}s)")
+
     latencies = [r["elapsed_s"] for r in records]
     overall_passed = sum(1 for r in records if r["passed"])
     print(f"\n  Overall              {overall_passed:>2}/{len(records):<3} "

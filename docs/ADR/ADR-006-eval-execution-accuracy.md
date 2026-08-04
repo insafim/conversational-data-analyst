@@ -81,6 +81,67 @@ re-run the suite after every prompt edit.
 measure a general capability rather than this system on this data. The interesting question is
 whether *this* agent answers *these* client questions correctly.
 
+## What the harness found, and what was done about it
+
+The first run scored **86.4%** execution accuracy. All three failures turned out to be defects in
+the *specification*, not in the model:
+
+- Two questions (`q14`, `q21`) failed because the SQL prompt said to "exclude cancelled port calls
+  when the question is about operational performance". That phrasing is vague, and the model
+  reasonably applied it to **counts** — which changes what "how many port calls" means. The rule was
+  rewritten to be explicit: counts include cancelled calls; duration metrics need no filter at all,
+  because those columns are already NULL for cancelled calls and `AVG` ignores them.
+- One question (`q05`) failed because the ranking rule did not distinguish a singular superlative
+  ("*which* operator waits longest") from a per-group question ("...for *each* operator"). The model
+  returned the whole ranking. The rule now maps question grammar to `LIMIT` explicitly.
+
+Re-running after those fixes gave **95.5%**. This is the harness doing its actual job: the failures
+were ambiguity in the instructions, and they were invisible until something scored them.
+
+### The remaining failure, and a deliberate decision not to fix it
+
+`q09` — "Which terminals are in the Netherlands?" — the agent returned `terminal_name, port_name`
+where the reference SQL selects `terminal_name` alone. The answer is factually correct and
+arguably more useful. Strict row comparison scores it as wrong.
+
+It would be easy to relax the comparison so that a superset of the required columns counts as a
+pass. **That was considered and rejected**, because loosening a metric *after* seeing what it fails
+is tuning the metric to the result. The number would go up and would mean less.
+
+So the strict comparison stands, 95.5% is reported rather than 100%, and this is recorded as a known
+limitation: the harness measures result-set equivalence, which is slightly stricter than "did the
+user get the right answer". That conservatism is the right direction for a correctness metric to
+err in.
+
+### Run-to-run variance is real, and was measured rather than assumed
+
+Three full runs were executed. Runs 2 and 3 share identical code and prompts and scored **95.5%**
+and **86.4%** execution accuracy respectively. That is a nine-point spread from nothing but
+re-running, at `temperature=0`.
+
+Two distinct causes, which the harness originally conflated:
+
+1. **Provider instability.** Two of run 3's failures were `error` outcomes taking 58s and 37s;
+   LiteLLM logged an SSL handshake timeout during that run. Those are availability events, not
+   incorrect SQL. Excluding them, run 3 scores 90.5% accuracy and 100% on ambiguity.
+2. **Genuine sampling variance.** Two answerable items flipped between runs. `temperature=0` reduces
+   variance; it does not eliminate it.
+
+The harness was changed to **report** infrastructure errors separately — but deliberately **not** to
+exclude them from the headline figure. A metric that silently drops its own failed requests would
+report a flattering number precisely when the system is least usable. Availability is part of
+whether a user got their answer.
+
+The consequence for how this system should be talked about: a single run of ~22 items cannot
+distinguish 86% from 95%, because one item is worth 4.5 points. The defensible claim is a range,
+with the acknowledgement that narrowing it requires more gold items and repeated runs — which is a
+genuine cost, not a footnote. **Reporting the best of three runs as though it were the score would
+be the easiest and most dishonest thing to do here.**
+
+Safety, by contrast, was 5/5 in every run — 15/15 attempts. That stability is not a property of the
+model; it is a property of enforcing the guarantee at a layer the model cannot reach
+([ADR-004](ADR-004-defence-in-depth-sql.md)).
+
 ## Honest limitations
 
 Stated here rather than discovered by a reviewer:
@@ -88,7 +149,8 @@ Stated here rather than discovered by a reviewer:
 - **The gold set is small.** At roughly 20–25 items, one case is worth 4–5 percentage points, so the
   headline number has a wide confidence interval. It is a regression detector and a smoke test, not
   a precise measurement of general capability. Reporting "90%" from 20 items without saying this
-  would be overclaiming.
+  would be overclaiming. This was subsequently confirmed empirically — see the variance section
+  above.
 - **Result-set comparison can pass a wrong query.** If the reference SQL is itself wrong, agreement
   is meaningless. Mitigated by hand-verifying every reference query against the data, but the
   reference set is a human artefact and inherits human error.

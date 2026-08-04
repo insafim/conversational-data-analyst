@@ -112,15 +112,36 @@ def pick_chart(result: QueryResult) -> ChartSpec:
             reason=f"'{temporal[0]}' is a time axis, so the trend renders as a line chart.",
         )
 
-    # Rule 4 — one category with few enough distinct values, plus a measure.
-    if len(categorical) == 1 and numeric:
-        distinct = len({row[columns.index(categorical[0])] for row in result.rows})
+    # Rule 4 — a label column plus a measure.
+    #
+    # The label is normally the only categorical column. But models routinely add a
+    # descriptive companion column — asked for average wait by terminal, they return
+    # `terminal_name, port_name, avg_wait` — which under a strict "exactly one
+    # categorical" test falls through to a table where a bar chart is plainly right.
+    # Observed on the very first live query, not anticipated.
+    #
+    # The relaxation is deliberately narrow: extra categorical columns are tolerated
+    # only when the FIRST one already identifies each row uniquely, i.e. it is a label
+    # and the others are attributes of it. If the first column repeats, the rows are a
+    # genuine multi-dimensional breakdown and a single-axis bar chart would silently
+    # collapse a dimension — so those still render as a table.
+    if categorical and numeric:
+        label = categorical[0]
+        distinct = len({row[columns.index(label)] for row in result.rows})
+        is_label_like = distinct == result.row_count
+        if len(categorical) > 1 and not is_label_like:
+            return ChartSpec(
+                kind=ChartKind.TABLE,
+                reason=(
+                    "Several category columns without a unique label, so this is a "
+                    "multi-dimensional breakdown and is shown as a table."
+                ),
+            )
         if distinct <= MAX_BAR_CATEGORIES:
             return ChartSpec(
-                kind=ChartKind.BAR, x=categorical[0], y=numeric,
+                kind=ChartKind.BAR, x=label, y=numeric,
                 reason=(
-                    f"One category ('{categorical[0]}') with {distinct} distinct "
-                    "values renders as bars."
+                    f"Category '{label}' with {distinct} distinct values renders as bars."
                 ),
             )
         return ChartSpec(
