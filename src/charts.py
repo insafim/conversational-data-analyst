@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
+from typing import NamedTuple
 
 import pandas as pd
 
@@ -75,21 +76,34 @@ def _looks_temporal(values: list) -> bool:
     return all(isinstance(v, str) and _ISO_DATE_LIKE.match(v) for v in seen)
 
 
-def pick_chart(result: QueryResult) -> ChartSpec:
-    """Choose a chart for a result set. Rules are applied in order; first match wins."""
-    columns, types = result.columns, result.column_types
+class ColumnRoles(NamedTuple):
+    """Columns grouped by the role they can play in a chart.
 
-    # Rule 1 — nothing to draw.
-    if result.row_count == 0:
-        return ChartSpec(
-            kind=ChartKind.NONE, reason="No rows returned, so there is nothing to chart."
-        )
+    Separating classification from rule selection keeps each rule a statement about
+    *shape* — "a time axis and a measure is a line chart" — rather than a mixture of
+    type-sniffing and charting policy.
+    """
 
+    temporal: list[str]
+    numeric: list[str]
+    categorical: list[str]
+
+
+def classify_columns(result: QueryResult) -> ColumnRoles:
+    """Assign each column a charting role from its declared PostgreSQL type.
+
+    Types come from the database rather than from inspecting values, with the single
+    documented exception of ISO-shaped text (see the module docstring). A column that is
+    neither temporal nor numeric is categorical by default, which is the safe fallback:
+    an unknown type becomes a label rather than a measure, so it can never be silently
+    plotted as a quantity.
+    """
     temporal: list[str] = []
     numeric: list[str] = []
     categorical: list[str] = []
-    for index, name in enumerate(columns):
-        col_type = types[index] if index < len(types) else "unknown"
+
+    for index, name in enumerate(result.columns):
+        col_type = result.column_types[index] if index < len(result.column_types) else "unknown"
         values = [row[index] for row in result.rows]
         if col_type in _TEMPORAL_TYPES or _looks_temporal(values):
             temporal.append(name)
@@ -98,8 +112,65 @@ def pick_chart(result: QueryResult) -> ChartSpec:
         else:
             categorical.append(name)
 
+    return ColumnRoles(temporal=temporal, numeric=numeric, categorical=categorical)
+
+
+def _bar_or_table(result: QueryResult, roles: ColumnRoles) -> ChartSpec:
+    """Rule 4: a label column plus a measure, or a table when that reading is unsafe.
+
+    The label is normally the only categorical column. But models routinely add a
+    descriptive companion column — asked for average wait by terminal, they return
+    `terminal_name, port_name, avg_wait` — which under a strict "exactly one categorical"
+    test falls through to a table where a bar chart is plainly right. Observed on the
+    very first live query, not anticipated.
+
+    The relaxation is deliberately narrow: extra categorical columns are tolerated only
+    when the FIRST one already identifies each row uniquely, i.e. it is a label and the
+    others are attributes of it. If the first column repeats, the rows are a genuine
+    multi-dimensional breakdown and a single-axis bar chart would silently collapse a
+    dimension — so those still render as a table.
+    """
+    label = roles.categorical[0]
+    distinct = len({row[result.columns.index(label)] for row in result.rows})
+    is_label_like = distinct == result.row_count
+
+    if len(roles.categorical) > 1 and not is_label_like:
+        return ChartSpec(
+            kind=ChartKind.TABLE,
+            reason=(
+                "Several category columns without a unique label, so this is a "
+                "multi-dimensional breakdown and is shown as a table."
+            ),
+        )
+
+    if distinct <= MAX_BAR_CATEGORIES:
+        return ChartSpec(
+            kind=ChartKind.BAR, x=label, y=roles.numeric,
+            reason=f"Category '{label}' with {distinct} distinct values renders as bars.",
+        )
+
+    return ChartSpec(
+        kind=ChartKind.TABLE,
+        reason=(
+            f"'{label}' has {distinct} distinct values, above the "
+            f"{MAX_BAR_CATEGORIES}-category limit for a readable bar chart."
+        ),
+    )
+
+
+def pick_chart(result: QueryResult) -> ChartSpec:
+    """Choose a chart for a result set. Rules are applied in order; first match wins."""
+    # Rule 1 — nothing to draw.
+    if result.row_count == 0:
+        return ChartSpec(
+            kind=ChartKind.NONE, reason="No rows returned, so there is nothing to chart."
+        )
+
+    roles = classify_columns(result)
+    temporal, numeric, categorical = roles
+
     # Rule 2 — one row, one number: a headline figure needs no axes.
-    if result.row_count == 1 and len(numeric) == 1 and len(columns) == 1:
+    if result.row_count == 1 and len(numeric) == 1 and len(result.columns) == 1:
         return ChartSpec(
             kind=ChartKind.METRIC, y=[numeric[0]],
             reason="Single row with a single numeric value renders as a metric.",
@@ -112,45 +183,10 @@ def pick_chart(result: QueryResult) -> ChartSpec:
             reason=f"'{temporal[0]}' is a time axis, so the trend renders as a line chart.",
         )
 
-    # Rule 4 — a label column plus a measure.
-    #
-    # The label is normally the only categorical column. But models routinely add a
-    # descriptive companion column — asked for average wait by terminal, they return
-    # `terminal_name, port_name, avg_wait` — which under a strict "exactly one
-    # categorical" test falls through to a table where a bar chart is plainly right.
-    # Observed on the very first live query, not anticipated.
-    #
-    # The relaxation is deliberately narrow: extra categorical columns are tolerated
-    # only when the FIRST one already identifies each row uniquely, i.e. it is a label
-    # and the others are attributes of it. If the first column repeats, the rows are a
-    # genuine multi-dimensional breakdown and a single-axis bar chart would silently
-    # collapse a dimension — so those still render as a table.
+    # Rule 4 — a label column plus a measure. See `_bar_or_table` for why extra
+    # categorical columns are sometimes tolerated and sometimes force a table.
     if categorical and numeric:
-        label = categorical[0]
-        distinct = len({row[columns.index(label)] for row in result.rows})
-        is_label_like = distinct == result.row_count
-        if len(categorical) > 1 and not is_label_like:
-            return ChartSpec(
-                kind=ChartKind.TABLE,
-                reason=(
-                    "Several category columns without a unique label, so this is a "
-                    "multi-dimensional breakdown and is shown as a table."
-                ),
-            )
-        if distinct <= MAX_BAR_CATEGORIES:
-            return ChartSpec(
-                kind=ChartKind.BAR, x=label, y=numeric,
-                reason=(
-                    f"Category '{label}' with {distinct} distinct values renders as bars."
-                ),
-            )
-        return ChartSpec(
-            kind=ChartKind.TABLE,
-            reason=(
-                f"'{categorical[0]}' has {distinct} distinct values, above the "
-                f"{MAX_BAR_CATEGORIES}-category limit for a readable bar chart."
-            ),
-        )
+        return _bar_or_table(result, roles)
 
     # Rule 5 — two measures and nothing to group by: a relationship, so scatter.
     if len(numeric) == 2 and not categorical and not temporal:

@@ -27,7 +27,8 @@ import json
 import statistics
 import sys
 import time
-from datetime import date, datetime, time as time_of_day
+from datetime import date, datetime
+from datetime import time as time_of_day
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
