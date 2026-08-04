@@ -164,3 +164,55 @@ def test_rejection_always_carries_a_user_safe_reason() -> None:
         result = validate_sql(sql)
         assert not result.ok
         assert result.reason and len(result.reason) > 10, f"unhelpful reason for: {sql}"
+
+
+# ---------------------------------------------------------------------------------
+# Extended attack surface. These were probed against the validator directly rather
+# than assumed; each line is a construct that is either structurally a SELECT or that
+# sqlglot handles unusually, so none of them are obvious from reading the code.
+# ---------------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "sql,why",
+    [
+        ("DO $$ BEGIN PERFORM 1; END $$", "anonymous code block can execute arbitrary PL/pgSQL"),
+        ("CALL some_procedure()", "procedures can modify data"),
+        ("REFRESH MATERIALIZED VIEW mv", "writes to a view's backing store"),
+        ("LOCK TABLE terminals IN ACCESS EXCLUSIVE MODE", "blocks every other session"),
+        ("NOTIFY channel, 'msg'", "side effect outside the query"),
+        ("VACUUM FULL terminals", "rewrites the table and takes an exclusive lock"),
+        ("CREATE TEMP TABLE t AS SELECT 1", "TEMP still creates an object"),
+        ("BEGIN; DROP TABLE terminals; COMMIT", "transaction wrapper around a drop"),
+        # EXPLAIN ANALYZE genuinely EXECUTES the statement it is given, so it is a
+        # complete bypass of any check that only inspects the outer statement type.
+        ("EXPLAIN ANALYZE DELETE FROM port_calls", "EXPLAIN ANALYZE executes its argument"),
+        ("EXPLAIN ANALYZE SELECT 1", "denied as a class; EXPLAIN is not a business question"),
+        # Locking clauses are structurally SELECTs but take row locks.
+        ("SELECT * FROM terminals FOR UPDATE", "takes row locks"),
+        ("SELECT * FROM terminals FOR SHARE", "takes row locks"),
+    ],
+)
+def test_extended_attack_surface_is_blocked(sql: str, why: str) -> None:
+    assert not validate_sql(sql).ok, f"NOT blocked ({why}): {sql}"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # Case variation must not defeat the function and schema deny-lists.
+        "SELECT PG_SLEEP(10)",
+        "SELECT Pg_Read_File('/etc/passwd')",
+        "SELECT * FROM PG_CATALOG.PG_AUTHID",
+        # Quoted identifiers are a classic way past naive string matching.
+        'SELECT * FROM "pg_catalog"."pg_authid"',
+        # Hostile branch hidden in a UNION, or nested a level deeper than expected.
+        "SELECT 1 UNION SELECT count(*) FROM pg_catalog.pg_authid",
+        "SELECT (SELECT count(*) FROM pg_catalog.pg_authid) AS x",
+        "SELECT * FROM terminals WHERE terminal_id IN (SELECT 1 FROM pg_authid)",
+        # DML nested two CTE levels down, not just one.
+        "WITH a AS (WITH b AS (DELETE FROM port_calls RETURNING *) SELECT * FROM b) "
+        "SELECT * FROM a",
+    ],
+)
+def test_evasion_techniques_are_blocked(sql: str) -> None:
+    """Case changes, quoting, nesting and set operations must not provide a way past."""
+    assert not validate_sql(sql).ok, f"evasion succeeded: {sql}"

@@ -146,6 +146,17 @@ def validate_sql(sql: str) -> ValidationResult:
     if tree.args.get("into"):
         return _fail("select_into", "SELECT ... INTO creates a table and is not permitted.")
 
+    # 5b. Locking clauses (FOR UPDATE / FOR SHARE). These are structurally SELECTs, but
+    #     they take row locks and can block other sessions — an availability problem
+    #     rather than an integrity one, and never something an analytics question needs.
+    #     PostgreSQL would also refuse them for this role, but failing here gives a clear
+    #     reason instead of a raw permission error.
+    if tree.args.get("locks"):
+        return _fail(
+            "locking_clause",
+            "Locking clauses such as FOR UPDATE are not permitted on an analytics query.",
+        )
+
     # 6. Denied functions. sqlglot maps functions it knows to dedicated node types and
     #    everything else to `Anonymous`; the calls we care about here (pg_sleep,
     #    pg_read_file, dblink, ...) are not standard SQL, so they arrive as Anonymous.
