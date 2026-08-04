@@ -126,6 +126,28 @@ simply switch it off**, and it does — verified. Every write attempt then fails
 **on permissions specifically**. If a write is ever stopped only by the transaction flag, that test
 fails — because it would mean the boundary had silently moved to the bypassable layer.
 
+### The extended probe, and the one that surprised me
+
+Twenty further constructs were run against the validator rather than reasoned about. Eighteen were
+already blocked, including quoted identifiers (`"pg_catalog"."pg_authid"`), case variation
+(`PG_SLEEP`, `PG_CATALOG`), DML nested two CTE levels deep, a hostile branch inside a `UNION`, and
+`DO $$ ... $$` blocks.
+
+The one worth naming is **`EXPLAIN ANALYZE DELETE FROM port_calls`**. `EXPLAIN ANALYZE` does not
+describe a plan — it *executes* the statement in order to measure it. Any validator that inspects
+only the outer statement type sees "EXPLAIN" and waves it through, and the DELETE runs. It is
+blocked here because sqlglot parses it to a `Command` node and `Command` is on the forbidden list —
+i.e. it was caught by the deny-Command catch-all rather than by anyone anticipating it. That is the
+argument for allow-list shape stated as a concrete outcome rather than a principle.
+
+Two constructs were allowed and one was subsequently blocked:
+
+- `SELECT ... FOR UPDATE` — structurally a SELECT, but it takes row locks. Now rejected
+  (`locking_clause`); no analytics question needs it.
+- `SELECT * FROM generate_series(1, 1000000000)` — still allowed, deliberately. `generate_series`
+  is legitimate, and the defence is the one already designed for expensive reads: verified blocked
+  by the statement timeout after 5.1s. Blocking the function outright would be over-broad.
+
 One finding worth recording, because it would mislead anyone testing this casually: **`GRANT INSERT
 ON terminals TO analyst_ro`, issued by `analyst_ro` itself, does not raise an error.** PostgreSQL
 emits a warning and reports success. No privilege is actually granted — `has_table_privilege`
