@@ -23,6 +23,15 @@ htmlcov/
 .claude/work/
 .claude/agent-memory/
 
+# Internal working documents — kept locally, not shipped to the reviewer.
+# The assignment brief, the build plan, the demo script and the slide skeleton are
+# preparation material, not part of the delivered solution. The ADRs in docs/ADR/
+# ARE part of the deliverable and stay tracked.
+docs/problem.md
+docs/repo.md
+docs/video.md
+docs/presentation.md
+
 # Runtime artifacts
 *.log
 !eval/results/*.log

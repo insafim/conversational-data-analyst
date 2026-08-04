@@ -27,6 +27,7 @@ import json
 import statistics
 import sys
 import time
+from datetime import date, datetime, time as time_of_day
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -49,14 +50,32 @@ def _normalise(value: Any) -> Any:
 
     Decimal and float are unified because `AVG(x)` returns numeric while
     `SUM(x)/COUNT(x)` returns double precision — the same answer in different types.
-    Dates are compared as ISO strings so `date` and `timestamp` at midnight match.
+
+    Dates and midnight timestamps are unified for the same reason, and it matters more
+    than it looks. `date_trunc('month', ts)` returns a **timestamp**;
+    `date_trunc('month', ts)::date` returns a **date**. Both denote the same month, and
+    both are correct answers to a monthly time-series question. Comparing them by raw
+    ISO string makes `2025-01-01` and `2025-01-01T00:00:00` unequal, so a correct answer
+    is scored as wrong purely because of a cast the question never specified.
+
+    `bool` is checked before the numeric branch on purpose: in Python `True == 1`, so a
+    bool falling through would make TRUE compare equal to 1.
     """
+    if isinstance(value, bool):
+        return value
     if isinstance(value, Decimal):
         value = float(value)
     if isinstance(value, float):
         return round(value, 6)
-    if isinstance(value, bool):
-        return value
+    # datetime is a subclass of date, so it must be tested first.
+    if isinstance(value, datetime):
+        return (
+            value.date().isoformat()
+            if value.time() == time_of_day.min
+            else value.isoformat()[:19]
+        )
+    if isinstance(value, date):
+        return value.isoformat()
     if hasattr(value, "isoformat"):
         return value.isoformat()[:19]
     return value
