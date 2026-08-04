@@ -14,6 +14,11 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 - **Scope is controlled on purpose.** [What was left out, and
   why](docs/ADR/ADR-008-ui-and-scope-boundary.md).
 
+> **Going deeper:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the full architecture
+> reference — pipeline internals, the security model, schema handling, the evaluation
+> method, and a consolidated table of design decisions with their trade-offs.
+> [docs/ADR/](docs/ADR/) holds the eight decision records behind them.
+
 ---
 
 ## Quickstart

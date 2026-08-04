@@ -32,6 +32,10 @@ docs/repo.md
 docs/video.md
 docs/presentation.md
 
+# Reference material from an unrelated project, used only as a formatting example.
+# It describes a different client's system and must never ship in this deliverable.
+sample/
+
 # Runtime artifacts
 *.log
 !eval/results/*.log
