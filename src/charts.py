@@ -61,7 +61,9 @@ def to_dataframe(result: QueryResult) -> pd.DataFrame:
     frame = pd.DataFrame(result.rows, columns=result.columns)
     for column in frame.columns:
         if frame[column].map(lambda v: isinstance(v, Decimal)).any():
-            frame[column] = frame[column].map(lambda v: float(v) if isinstance(v, Decimal) else v)
+            frame[column] = frame[column].map(
+                lambda v: float(v) if isinstance(v, Decimal) else v
+            )
     return frame
 
 
@@ -79,7 +81,9 @@ def pick_chart(result: QueryResult) -> ChartSpec:
 
     # Rule 1 — nothing to draw.
     if result.row_count == 0:
-        return ChartSpec(kind=ChartKind.NONE, reason="No rows returned, so there is nothing to chart.")
+        return ChartSpec(
+            kind=ChartKind.NONE, reason="No rows returned, so there is nothing to chart."
+        )
 
     temporal: list[str] = []
     numeric: list[str] = []
@@ -114,7 +118,10 @@ def pick_chart(result: QueryResult) -> ChartSpec:
         if distinct <= MAX_BAR_CATEGORIES:
             return ChartSpec(
                 kind=ChartKind.BAR, x=categorical[0], y=numeric,
-                reason=f"One category ('{categorical[0]}') with {distinct} values renders as bars.",
+                reason=(
+                    f"One category ('{categorical[0]}') with {distinct} distinct "
+                    "values renders as bars."
+                ),
             )
         return ChartSpec(
             kind=ChartKind.TABLE,

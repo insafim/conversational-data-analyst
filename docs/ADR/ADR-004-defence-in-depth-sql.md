@@ -23,7 +23,7 @@ the order in which they must hold:
 | # | Layer | Mechanism | Can the model affect it? |
 | - | --- | --- | --- |
 | 1 | **Database permissions** | `analyst_ro` role: `CONNECT`, `USAGE`, `SELECT` only. No `INSERT`/`UPDATE`/`DELETE`/DDL grants anywhere. | **No.** Enforced by PostgreSQL, below the process. |
-| 2 | **Code validator** | `validator.py`: sqlglot parse, exactly one statement, statement type must be `SELECT`, deny-list (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `GRANT`, `COPY`, `pg_catalog`). Runs before execution, on the only edge into `execute`. | **No.** Pure code with no LLM call in it. |
+| 2 | **Code validator** | `validator.py`: sqlglot parse, exactly one statement, root must be `Select`/`SetOperation`/`Subquery`, **and no write node anywhere in the parse tree at any depth**, plus denied functions and system schemas. Runs before execution, on the only edge into `execute`. | **No.** Pure code with no LLM call in it. |
 | 3 | **Classification / prompt** | `classify` routes `out_of_scope` questions to `refuse` before any SQL is generated. | **Yes** — and therefore it is not counted as a security control. |
 
 The grant that makes layer 1 real, in `db/02_roles.sql`:
@@ -76,6 +76,63 @@ If `classify` catches it, it is refused at layer 3. If a rephrasing slips past, 
 the deny-list at layer 2. If the validator itself had a bug, `analyst_ro` has no `DROP` privilege at
 layer 1. Three independent failures would be required, and the third is enforced by PostgreSQL.
 
+### Why layer 2 walks the parse tree instead of checking the statement type
+
+This started as the obvious design — "parse it, check the statement type is `SELECT`, deny a list of
+dangerous keywords" — and testing showed that design is broken. The counter-example:
+
+```sql
+WITH d AS (DELETE FROM port_calls RETURNING *) SELECT count(*) FROM d
+```
+
+Its top-level node type is **`Select`**. A validator that checks the statement type passes this
+query, and it empties the table. `sqlparse.get_type()` reports `SELECT` for it too, which is why
+`sqlparse` — the intuitive choice, and the one this project originally planned to use — is
+unsuitable as a security boundary here.
+
+The fix is to walk the entire parse tree and reject a write node at any depth. Verified against
+sqlglot before the validator was written, and now pinned by regression tests covering `DELETE`,
+`INSERT` and `UPDATE` hidden inside CTEs.
+
+The same exercise reclassified the layer from a deny-list to an **allow-list**: only a single
+read-only SELECT-family statement is permitted, so an unfamiliar construct is denied by default
+rather than admitted by omission. That inverts the failure direction — the layer now errs toward
+blocking legitimate queries rather than admitting hostile ones. It did exactly that once during the
+build, rejecting `SELECT ... INTERSECT SELECT ...` because the allowed-root list named `Union` but
+not its sibling classes. That is the correct direction to fail in, and it was caught by a test
+asserting that ordinary queries still pass.
+
+## Verified, not asserted
+
+"We set a read-only flag" and "writes are impossible" are different claims, and the gap between them
+is where this kind of guarantee usually turns out to be hollow. So it was tested.
+
+The role sets `default_transaction_read_only = on`. That parameter is **`USERSET`: a session can
+simply switch it off**, and it does — verified. Every write attempt then fails a second time, on
+`permission denied`, which is the layer that actually matters:
+
+| Attempt, with the read-only guard deliberately disabled | Result |
+| --- | --- |
+| `INSERT` / `UPDATE` / `DELETE` | `ERROR: permission denied for table ...` |
+| `DROP TABLE` | `ERROR: must be owner of table ...` |
+| `TRUNCATE` | `ERROR: permission denied for table ...` |
+| `CREATE TABLE` | `ERROR: permission denied for schema public` |
+| CTE-hidden `DELETE` | `ERROR: permission denied for table ...` |
+| `SELECT ... INTO` | `ERROR: permission denied for schema public` |
+| `SELECT pg_sleep(1)` | `ERROR: permission denied for function pg_sleep` |
+| Read `pg_authid` | `ERROR: permission denied for table pg_authid` |
+
+`tests/test_security_boundary.py` disables the guard *first* and then asserts that each write fails
+**on permissions specifically**. If a write is ever stopped only by the transaction flag, that test
+fails — because it would mean the boundary had silently moved to the bypassable layer.
+
+One finding worth recording, because it would mislead anyone testing this casually: **`GRANT INSERT
+ON terminals TO analyst_ro`, issued by `analyst_ro` itself, does not raise an error.** PostgreSQL
+emits a warning and reports success. No privilege is actually granted — `has_table_privilege`
+returns false and the subsequent `INSERT` is still denied — but a test asserting "GRANT raises" fails,
+and a casual reading of that success looks like privilege escalation. The lesson generalises: assert
+the property you care about (*was the privilege acquired?*), not the error you expect to see.
+
 ## Alternatives considered
 
 **Validator only, no separate database role.** Rejected. It makes the entire security posture
@@ -114,8 +171,10 @@ it.
 
 **Negative / accepted**
 
-- The deny-list is a blacklist and is therefore incomplete by construction. Accepted explicitly:
-  it is layer 2 of 3, and layer 1 does not share the weakness.
+- The validator is allow-list shaped, so it can reject legitimate but unusual SQL. This happened
+  once during the build (`INTERSECT`) and will happen again as the schema and question range grow.
+  Accepted deliberately: false positives are visible and cheap, false negatives are silent and
+  expensive, and layer 1 does not share the weakness either way.
 - A read-only role does not prevent a slow or expensive query from degrading the database for other
   users. The statement timeout and row cap reduce this; they do not eliminate it. Production would
   add a dedicated connection pool and per-role resource limits.

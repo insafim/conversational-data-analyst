@@ -60,8 +60,11 @@ class Settings:
                 "POSTGRES_ADMIN_USER", "POSTGRES_ADMIN_PASSWORD",
                 "postgres", "postgres",
             ),
-            cheap_model=os.getenv("CHEAP_MODEL", "anthropic/claude-haiku-4-5"),
-            strong_model=os.getenv("STRONG_MODEL", "anthropic/claude-sonnet-5"),
+            # Names match ADR-007. Defaults verified against LiteLLM's model registry on
+            # 2026-08-04; both are current, and pre-2026 IDs such as claude-3-5-sonnet
+            # have since been retired.
+            cheap_model=os.getenv("MODEL_CHEAP", "anthropic/claude-haiku-4-5"),
+            strong_model=os.getenv("MODEL_STRONG", "anthropic/claude-sonnet-5"),
             statement_timeout_ms=int(os.getenv("STATEMENT_TIMEOUT_MS", "5000")),
             row_cap=int(os.getenv("ROW_CAP", "500")),
             llm_timeout_s=int(os.getenv("LLM_TIMEOUT_S", "45")),

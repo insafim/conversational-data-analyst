@@ -174,7 +174,9 @@ def main() -> None:
             " VALUES (%s, %s, %s, %s, %s)",
             TERMINALS,
         )
-        cur.execute("SELECT terminal_id, terminal_name, port_name FROM terminals ORDER BY terminal_id")
+        cur.execute(
+            "SELECT terminal_id, terminal_name, port_name FROM terminals ORDER BY terminal_id"
+        )
         terminals = cur.fetchall()  # [(id, name, port), ...]
 
         # --- vessels ---------------------------------------------------------------
@@ -233,14 +235,18 @@ def main() -> None:
                 RNG.choice([40, 50, 65, 80]),
                 # Pattern 3, part two: the old crane spends more time out of service.
                 "maintenance" if is_ageing and RNG.random() < 0.5
-                else RNG.choices(["active", "maintenance", "retired"], weights=[0.88, 0.09, 0.03])[0],
+                else RNG.choices(
+                    ["active", "maintenance", "retired"], weights=[0.88, 0.09, 0.03]
+                )[0],
             ))
         cur.executemany(
             "INSERT INTO cranes (terminal_id, crane_code, model, commissioned_date,"
             " max_lift_tonnes, status) VALUES (%s, %s, %s, %s, %s, %s)",
             cranes,
         )
-        cur.execute("SELECT crane_id, terminal_id, crane_code FROM cranes ORDER BY crane_id")
+        cur.execute(
+            "SELECT crane_id, terminal_id, crane_code FROM cranes ORDER BY crane_id"
+        )
         crane_rows = cur.fetchall()
         # Index cranes by terminal so a move can only ever be assigned a crane that
         # physically exists at the terminal where the vessel is berthed.

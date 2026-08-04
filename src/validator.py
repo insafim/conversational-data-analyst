@@ -146,13 +146,12 @@ def validate_sql(sql: str) -> ValidationResult:
     if tree.args.get("into"):
         return _fail("select_into", "SELECT ... INTO creates a table and is not permitted.")
 
-    # 6. Denied functions.
+    # 6. Denied functions. sqlglot maps functions it knows to dedicated node types and
+    #    everything else to `Anonymous`; the calls we care about here (pg_sleep,
+    #    pg_read_file, dblink, ...) are not standard SQL, so they arrive as Anonymous.
+    #    Both cases are handled so the check does not depend on that staying true.
     for func in tree.find_all(exp.Anonymous, exp.Func):
-        name = (
-            func.name
-            if isinstance(func, exp.Anonymous)
-            else getattr(func, "sql_name", lambda: type(func).__name__)()
-        )
+        name = func.name if isinstance(func, exp.Anonymous) else type(func).__name__
         if isinstance(name, str) and name.lower() in _FORBIDDEN_FUNCTIONS:
             return _fail("forbidden_function", f"The function {name}() is not permitted.")
 
@@ -164,6 +163,9 @@ def validate_sql(sql: str) -> ValidationResult:
                 f"Access to the {table.db} schema is not permitted.",
             )
         if (table.name or "").lower() in _FORBIDDEN_TABLES:
-            return _fail("system_table", f"Access to the system table {table.name} is not permitted.")
+            return _fail(
+                "system_table",
+                f"Access to the system table {table.name} is not permitted.",
+            )
 
     return ValidationResult(ok=True)

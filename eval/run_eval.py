@@ -73,10 +73,10 @@ def _rows_equal(actual: list[list], expected: list[list], ordered: bool) -> bool
         left = sorted(left, key=lambda r: [str(v) for v in r])
         right = sorted(right, key=lambda r: [str(v) for v in r])
 
-    for row_a, row_b in zip(left, right):
+    for row_a, row_b in zip(left, right, strict=True):
         if len(row_a) != len(row_b):
             return False
-        for a, b in zip(row_a, row_b):
+        for a, b in zip(row_a, row_b, strict=True):
             if isinstance(a, float) and isinstance(b, float):
                 if abs(a - b) > FLOAT_TOLERANCE:
                     return False

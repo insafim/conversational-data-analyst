@@ -7,13 +7,13 @@ and produces, so the pipeline cannot silently grow undeclared coupling.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class Route(str, Enum):
+class Route(StrEnum):
     """How `classify` judged the question."""
 
     ANSWERABLE = "answerable"
@@ -21,7 +21,7 @@ class Route(str, Enum):
     OUT_OF_SCOPE = "out_of_scope"  # not answerable from this database at all
 
 
-class Outcome(str, Enum):
+class Outcome(StrEnum):
     """Terminal state of a run. Every request ends in exactly one of these."""
 
     ANSWERED = "answered"
@@ -31,7 +31,7 @@ class Outcome(str, Enum):
     ERROR = "error"        # execution or provider failure after retries
 
 
-class ChartKind(str, Enum):
+class ChartKind(StrEnum):
     NONE = "none"
     METRIC = "metric"
     LINE = "line"

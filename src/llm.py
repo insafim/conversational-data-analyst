@@ -61,7 +61,7 @@ def _call(model: str, system: str, user: str, usage: Usage | None, temperature: 
     auth failure is permanent and retrying it just doubles the latency of the error.
     """
     last: Exception | None = None
-    for attempt in range(2):
+    for _attempt in range(2):
         try:
             response = completion(
                 model=model,

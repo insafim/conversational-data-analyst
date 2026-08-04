@@ -96,8 +96,15 @@ worse.
 - A wrapper adds a dependency that a single-provider prototype does not strictly need. Accepted for
   the portability argument; the trade-off is real and is the same shape as the LangGraph one in
   [ADR-002](ADR-002-fixed-path-graph-over-agent-loop.md).
-- No token accounting or per-query cost tracking is built. Named on the path to production — the
-  routing decision is recorded here, but the spend is not yet observable, and those are different
-  things.
+- Per-question token accounting *is* built: `llm.Usage` totals calls and cost via
+  `litellm.completion_cost()`, surfaced in the UI caption and aggregated by the eval harness, so a
+  model-routing change can be priced rather than guessed at. What is **not** built is persistence —
+  spend is visible per request and per eval run, but nothing is stored, so there is no spend trend,
+  no per-user attribution, and no budget alerting. Those need a metrics backend and are named on the
+  path to production.
+- Model identifiers move faster than code. The defaults were verified against LiteLLM's registry on
+  2026-08-04; identifiers that were current in 2025 are already retired. This is why the model
+  strings are configuration rather than constants, and why a stale default fails loudly with an
+  authentication or bad-request error rather than silently degrading.
 - No fallback if the configured provider is unavailable; the request fails. Correct for a prototype,
   unacceptable for production, and stated rather than hidden.
