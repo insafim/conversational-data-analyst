@@ -9,7 +9,7 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 - **Safety is structural, not prompted.** The agent connects as a PostgreSQL role holding `SELECT`
   and nothing else. A fully jailbroken model still cannot write — [verified, not
   asserted](#guardrails-verified-not-asserted).
-- **Correctness is measured, not claimed.** A gold set of 30 questions with hand-verified reference
+- **Correctness is measured, not claimed.** A gold set of 32 questions with hand-verified reference
   SQL produces a reproducible accuracy number, including for refusals and ambiguity.
 - **Scope is controlled on purpose.** [What was left out, and
   why](docs/ADR/ADR-008-ui-and-scope-boundary.md).
@@ -21,12 +21,23 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 
 ---
 
+## Prerequisites
+
+| Requirement | Why |
+| --- | --- |
+| **Docker** (running) | PostgreSQL 18 runs in a container; nothing else needs installing |
+| **Python 3.12+** (`<3.14`) | `pandas` 3.x needs ≥3.11, `litellm` needs `<3.15` |
+| [**uv**](https://docs.astral.sh/uv/) | Creates the venv and resolves dependencies |
+| **One LLM API key** | Anthropic by default; any [LiteLLM-supported](https://docs.litellm.ai/docs/providers) provider works |
+
+Nothing else — no local PostgreSQL, no libpq (the `psycopg[binary]` wheel bundles it).
+
+---
+
 ## Quickstart
 
-Requires Docker and Python 3.12+.
-
 ```bash
-# 1. Configure — paste an API key into .env
+# 1. Configure — paste your API key into .env
 cp .env.example .env
 
 # 2. Database (PostgreSQL 18 on port 55432, so it won't collide with a local one)
@@ -40,16 +51,49 @@ python db/seed.py
 streamlit run app.py
 ```
 
+**Done.** Streamlit opens at [http://localhost:8501](http://localhost:8501). Ask
+*"Which terminal has the longest average berth wait?"* — you should get Jebel Ali Terminal 2 at
+17.46 hours, a bar chart, and the SQL one click away.
+
 Then, to reproduce the numbers below:
 
 ```bash
-python eval/run_eval.py
-pytest -m "not integration"   # unit tests, no database needed
-pytest                        # everything, needs the seeded database
+pytest -m "not integration"   # 100+ unit tests, no database or network needed
+pytest                        # all 156, needs the seeded database
+python eval/run_eval.py       # ~4.5 min, ~$0.23 of tokens
 ```
 
-Any LiteLLM-supported provider works — set `MODEL_CHEAP` / `MODEL_STRONG` in `.env`. Defaults are
-Anthropic.
+### Configuration
+
+Everything is environment-driven; copy [`.env.example`](.env.example) to `.env`. The defaults work
+as-is except for the API key.
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `ANTHROPIC_API_KEY` | **Yes**¹ | — | Or `OPENAI_API_KEY` / `GEMINI_API_KEY` |
+| `MODEL_CHEAP` | No | `anthropic/claude-haiku-4-5` | Classify + summarise (2 of 3 calls) |
+| `MODEL_STRONG` | No | `anthropic/claude-sonnet-5` | SQL generation only |
+| `POSTGRES_PORT` | No | `55432` | Deliberately not 5432 |
+| `POSTGRES_ANALYST_USER` | No | `analyst_ro` | The read-only role the agent uses |
+| `POSTGRES_ADMIN_USER` | No | `postgres` | Owner. Used **only** by `db/seed.py` |
+| `STATEMENT_TIMEOUT_MS` | No | `5000` | Bounds an expensive query |
+| `ROW_CAP` | No | `500` | Bounds result size in-process |
+| `MAX_SQL_RETRIES` | No | `1` | Retries on a database error only |
+
+¹ Whichever provider your `MODEL_*` prefixes name. Switching provider is an env change, not a code
+change — e.g. `MODEL_CHEAP=openai/gpt-5-mini`, `MODEL_STRONG=openai/gpt-5.4-mini`.
+
+### Troubleshooting
+
+The three things most likely to break a first run — all three came up while building it:
+
+| Symptom | Cause & fix |
+| --- | --- |
+| `Bind for 0.0.0.0:55432 failed: port is already allocated` | Something already uses the port. Set `POSTGRES_PORT` in `.env` and re-run `docker compose up -d` |
+| Container exits with *"there appears to be PostgreSQL data in /var/lib/postgresql/data"* | A stale volume from a pre-18 image. `docker compose down -v && docker compose up -d` |
+| `Authentication failed` or `rejected the request` from the model | Model IDs are retired regularly. The defaults were verified 2026-08-04; check `MODEL_CHEAP` / `MODEL_STRONG` against your provider's current list |
+| Sidebar shows *"Cannot reach the database"* | Not seeded yet — run `python db/seed.py` |
+| Integration tests fail on connection | `docker compose up -d`, wait for healthy, then `python db/seed.py` |
 
 ---
 
@@ -222,6 +266,12 @@ a single run of 22 items cannot distinguish 86% from 95%** — one item is 4.5 p
 ADR-006 predicted about small gold sets, now measured rather than theorised. The fix is more items
 and repeated runs, which is a real cost, not a footnote.
 
+> **These three runs predate two later additions to the gold set.** They were measured against 22
+> answerable items; the set now holds 24, after a scatter-chart case and a free-text case were added
+> to close coverage gaps. The numbers above have deliberately **not** been restated against the
+> larger set, because that would mean reporting results the harness never actually produced. Re-run
+> `python eval/run_eval.py` for current figures.
+
 **The one number that did not move: safety — 5/5 in all three runs, 15/15 attempts.** That is the
 result the design is built to guarantee, and it is the one guaranteed by permissions rather than by
 the model.
@@ -232,12 +282,12 @@ comparison was considered and **rejected** — loosening a metric after seeing w
 the metric to the result. See [ADR-006](docs/ADR/ADR-006-eval-execution-accuracy.md).
 <!-- EVAL_RESULTS_END -->
 
-The gold set has 30 items in three categories, because a system that answers well but cannot say no
+The gold set has 32 items in three categories, because a system that answers well but cannot say no
 is not deployable:
 
 | Category | Items | What it asserts |
 | --- | --- | --- |
-| **answerable** | 22 | Agent SQL returns the same rows as hand-verified reference SQL |
+| **answerable** | 24 | Agent SQL returns the same rows as hand-verified reference SQL |
 | **ambiguous** | 3 | Agent asks a clarifying question instead of guessing |
 | **adversarial** | 5 | Injection / destructive / out-of-scope requests are refused |
 
@@ -255,7 +305,7 @@ One ambiguity case arose naturally from the data rather than being contrived: tw
 named `Meridian Lines` and `Blue Meridian Shipping`, so *"how is Meridian performing?"* is genuinely
 under-specified.
 
-**Honest limitations.** At ~22 scored answerable items, one case is worth ~4.5 percentage points, so
+**Honest limitations.** At 24 scored answerable items, one case is worth ~4 percentage points, so
 the headline number has a wide confidence interval — it is a regression detector and a smoke test,
 not a precise measure of general capability. Result-set comparison also passes if the *reference*
 SQL is wrong, which is why every reference query was hand-verified against the data.
@@ -337,7 +387,42 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── models.py           Typed state and results
 │   └── config.py           Settings; separates admin and read-only identities
 ├── eval/
-│   ├── gold_questions.jsonl  30 scored cases
-│   └── run_eval.py           The harness
-└── tests/                  87 tests
+│   ├── gold_questions.jsonl  32 scored cases
+│   ├── run_eval.py           The harness
+│   └── results/              Committed raw output — evidence for the numbers above
+└── tests/                  156 tests
 ```
+
+---
+
+## Testing
+
+156 tests. They exist to catch regressions, not to raise a coverage number — so the suite is
+weighted heavily toward the parts where a silent failure would be expensive.
+
+| File | Tests | What it protects |
+| --- | --- | --- |
+| `test_validator.py` | 57 | The security gate: every attack, evasion, and fail-closed case |
+| `test_eval_scoring.py` | 21 | The comparison logic — i.e. the definition of "correct" |
+| `test_security_boundary.py` | 15 | That `GRANT`s hold with the read-only guard disabled |
+| `test_llm_extraction.py` | 15 | Parsing model output; functions that raise rather than half-parse |
+| `test_agent_routing.py` | 14 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
+| `test_charts.py` | 14 | Every chart rule, at its boundaries |
+| `test_executor.py` | 8 | Row cap, statement timeout, error propagation |
+| `test_seed_characterization.py` | 7 | Data digests, planted patterns, the crane/terminal invariant |
+| `test_second_order_injection.py` | 5 | Injection arriving through query results, not the chat box |
+
+```bash
+pytest -m "not integration"   # no database, no network
+pytest                        # everything (needs a seeded DB; injection tests need an API key)
+ruff check src/ tests/ eval/ db/ app.py
+```
+
+Three tests are worth reading rather than just running, because each encodes a finding:
+
+- `test_data_modifying_cte_is_blocked` — a `DELETE` hidden in a CTE has top-level type `SELECT`.
+  The obvious validator executes it.
+- `test_writes_fail_on_permissions_even_with_the_guard_disabled` — disables the bypassable
+  read-only flag *first*, then asserts writes still fail on privileges.
+- `test_generated_data_is_byte_identical` — a shifted RNG stream produces data that is wrong in no
+  visible way; nothing else in the suite would notice.
