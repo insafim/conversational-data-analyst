@@ -31,8 +31,16 @@ The rules, applied in order, first match wins:
 | 6 | Anything else (wide, many-category, or multi-dimensional results) | **Table** |
 
 Column classification comes from the PostgreSQL type codes returned with the cursor description —
-that is, from the database's own declared types, not from inspecting values or guessing from
-column names.
+that is, from the database's own declared types, not from guessing from column names.
+
+**One documented exception, found by testing rather than predicted.** The most common way to group
+by month in PostgreSQL is `to_char(ts, 'YYYY-MM')`, which returns **text**. Running that query
+against the real database showed a purely type-driven rule classifying the single most common
+time-series result as categorical, and drawing bars where a line is correct. Two fixes are applied
+together: the SQL prompt asks for `date_trunc(...)::date` so the column arrives properly typed
+(primary), and the rules additionally treat anchored ISO-8601-shaped text — `2025`, `2025-03`,
+`2025-03-01` — as temporal (safety net). The fallback inspects *values* against a strict anchored
+pattern, never column names, which would be the fragile version of the same idea.
 
 The cardinality bound in rule 4 encodes a real charting principle: a bar chart of 300 categories is
 not a chart, it is an unreadable table with extra steps. Falling back to a table is the honest

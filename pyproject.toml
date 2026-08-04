@@ -13,7 +13,10 @@ dependencies = [
     "langgraph>=1.2.10,<2",    # fixed-path state graph (ADR-002)
     "psycopg[binary]>=3.3.4,<4", # PostgreSQL driver; [binary] avoids needing local libpq
     "sqlglot>=30.14.0,<31",    # SQL parsing for the validator (ADR-004)
-    "pandas>=2.2,<4",          # result frames for charting
+    "pandas>=3.0,<4",          # result frames for charting; 3.0.5 is what was verified, and the
+                               #   2.x floor it replaced was never actually installed or tested
+    "pydantic>=2.13,<3",       # AgentResult/QueryResult/ChartSpec; direct import, so declared
+                               #   directly rather than leaned on transitively via langgraph
     "streamlit>=1.60.0,<2",    # chat UI (ADR-008)
     "python-dotenv>=1.0",      # .env loading for local dev
 ]

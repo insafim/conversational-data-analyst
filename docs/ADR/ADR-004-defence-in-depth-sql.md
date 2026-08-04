@@ -26,7 +26,7 @@ the order in which they must hold:
 | 2 | **Code validator** | `validator.py`: sqlglot parse, exactly one statement, statement type must be `SELECT`, deny-list (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `GRANT`, `COPY`, `pg_catalog`). Runs before execution, on the only edge into `execute`. | **No.** Pure code with no LLM call in it. |
 | 3 | **Classification / prompt** | `classify` routes `out_of_scope` questions to `refuse` before any SQL is generated. | **Yes** — and therefore it is not counted as a security control. |
 
-The grant that makes layer 1 real:
+The grant that makes layer 1 real, in `db/02_roles.sql`:
 
 ```sql
 CREATE ROLE analyst_ro LOGIN PASSWORD '...';
@@ -36,9 +36,24 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO analyst_ro;
 -- no INSERT/UPDATE/DELETE/DDL grants. The agent's connection string uses this role.
 ```
 
+Three details of that file are deliberate rather than incidental:
+
+- **It is a separate file from `01_schema.sql`, and ordered after it.** `GRANT ... ON ALL TABLES`
+  applies to tables that exist at the moment it runs; granting before the DDL silently produces a
+  role with no table privileges. Splitting the files makes the ordering explicit to the PostgreSQL
+  entrypoint, which runs `*.sql` in filename order.
+- **The public default is revoked.** PostgreSQL grants `CREATE`/`USAGE` on the `public` schema
+  broadly enough by default that "no grant" is not the same as "no privilege". The role's
+  permissions are stated positively rather than assumed by omission.
+- **A `statement_timeout` is set on the role itself**, not only per session. A limit the
+  application sets is a limit the application can forget; a limit attached to the role holds for
+  every connection using it, including a psql session opened by a developer.
+
+The password comes from the environment rather than being committed.
+
 Layer 2 additionally enforces two operational limits that are not security properties but share the
-same enforcement point: a `SET statement_timeout = '5s'` and a row cap of 500 applied by wrapping
-the validated query (`SELECT * FROM (...) q LIMIT 500`).
+same enforcement point: a session `statement_timeout` of 5s (belt-and-braces with the role default)
+and a row cap of 500 applied by wrapping the validated query (`SELECT * FROM (...) q LIMIT 500`).
 
 ### Layer 3 is a cost control, not a security control
 
