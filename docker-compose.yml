@@ -1,0 +1,46 @@
+# PostgreSQL 18 for the Conversational Data Analyst demo.
+#
+# The `version:` top-level key is deliberately omitted — it is obsolete in the current
+# Compose Specification and emits a warning on modern Docker Compose.
+#
+# Scripts in db/ are mounted into /docker-entrypoint-initdb.d and executed in filename
+# order on FIRST BOOT ONLY (i.e. when the data volume is empty):
+#   01_schema.sql  — tables, constraints, indexes, column comments
+#   02_roles.sql   — the read-only analyst role that the agent connects as (ADR-004)
+# To re-run them after a schema change:  docker compose down -v && docker compose up -d
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: cda_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ports}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # Password for the read-only role created by 02_roles.sql. Passed through so the
+      # role password is configurable rather than hard-coded in tracked SQL.
+      ANALYST_RO_PASSWORD: ${ANALYST_RO_PASSWORD:-analyst_ro_pw}
+    # Defaults to 55432 rather than 5432 so the demo never collides with a PostgreSQL
+    # the reviewer already has running locally. Override with POSTGRES_PORT if needed.
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      # PostgreSQL 18+ images store data in a major-version-specific subdirectory and
+      # expect the volume at /var/lib/postgresql, NOT the pre-18 /var/lib/postgresql/data.
+      # Using the old path makes the container refuse to start.
+      # https://github.com/docker-library/postgres/pull/1259
+      - pgdata:/var/lib/postgresql
+      - ./db/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./db/02_roles.sql:/docker-entrypoint-initdb.d/02_roles.sql:ro
+    healthcheck:
+      # `pg_isready` alone returns success slightly before the init scripts finish, so the
+      # check also confirms the last table created by 01_schema.sql is queryable.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ports} && psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ports} -c 'SELECT 1 FROM cargo_moves LIMIT 1' > /dev/null 2>&1"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  pgdata:

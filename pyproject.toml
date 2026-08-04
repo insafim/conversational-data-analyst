@@ -1,0 +1,46 @@
+[project]
+name = "conversational-data-analyst"
+version = "0.1.0"
+description = "Ask questions about operational data in plain English; get grounded answers, SQL you can audit, and a chart."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+
+# Version floors are set to the releases actually verified during the build (2026-08-04).
+# Upper bounds are set at the next major only where a major bump is known to be breaking,
+# so `uv lock` stays reproducible without freezing out security patches.
+dependencies = [
+    "litellm>=1.95.0,<2",      # provider-agnostic LLM access (ADR-007)
+    "langgraph>=1.2.10,<2",    # fixed-path state graph (ADR-002)
+    "psycopg[binary]>=3.3.4,<4", # PostgreSQL driver; [binary] avoids needing local libpq
+    "sqlglot>=30.14.0,<31",    # SQL parsing for the validator (ADR-004)
+    "pandas>=2.2,<4",          # result frames for charting
+    "streamlit>=1.60.0,<2",    # chat UI (ADR-008)
+    "python-dotenv>=1.0",      # .env loading for local dev
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Integration tests need a seeded database; unit tests do not. Marked so CI can split them.
+markers = [
+    "integration: requires a running, seeded PostgreSQL (deselect with -m 'not integration')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
