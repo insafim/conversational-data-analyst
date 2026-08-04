@@ -35,7 +35,10 @@ EXPECTED: dict[str, tuple[int, str]] = {
     "terminals": (6, "4d2962a21c97ed17"),
     "vessels": (40, "8bc555e792a8f18c"),
     "cranes": (25, "857333f4674f4f18"),
-    "port_calls": (1500, "d3fa01dd01e086bf"),
+    # Re-baselined when the `remarks` column was added. Only this table's digest moved;
+    # the other four were verified byte-identical, confirming the remarks were applied by
+    # post-hoc UPDATE without consuming RNG and shifting the draw stream.
+    "port_calls": (1500, "cf747c0936da98b9"),
     "cargo_moves": (6577, "122798f8b7a0175a"),
 }
 
