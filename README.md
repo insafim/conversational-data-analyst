@@ -9,7 +9,7 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 - **Safety is structural, not prompted.** The agent connects as a PostgreSQL role holding `SELECT`
   and nothing else. A fully jailbroken model still cannot write — [verified, not
   asserted](#guardrails-verified-not-asserted).
-- **Correctness is measured, not claimed.** A gold set of 33 questions with hand-verified reference
+- **Correctness is measured, not claimed.** A gold set of 36 questions with hand-verified reference
   SQL produces a reproducible accuracy number, including for refusals and ambiguity.
 - **Scope is controlled on purpose.** [What was left out, and
   why](docs/ADR/ADR-008-ui-and-scope-boundary.md).
@@ -17,6 +17,8 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 > **Going deeper:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the full architecture
 > reference — pipeline internals, the security model, schema handling, the evaluation
 > method, and a consolidated table of design decisions with their trade-offs.
+> [docs/DATA.md](docs/DATA.md) is the dataset reference — what is in it, how it was built,
+> and **what you can ask it**, with a value inventory and a question catalogue.
 > [docs/ADR/](docs/ADR/) holds the eight decision records behind them.
 
 ---
@@ -44,12 +46,18 @@ cp .env.example .env
 docker compose up -d
 
 # 3. Install and seed
-uv venv --python 3.12 && uv pip install -e ".[dev]"
+uv venv --python 3.12
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+uv pip install -e ".[dev]"
 python db/seed.py
 
 # 4. Run
 streamlit run app.py
 ```
+
+Every command after step 3 assumes that activated environment. `uv venv` creates it but does
+not enter it, so skipping the `activate` line is the one way to have each following step fail
+with `command not found`.
 
 **Done.** Streamlit opens at [http://localhost:8501](http://localhost:8501). Ask
 *"Which terminal has the longest average berth wait?"* — you should get Jebel Ali Terminal 2 at
@@ -58,9 +66,9 @@ streamlit run app.py
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 100+ unit tests, no database or network needed
-pytest                        # all 170, needs the seeded database
-python eval/run_eval.py       # ~3.5 min, ~$0.27 of tokens
+pytest -m "not integration"   # 121 unit tests, no database or network needed
+pytest                        # all 180, needs the seeded database
+python eval/run_eval.py       # ~3.5 min, ~$0.32 of tokens
 ```
 
 ### Configuration
@@ -120,6 +128,12 @@ Jebel Ali?"* traverses four tables. Four patterns are deliberately planted into 
 a congested terminal, a seasonal volume peak, an ageing low-throughput crane, and an operator with
 poor punctuality — so answers are findings rather than noise.
 ([ADR-001](docs/ADR/ADR-001-domain-and-data-model.md))
+
+**Not sure what to ask?** [docs/DATA.md](docs/DATA.md) is the full dataset reference: every column
+with its units and allowed values, every literal you can name in a question (terminals, operators,
+crane codes, date window), the measured figures behind each planted pattern, and a catalogue of
+questions organised by join depth — including ones with a known correct answer, so you can check
+whether the agent is right rather than merely fluent.
 
 ---
 
@@ -235,22 +249,59 @@ would mean the boundary had silently moved to the weaker layer.
 ## Evaluation
 
 <!-- EVAL_RESULTS_START -->
-Three full runs of the 30-question gold set. Runs 2 and 3 use the final prompts; run 1 is shown
-because what it found is more interesting than what it scored.
+Six full runs. The gold set grew twice, so read across the row and not down the column: runs 1 to 3
+scored 22 answerable items, run 4 scored 25, and runs 5 and 6 score 28 after three window-function
+questions were added.
 
-| | Run 1 | Run 2 | Run 3 | Run 4 |
-| --- | --- | --- | --- | --- |
-| Execution accuracy | 86.4% | 95.5% | 86.4% | **92.0%** |
-| Answer groundedness | not measured | not measured | not measured | **100%** |
-| Ambiguity handling | 100% | 100% | 66.7% | **100%** |
-| Safety / refusals | 100% | 100% | 100% | **100%** |
-| Overall | 90.0% | 96.7% | 86.7% | **93.9%** |
-| Mean latency | 8.3s | 9.1s | 12.0s | 6.0s |
-| Cost per run | $0.228 | $0.238 | $0.224 | $0.274 |
-| Gold items | 30 | 30 | 30 | 33 |
+| | Run 1 | Run 2 | Run 3 | Run 4 | Run 5 | Run 6 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Execution accuracy | 86.4% | 95.5% | 86.4% | 92.0% | 92.9% | **96.4%** |
+| Answer groundedness | not measured | not measured | not measured | 100% | 89.3% | **92.9%** |
+| Ambiguity handling | 100% | 100% | 66.7% | 100% | 100% | **100%** |
+| Safety / refusals | 100% | 100% | 100% | 100% | 100% | **100%** |
+| Overall | 90.0% | 96.7% | 86.7% | 93.9% | 94.4% | **97.2%** |
+| Mean latency | 8.3s | 9.1s | 12.0s | 6.0s | 6.1s | 5.9s |
+| Cost per run | $0.228 | $0.238 | $0.224 | $0.274 | $0.325 | $0.315 |
+| Gold items | 30 | 30 | 30 | 33 | 36 | 36 |
 
-Runs 1–3 scored 22 answerable items; run 4 scores 25, after three cases were added to close
-coverage gaps (scatter charts, free-text columns, and an empty result set).
+**Execution accuracy across all six runs is 86.4% to 96.4%.** Quoting only the best run would be
+the wrong number to trust: runs 2 and 3 were identical code and prompts and landed nine points
+apart. At 28 answerable items one case is 3.6 points, so a single run cannot distinguish 93 from
+96. This is a regression detector, not a capability measurement.
+
+The clearest evidence of that is which item fails. Run 5 failed `q09` and passed `q19`; run 6 did
+the exact opposite, with `q19` returning zero rows from a filter on the wrong column. Same code,
+same prompts, same temperature. The stable number is the one that matters: **safety has been 5/5
+in every run, 30 attempts without a miss**, because it is enforced where the model cannot reach.
+
+### What the window-function questions cost, and why that is the useful part
+
+Runs 5 and 6 are the first to include `q26` to `q28`, which use `RANK() OVER (PARTITION BY ...)`,
+a running total, and `LAG`. All three pass execution accuracy in run 6. Groundedness is where they
+bit: it fell from 100% to 89.3% in run 5, and the cause was not the SQL but the summary.
+
+Given a cumulative column, the model subtracted two of its values to describe a span (*"the final
+two months added another 31,812 containers"*, a figure appearing nowhere in the rows). That is the
+arithmetic the summariser is explicitly forbidden to do, and the harness caught it the first time
+it was provoked. The fix was a clause in the summariser prompt naming the trap, not a change to the
+checker. Groundedness recovered to 92.9%.
+
+Two flags remain in run 6, and they are different kinds of thing.
+
+`q28` is a false positive. The model reports *"the largest decrease was 3,845 containers"* against
+a cell holding `-3845`. The digits are in the results and the sentence is correct English; the
+checker compares signed values and calls it ungrounded. Teaching it to accept absolute values
+**after** seeing it fail would be tuning the metric, so it is left failing.
+
+`q20` is not a false positive, and it has nothing to do with the window questions. Asked for
+average time at berth by terminal, the model answered *"vessels spend an average of 23-24 hours at
+berth across all terminals"*, then correctly quoted 24.25 and 23.21 for the extremes. The range in
+that first clause is a generalisation across six rows, and neither 23 nor 24 is a value in them.
+The answer is useful and a reader would not blink at it, which is exactly why it is worth catching:
+the summariser is rounding and generalising in prose, which is the same class of behaviour as the
+invented annual total in run 4, even though that one was a miscomputed sum rather than a rounded
+range. The prompt change made for the window questions did not address this
+one, and it should not be assumed fixed.
 
 ### Groundedness was not measured until run 4 — and the first measurement found a real failure
 
@@ -305,12 +356,12 @@ comparison was considered and **rejected** — loosening a metric after seeing w
 the metric to the result. See [ADR-006](docs/ADR/ADR-006-eval-execution-accuracy.md).
 <!-- EVAL_RESULTS_END -->
 
-The gold set has 33 items in three categories, because a system that answers well but cannot say no
+The gold set has 36 items in three categories, because a system that answers well but cannot say no
 is not deployable:
 
 | Category | Items | What it asserts |
 | --- | --- | --- |
-| **answerable** | 25 | Agent SQL returns the same rows as hand-verified reference SQL |
+| **answerable** | 28 | Agent SQL returns the same rows as hand-verified reference SQL |
 | **ambiguous** | 3 | Agent asks a clarifying question instead of guessing |
 | **adversarial** | 5 | Injection / destructive / out-of-scope requests are refused |
 
@@ -369,6 +420,10 @@ the usual reason agent-analytics deployments stall.
 4. **Tracing and cost persistence** — per-query spend, latency percentiles, failure attribution.
 5. **Retrieval over table metadata** once the schema outgrows the context window
    ([ADR-003](docs/ADR/ADR-003-schema-introspection.md)).
+6. **A different storage and ingestion layer** once query volume or continuous data arrival
+   outgrows single-node PostgreSQL. The two thresholds that trigger it, and what each one changes
+   about the agent itself, are named in
+   [ADR-001](docs/ADR/ADR-001-domain-and-data-model.md#where-this-model-stops-holding).
 
 ---
 
@@ -410,17 +465,17 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── models.py           Typed state and results
 │   └── config.py           Settings; separates admin and read-only identities
 ├── eval/
-│   ├── gold_questions.jsonl  33 scored cases
+│   ├── gold_questions.jsonl  36 scored cases
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output — evidence for the numbers above
-└── tests/                  170 tests
+└── tests/                  180 tests
 ```
 
 ---
 
 ## Testing
 
-170 tests. They exist to catch regressions, not to raise a coverage number — so the suite is
+180 tests. They exist to catch regressions, not to raise a coverage number — so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
@@ -431,7 +486,8 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_llm_extraction.py` | 15 | Parsing model output; functions that raise rather than half-parse |
 | `test_agent_routing.py` | 14 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
 | `test_charts.py` | 14 | Every chart rule, at its boundaries |
-| `test_executor.py` | 8 | Row cap, statement timeout, error propagation |
+| `test_executor.py` | 13 | Row cap and its boundary, statement timeout, verbatim execution, errors |
+| `test_schema.py` | 5 | Catalog introspection, and that composed identifiers are quoted |
 | `test_seed_characterization.py` | 7 | Data digests, planted patterns, the crane/terminal invariant |
 | `test_second_order_injection.py` | 5 | Injection arriving through query results, not the chat box |
 

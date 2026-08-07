@@ -32,6 +32,14 @@ docs/repo.md
 docs/video.md
 docs/presentation.md
 
+# Personal interview preparation. These would be actively bad to ship: the Q&A scripts
+# answers to questions the reviewer has not asked yet, and the study guide is a record of
+# what its author was revising. Both are for the candidate, not the audience.
+docs/drill_brief.md
+docs/sql_study_guide.md
+docs/interview_qa.md
+docs/prep_card.md
+
 # Reference material from an unrelated project, used only as a formatting example.
 # It describes a different client's system and must never ship in this deliverable.
 sample/

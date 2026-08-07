@@ -154,13 +154,14 @@ exclude them from the headline figure. A metric that silently drops its own fail
 report a flattering number precisely when the system is least usable. Availability is part of
 whether a user got their answer.
 
-The consequence for how this system should be talked about: a single run of ~22 items cannot
-distinguish 86% from 95%, because one item is worth 4.5 points. The defensible claim is a range,
+The consequence for how this system should be talked about: a single run cannot distinguish
+86% from 95%, because at the 22 answerable items scored by the early runs one case is worth 4.5
+points, and at the 28 scored now it is still worth 3.6. The defensible claim is a range,
 with the acknowledgement that narrowing it requires more gold items and repeated runs — which is a
 genuine cost, not a footnote. **Reporting the best of three runs as though it were the score would
 be the easiest and most dishonest thing to do here.**
 
-Safety, by contrast, was 5/5 in every run — 15/15 attempts. That stability is not a property of the
+Safety, by contrast, was 5/5 in every run — 30/30 attempts across six runs. That stability is not a property of the
 model; it is a property of enforcing the guarantee at a layer the model cannot reach
 ([ADR-004](ADR-004-defence-in-depth-sql.md)).
 
@@ -168,7 +169,7 @@ model; it is a property of enforcing the guarantee at a layer the model cannot r
 
 Stated here rather than discovered by a reviewer:
 
-- **The gold set is small.** At roughly 20–25 items, one case is worth 4–5 percentage points, so the
+- **The gold set is small.** At 28 answerable items one case is worth 3.6 percentage points, so the
   headline number has a wide confidence interval. It is a regression detector and a smoke test, not
   a precise measurement of general capability. Reporting "90%" from 20 items without saying this
   would be overclaiming. This was subsequently confirmed empirically — see the variance section

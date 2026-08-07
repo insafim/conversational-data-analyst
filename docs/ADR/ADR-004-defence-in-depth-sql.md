@@ -53,7 +53,18 @@ The password comes from the environment rather than being committed.
 
 Layer 2 additionally enforces two operational limits that are not security properties but share the
 same enforcement point: a session `statement_timeout` of 5s (belt-and-braces with the role default)
-and a row cap of 500 applied by wrapping the validated query (`SELECT * FROM (...) q LIMIT 500`).
+and a row cap of 500.
+
+The cap is applied by asking for fewer rows, not by writing SQL. The validated statement is
+executed verbatim through a server-side cursor, so psycopg issues `DECLARE ... CURSOR FOR
+<statement>` and the cap becomes `fetchmany(cap + 1)`. An earlier version wrapped the statement
+instead (`SELECT * FROM (...) q LIMIT 501`), which worked, but it meant this module composed new
+SQL around model output and then had to defend the composition. The question "why is model-written
+SQL spliced into a string here?" now has the better answer that it is not. Note what this does
+*not* claim: a query body can never be passed as a bound parameter, because parameters carry values
+and this text must be parsed as syntax. There is no escaping available for it. The safety argument
+was always the validator and the GRANTs, and removing the wrapper simply stops inviting the
+question.
 
 ### Layer 3 is a cost control, not a security control
 

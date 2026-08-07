@@ -104,6 +104,66 @@ testing anything the brief asks about.
 **Fewer tables (the minimum 4).** Rejected. It meets the letter of the brief with no margin. Five
 gives one more join path at negligible cost.
 
+## Where this model stops holding
+
+[ADR-003](ADR-003-schema-introspection.md) records the point at which its own decision expires:
+injecting the full schema is correct at five tables and wrong at five hundred, with the threshold
+falling either where the schema text stops fitting alongside the question or where irrelevant
+tables start degrading SQL accuracy by distraction. The data model deserves the same treatment,
+since five tables holding 1,500 port calls and 6,577 cargo moves on single-node PostgreSQL are a
+choice rather than a default. It has two expiry conditions, and they are reached independently.
+
+**Interactive latency.** `pg_database_size` reports 9,598 kB for the seeded database, and
+`pg_total_relation_size`, summed across the five user tables, totals 1,680 kB, against the 16,384
+8 kB buffers (128 MB) this container runs with, as reported by `pg_settings`. The working set is
+therefore resident in the buffer pool with close to eighty times headroom, and it shows in the
+plans: `EXPLAIN (ANALYZE, BUFFERS)` on `q19`, the four-table gold query, reports every node served
+from `shared hit` with no `read`, at 2.1 ms planning and 1.2 ms execution. That, rather than index
+design, is why query time is not what makes the loop take 5.9 to 12.0 seconds, the mean latency range
+recorded across the six eval runs in the README; the three LLM calls are.
+
+Index design is doing less work here than eight indexes suggests. Fifteen gold questions carry a
+`WHERE` clause. Ten of them filter on an unindexed column: `terminals.port_name` (`q06`, `q08`,
+`q15`, `q19`) and `terminals.country` (`q09`, `q25`) across 6 terminals, `port_calls.status`
+(`q16`, `q20`) and `port_calls.remarks` (`q24`) across 1,500 port calls, and `cranes.status`
+(`q11`) across 25 cranes. None of those five columns is indexed, so every one of those predicates
+resolves by sequential scan. The other five filter only on indexed columns: `cargo_moves.move_ts`
+(`q04`, `q27`), `port_calls.arrival_ts` (`q21`, `q26`), and `q28` on `terminals.terminal_name` and
+`cargo_moves.move_ts` together. `terminal_name` is the one to be careful about, since it carries an
+index only as a side effect of its `UNIQUE` constraint rather than from any of the eight.
+
+Index *usage* is deliberately not quoted here. `pg_stat_user_indexes` is cumulative since the last
+statistics reset, so it depends on what has been run against a particular volume, and re-creating
+the container resets it. Any figure for it would be a fact about one machine on one afternoon
+rather than a property of the design. Which columns carry an index is the durable claim, and it is
+readable from `db/01_schema.sql` without running anything.
+
+The expiry condition is therefore measurable rather than rhetorical: it arrives when the working
+set stops fitting in the buffer pool, sequential scans over the dimensions stop being free, and the
+aggregate scans behind a question like
+"container moves per month by terminal" stop being cache-resident. Those queries scan far more rows
+than they return, which is the access pattern columnar layout and partition pruning are built for
+and which a larger instance does not change, so the answer at that point is columnar storage with a
+query engine over it. The change reaches the agent rather than only the database. The SQL dialect
+in the prompt changes, sub-second interactivity is gone so the UI has to surface progress and
+per-query cost, and on an engine that bills per byte scanned, partition pruning becomes
+correctness-adjacent, because a query missing its partition filter is an invoice rather than a slow
+response.
+
+**Ingestion.** The tables are populated by a single run of `db/seed.py`, including the post-hoc
+`UPDATE` that plants the `remarks` values, and nothing changes them after that run completes. Real
+terminal data arrives continuously from vessel traffic systems and crane telemetry, at which point
+the engineering problem moves upstream of everything in this repo: batch or streaming pipelines,
+schema evolution, late-arriving and corrected records, and data quality gates that must pass before
+the agent is permitted to answer from a table at all. `db/seed.py` is replaced at that point rather
+than extended, and the fixed-window reproducibility argument above has to be re-established against
+a dataset that moves.
+
+Both thresholds are a long way from where this prototype sits, and building for either one here
+would be the overbuilding the brief warns against. They are recorded because the boundary of a
+design is part of the design, and because the first question asked of any prototype is what it
+costs to make it real.
+
 ## Consequences
 
 **Positive**
