@@ -29,6 +29,7 @@ import random
 from datetime import date, datetime, timedelta
 
 import psycopg
+from psycopg import sql
 
 # --- Determinism -------------------------------------------------------------------
 # One seeded Random instance used for everything. Never use the module-level `random.*`
@@ -381,7 +382,10 @@ def main() -> None:
         # --- summary ---------------------------------------------------------------
         print("Seeded (deterministic, seed=42):")
         for table in ("terminals", "vessels", "cranes", "port_calls", "cargo_moves"):
-            cur.execute(f"SELECT count(*) FROM {table}")
+            # Composed rather than f-string interpolated. The names are a hardcoded literal
+            # tuple, so this is not an injection path, but leaving one f-string-built query
+            # in the repo invites a reviewer to ask why the rule holds everywhere else.
+            cur.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table)))
             print(f"  {table:<14} {cur.fetchone()[0]:>6,} rows")
         cur.execute("SELECT min(arrival_ts)::date, max(arrival_ts)::date FROM port_calls")
         lo, hi = cur.fetchone()

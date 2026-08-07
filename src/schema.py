@@ -27,6 +27,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 import psycopg
+from psycopg import sql as pgsql
 from psycopg.rows import dict_row
 
 from .config import settings
@@ -76,11 +77,34 @@ ORDER BY cl.relname, con.contype, k.ord
 """
 
 
-def _fetch(sql: str) -> list[dict]:
+def _fetch(sql: str | pgsql.Composable) -> list[dict]:
     with psycopg.connect(settings.analyst_dsn, connect_timeout=10) as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql)
             return cur.fetchall()
+
+
+def coverage_fragment(table: str, column: str) -> pgsql.Composable:
+    """Build the min/max fragment for one date column.
+
+    Split out of `_date_coverage` so it can be tested directly. This is the only place in
+    the codebase that assembles SQL from names read out of the catalog rather than writing
+    the query out in full, because the set of date columns is not known until runtime, so
+    it is the only place where identifier quoting is load-bearing.
+
+    Identifiers are composed with psycopg's `Identifier` rather than formatted into the
+    string. These names come from `information_schema` rather than from a user, so this is
+    not a live injection path, but a table named `x"; DROP ...` would break the query, and
+    the difference between "cannot be exploited today" and "cannot be exploited" is the
+    whole argument this codebase makes about model-generated SQL (ADR-004).
+    """
+    return pgsql.SQL(
+        "SELECT {label} AS col, min({col})::text AS lo, max({col})::text AS hi FROM {tbl}"
+    ).format(
+        label=pgsql.Literal(f"{table}.{column}"),
+        col=pgsql.Identifier(column),
+        tbl=pgsql.Identifier(table),
+    )
 
 
 def _date_coverage() -> list[str]:
@@ -95,12 +119,8 @@ def _date_coverage() -> list[str]:
         return []
 
     # One round trip: a UNION ALL over each column rather than a query per column.
-    parts = [
-        f"SELECT '{table}.{column}' AS col, min({column})::text AS lo, max({column})::text AS hi "
-        f"FROM {table}"
-        for table, column in date_columns
-    ]
-    rows = _fetch(" UNION ALL ".join(parts))
+    parts = [coverage_fragment(table, column) for table, column in date_columns]
+    rows = _fetch(pgsql.SQL(" UNION ALL ").join(parts))
     return [f"  {r['col']}: {r['lo']} .. {r['hi']}" for r in rows if r["lo"]]
 
 

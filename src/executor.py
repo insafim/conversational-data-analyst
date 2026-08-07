@@ -8,11 +8,19 @@ That redundancy is the point of defence in depth (ADR-004).
 
 Three limits are applied here, each bounding a different failure:
 
-* **Statement timeout** — bounds a query that is valid but ruinously expensive.
-* **Row cap** — bounds a query that is cheap to run but returns millions of rows, which
+* **Statement timeout**: bounds a query that is valid but ruinously expensive.
+* **Row cap**: bounds a query that is cheap to run but returns millions of rows, which
   would exhaust memory in this process rather than in the database.
-* **Read-only transaction** — a belt-and-braces guard that makes accidental writes fail
+* **Read-only transaction**: a belt-and-braces guard that makes accidental writes fail
   early with a clear error. It is *not* the security boundary; the GRANTs are.
+
+The validated statement is executed **verbatim**. This module composes no SQL around it,
+which is deliberate: a query body cannot be passed as a bound parameter, because
+parameters carry values and this text has to be parsed as syntax. Rather than build a
+wrapper and then argue about the wrapper, the row cap is enforced by declaring a
+server-side cursor and asking it for at most `cap + 1` rows. The database streams from a
+portal, so a query returning millions of rows still costs this process only the rows it
+actually reads.
 """
 
 from __future__ import annotations
@@ -24,6 +32,11 @@ from psycopg import sql as pgsql
 
 from .config import settings
 from .models import QueryResult
+
+
+#: Name for the server-side cursor. Fixed rather than generated because each call opens
+#: its own connection, so two cursors of this name never coexist.
+_SERVER_CURSOR_NAME = "cda_reader"
 
 
 class ExecutionError(RuntimeError):
@@ -41,7 +54,7 @@ def _type_name(oid: int) -> str:
     try:
         info = psycopg.postgres.types.get(oid)
         return info.name if info else "unknown"
-    except Exception:  # noqa: BLE001 — type naming must never break query execution
+    except Exception:  # noqa: BLE001, type naming must never break query execution
         return "unknown"
 
 
@@ -59,15 +72,8 @@ def run_query(sql: str, row_cap: int | None = None) -> QueryResult:
         ExecutionError: if the database rejects or fails the query.
     """
     cap = row_cap if row_cap is not None else settings.row_cap
+    # Trailing semicolons are common in model output and are illegal inside DECLARE.
     inner = sql.strip().rstrip(";")
-
-    # Wrap rather than append LIMIT: appending would corrupt a query that already ends
-    # in LIMIT or ORDER BY, and would silently change the meaning of a UNION. Fetching
-    # cap+1 rows is how truncation is detected without a second COUNT query.
-    capped = pgsql.SQL("SELECT * FROM ({inner}) AS _capped LIMIT {limit}").format(
-        inner=pgsql.SQL(inner),  # already validated as a single read-only SELECT
-        limit=pgsql.Literal(cap + 1),
-    )
 
     started = time.perf_counter()
     try:
@@ -76,17 +82,39 @@ def run_query(sql: str, row_cap: int | None = None) -> QueryResult:
             # already; setting them again means the guarantee does not depend on the
             # database having been provisioned correctly.
             conn.read_only = True
-            with conn.cursor() as cur:
-                cur.execute(
+            with conn.cursor() as setup_cur:
+                setup_cur.execute(
                     pgsql.SQL("SET statement_timeout = {}").format(
                         pgsql.Literal(f"{settings.statement_timeout_ms}ms")
                     )
                 )
-                cur.execute(capped)
-                fetched = cur.fetchall()
-                description = cur.description or []
+            # Server-side cursor.
+            # Source: https://www.psycopg.org/psycopg3/docs/advanced/cursors.html - Verified: 2026-08-07
+            # psycopg issues DECLARE ... CURSOR FOR <statement> and
+            # then FETCH, so the validated text reaches the database unmodified and the
+            # cap is expressed as how many rows are asked for. Requesting cap + 1 is how
+            # truncation is detected without a second COUNT query.
+            #
+            # No parameters are passed, so psycopg performs no client-side placeholder
+            # substitution and a literal % in the SQL (a LIKE pattern, or modulo) is
+            # passed through untouched.
+            read_cur = conn.cursor(name=_SERVER_CURSOR_NAME)
+            try:
+                read_cur.execute(inner)
+                fetched = read_cur.fetchmany(cap + 1)
+                description = read_cur.description or []
                 columns = [d.name for d in description]
                 column_types = [_type_name(d.type_code) for d in description]
+            finally:
+                # Closing issues CLOSE, which fails if the statement timeout already
+                # aborted the transaction. Suppressing that failure is deliberate and
+                # narrow: it only catches an error raised by close() itself, so when the
+                # query failed, the original exception still propagates to the handler
+                # below and reaches the retry edge intact.
+                try:
+                    read_cur.close()
+                except psycopg.Error:
+                    pass
     except psycopg.Error as exc:
         # Surface the database's own message: it is what makes the single retry
         # useful, because the model can see exactly what it got wrong.
