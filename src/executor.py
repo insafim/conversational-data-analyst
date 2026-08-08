@@ -33,7 +33,6 @@ from psycopg import sql as pgsql
 from .config import settings
 from .models import QueryResult
 
-
 #: Name for the server-side cursor. Fixed rather than generated because each call opens
 #: its own connection, so two cursors of this name never coexist.
 _SERVER_CURSOR_NAME = "cda_reader"
@@ -89,7 +88,8 @@ def run_query(sql: str, row_cap: int | None = None) -> QueryResult:
                     )
                 )
             # Server-side cursor.
-            # Source: https://www.psycopg.org/psycopg3/docs/advanced/cursors.html - Verified: 2026-08-07
+            # Source: https://www.psycopg.org/psycopg3/docs/advanced/cursors.html
+            # Verified: 2026-08-07
             # psycopg issues DECLARE ... CURSOR FOR <statement> and
             # then FETCH, so the validated text reaches the database unmodified and the
             # cap is expressed as how many rows are asked for. Requesting cap + 1 is how

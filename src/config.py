@@ -48,6 +48,7 @@ class Settings:
     row_cap: int
     llm_timeout_s: int
     max_sql_retries: int
+    max_question_chars: int
 
     @staticmethod
     def load() -> Settings:
@@ -69,6 +70,14 @@ class Settings:
             row_cap=int(os.getenv("ROW_CAP", "500")),
             llm_timeout_s=int(os.getenv("LLM_TIMEOUT_S", "45")),
             max_sql_retries=int(os.getenv("MAX_SQL_RETRIES", "1")),
+            # Bounds the untrusted text sent to the provider. The other limits here cap
+            # what a query costs once the model has written it; this caps what the model
+            # is asked to read, which nothing else does. A question this long is not a
+            # question. It is either a paste of a document or an attempt to bury an
+            # instruction where a reviewer will not see it, and both are cheaper to
+            # refuse than to send. 2000 characters is several times the longest question
+            # in the gold set, so it does not constrain real use.
+            max_question_chars=int(os.getenv("MAX_QUESTION_CHARS", "2000")),
         )
 
 

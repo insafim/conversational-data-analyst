@@ -159,8 +159,16 @@ The "Notes" column is close to what the model sees at query time — see
 | Column | Type | Notes |
 | --- | --- | --- |
 | `terminal_id` | `integer` PK | Identity. |
-| `terminal_name` | `text` | Unique across all ports. |
+| `terminal_name` | `text` | Unique across all ports. **Every terminal name begins with its `port_name`** — see the trap below. |
 | `port_name` | `text` | The port containing the terminal. A port may have several terminals; here each has one. |
+
+> **The `port_name` / `terminal_name` trap.** Every terminal name in this table starts with
+> its own port name: port `Jebel Ali` contains terminal `Jebel Ali Terminal 2`. So a bare
+> port name is a plausible value for *either* column, and nothing in the types resolves it.
+> Filtering `terminal_name = 'Jebel Ali'` matches nothing and returns zero rows without
+> erroring. The eval caught exactly this in `q19`. The only fix available was to state the
+> relationship in the `COMMENT ON` text, which reaches the model through the prompt, and
+> `tests/test_schema.py` now asserts it still does.
 | `country` | `text` | Country of the port. |
 | `berth_count` | `smallint` | Berths available — a capacity proxy. Constrained 1–30. |
 | `opened_year` | `smallint` | Year the terminal opened. Constrained 1900–2100. |
@@ -197,7 +205,7 @@ The "Notes" column is close to what the model sees at query time — see
 | `port_call_id` | `integer` PK | Identity. |
 | `vessel_id` | `integer` FK → `vessels` | Join for operator, type, capacity, flag. |
 | `terminal_id` | `integer` FK → `terminals` | Join for port and country. |
-| `arrival_ts` | `timestamp` | Arrived in the port area and **began waiting**. Never NULL. |
+| `arrival_ts` | `timestamp` | Arrived in the port area and **began waiting**. Never NULL. The time axis for *arrivals* and call counts — **not** for container volume, which belongs to `cargo_moves.move_ts`. A vessel arriving on 31 January is worked in February, so the two group into different months. The eval caught this in `q28`. |
 | `berth_ts` | `timestamp` | Allocated a berth; cargo work could begin. NULL for cancelled calls. |
 | `departure_ts` | `timestamp` | Left the berth. NULL for cancelled calls. |
 | `status` | `text` | Enum: `completed`, `cancelled`. |
@@ -237,7 +245,7 @@ terminal leads on wait by 3× but on dwell by under an hour.
 | `crane_id` | `integer` FK → `cranes` | The crane that did the work. Always at the same terminal as the call. |
 | `move_type` | `text` | Enum: `load` (onto the vessel), `discharge` (off the vessel). |
 | `container_count` | `integer` | Containers in this batch. **`SUM` this** for throughput/volume. |
-| `move_ts` | `timestamp` | When the batch was performed — inside the vessel's berth window. |
+| `move_ts` | `timestamp` | When the batch was performed — inside the vessel's berth window. **This is the time axis for container volume**, not `port_calls.arrival_ts`. |
 | `duration_minutes` | `smallint` | **Minutes** for the batch. Productivity = `container_count / (duration_minutes / 60.0)` containers per hour. |
 
 ### Indexes
@@ -796,7 +804,7 @@ the chart:
 
 ### The 36 questions used for evaluation
 
-[eval/gold_questions.jsonl](../eval/gold_questions.jsonl) holds the full evaluated set —
+[eval/gold_questions.yaml](../eval/gold_questions.yaml) holds the full evaluated set —
 28 answerable questions with hand-verified reference SQL, 3 ambiguous, 5 adversarial. The
 last three answerable items (`q26` to `q28`) are window functions: a `RANK()` partitioned by
 quarter, a running total with an explicit `ROWS` frame, and a `LAG` for period-over-period
@@ -921,4 +929,5 @@ trusted.
 | [db/01_schema.sql](../db/01_schema.sql) | Authoritative DDL, constraints, and column comments |
 | [db/seed.py](../db/seed.py) | Authoritative generator |
 | [db/verify_seed.sql](../db/verify_seed.sql) | The nine signal checks |
-| [eval/gold_questions.jsonl](../eval/gold_questions.jsonl) | 36 evaluated questions with reference SQL |
+| [eval/gold_questions.yaml](../eval/gold_questions.yaml) | 36 evaluated questions with reference SQL |
+| [eval/gold.py](../eval/gold.py) | The gold set's schema, validated at load |

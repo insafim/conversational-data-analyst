@@ -78,6 +78,16 @@ _FORBIDDEN_FUNCTIONS: frozenset[str] = frozenset({
     "query_to_xml", "xmlelement",
     "set_config", "pg_rotate_logfile",
 
+    # Server and session disclosure. None of these read business data, so none of them
+    # answer a business question; what they return is the host address, the backend PID,
+    # and which privileges this role holds, which is the reconnaissance a caller performs
+    # before attempting anything else. `inet_server_addr()` was verified to execute
+    # successfully as `analyst_ro` and return the container's IP before being denied here.
+    "inet_server_addr", "inet_server_port", "inet_client_addr", "inet_client_port",
+    "pg_backend_pid", "pg_postmaster_start_time", "pg_get_userbyid",
+    "has_table_privilege", "has_database_privilege", "has_schema_privilege",
+    "current_schemas", "pg_get_viewdef", "pg_get_functiondef",
+
     # Sequence functions MUTATE STATE from inside a SELECT. `SELECT nextval('s')` and
     # `SELECT setval('s', 1)` are writes wearing a SELECT's clothes: they parse as an
     # ordinary query, contain no write node, and change the database.
@@ -94,13 +104,46 @@ _FORBIDDEN_FUNCTIONS: frozenset[str] = frozenset({
     "current_setting",
 })
 
+# Functions sqlglot gives a dedicated node type rather than parsing as a named call.
+# `version()` becomes `CurrentVersion`, `current_user` becomes `CurrentUser`, and so on,
+# so a name-based deny-list never sees them. They are matched by class instead.
+#
+# Found by parsing each construct and printing the resulting node types. Every one of
+# these executed successfully as `analyst_ro` beforehand: `version()` returns the exact
+# PostgreSQL build and host architecture, and `current_user` confirms which role the
+# agent connects as. Both are the first things an attacker wants and neither is an
+# answer to a question about port operations.
+_FORBIDDEN_FUNCTION_NODES: tuple[type[exp.Expression], ...] = (
+    exp.CurrentUser, exp.SessionUser, exp.CurrentDatabase, exp.CurrentVersion,
+    exp.CurrentSchema,
+)
+
 # Schemas holding server internals or credentials. Business questions never need these;
 # a request for them is reconnaissance.
 _FORBIDDEN_SCHEMAS: frozenset[str] = frozenset({"pg_catalog", "information_schema", "pg_toast"})
 
-_FORBIDDEN_TABLES: frozenset[str] = frozenset({
-    "pg_authid", "pg_shadow", "pg_user_mapping", "pg_settings", "pg_stat_activity",
-})
+# Every PostgreSQL system catalog and system view is named with this prefix, so denying
+# the prefix denies the whole class rather than the handful of catalogs someone thought
+# to list.
+#
+# The prefix is matched because the schema check above is not sufficient on its own: it
+# reads `table.db`, which is empty for an unqualified reference, and `pg_catalog` sits in
+# the default `search_path`. `SELECT rolname FROM pg_roles` therefore resolves to the
+# catalog while presenting no schema for the check to match. Verified by running it:
+# before this rule, that query passed the validator and returned the server's role names.
+# `pg_database`, `pg_tables`, `pg_class`, `pg_proc` and `pg_extension` behaved the same
+# way. The GRANTs do not stop these, because these catalogs are world-readable in
+# PostgreSQL; this is one of the cases where layer 1 genuinely does not hold and the
+# validator has to.
+#
+# The trade this makes: PostgreSQL does NOT reserve the `pg_` prefix for user tables
+# (`CREATE TABLE pg_mytable` was run against this database and succeeded), so a business
+# table named `pg_*` would be denied. That is accepted because no table in this schema
+# uses the prefix, which is asserted against the live database in
+# tests/test_security_boundary.py rather than left as an assumption. The check lives
+# there rather than in tests/test_validator.py because the latter is deliberately
+# database-free, as its module docstring states.
+_SYSTEM_TABLE_PREFIX = "pg_"
 
 
 def _fail(violation: str, reason: str) -> ValidationResult:
@@ -177,21 +220,35 @@ def validate_sql(sql: str) -> ValidationResult:
     #    pg_read_file, dblink, ...) are not standard SQL, so they arrive as Anonymous.
     #    Both cases are handled so the check does not depend on that staying true.
     for func in tree.find_all(exp.Anonymous, exp.Func):
+        if isinstance(func, _FORBIDDEN_FUNCTION_NODES):
+            return _fail(
+                "forbidden_function",
+                f"{type(func).__name__} discloses server details and is not permitted.",
+            )
         name = func.name if isinstance(func, exp.Anonymous) else type(func).__name__
         if isinstance(name, str) and name.lower() in _FORBIDDEN_FUNCTIONS:
             return _fail("forbidden_function", f"The function {name}() is not permitted.")
 
-    # 7. Denied schemas and system tables.
+    # 7. Denied schemas and system catalogs.
+    #
+    # CTE names parse as Table nodes too, so they are collected first and excluded.
+    # Without this, `WITH pg_summary AS (...) SELECT * FROM pg_summary` is denied even
+    # though it never touches a catalog. A validator that blocks legitimate questions
+    # is not extra safe, it is broken, and the failure looks like bad model output.
+    cte_names = {
+        (cte.alias or "").lower() for cte in tree.find_all(exp.CTE)
+    }
     for table in tree.find_all(exp.Table):
         if (table.db or "").lower() in _FORBIDDEN_SCHEMAS:
             return _fail(
                 "system_schema",
                 f"Access to the {table.db} schema is not permitted.",
             )
-        if (table.name or "").lower() in _FORBIDDEN_TABLES:
+        name = (table.name or "").lower()
+        if name.startswith(_SYSTEM_TABLE_PREFIX) and name not in cte_names:
             return _fail(
                 "system_table",
-                f"Access to the system table {table.name} is not permitted.",
+                f"Access to the system catalog {table.name} is not permitted.",
             )
 
     return ValidationResult(ok=True)

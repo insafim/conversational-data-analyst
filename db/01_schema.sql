@@ -161,8 +161,16 @@ CREATE INDEX cargo_moves_move_ts_idx      ON cargo_moves (move_ts);
 
 COMMENT ON TABLE terminals IS
   'Container terminals. One row per terminal. A port may contain several terminals.';
-COMMENT ON COLUMN terminals.terminal_name IS 'Terminal name, unique across all ports.';
-COMMENT ON COLUMN terminals.port_name     IS 'Port the terminal belongs to, e.g. Rotterdam, Singapore.';
+-- These two comments are written as a pair and must stay one. Every terminal_name in this
+-- table begins with its own port_name ("Jebel Ali" -> "Jebel Ali Terminal 2"), so a bare
+-- port name is a valid-looking value for either column and the schema alone cannot say
+-- which is meant. A model that guesses terminal_name gets an exact-match filter that
+-- returns zero rows, which is a wrong answer that never raises an error. Observed: eval
+-- q19 wrote `WHERE t.terminal_name = 'Jebel Ali'` and returned nothing.
+COMMENT ON COLUMN terminals.terminal_name IS
+  'Full terminal name, unique across all ports, e.g. "Jebel Ali Terminal 2", "Rotterdam Delta Terminal". Every terminal name BEGINS WITH its port_name, so filter on this column only when the question names a specific terminal in full; a bare port or city name belongs to port_name.';
+COMMENT ON COLUMN terminals.port_name     IS
+  'Port the terminal belongs to, e.g. Rotterdam, Singapore, Jebel Ali, Hamburg, Felixstowe, Colombo. A port may contain several terminals. Use THIS column, not terminal_name, whenever the question names a port or city.';
 COMMENT ON COLUMN terminals.country       IS 'Country the port is located in.';
 COMMENT ON COLUMN terminals.berth_count   IS 'Number of berths available at this terminal (capacity proxy).';
 COMMENT ON COLUMN terminals.opened_year   IS 'Calendar year the terminal opened.';
@@ -190,7 +198,8 @@ COMMENT ON TABLE port_calls IS
   'Vessel visits. One row per visit of a vessel to a terminal. This is the grain for berth wait, dwell time and visit-count questions.';
 COMMENT ON COLUMN port_calls.vessel_id    IS 'Vessel making the call. Join to vessels for operator, type or capacity.';
 COMMENT ON COLUMN port_calls.terminal_id  IS 'Terminal being visited. Join to terminals for port or country.';
-COMMENT ON COLUMN port_calls.arrival_ts   IS 'When the vessel arrived in the port area and began waiting for a berth.';
+COMMENT ON COLUMN port_calls.arrival_ts   IS
+  'When the vessel arrived in the port area and began waiting for a berth. Use this as the time axis for questions about ARRIVALS, port call counts, or waiting time. For container volume over time use cargo_moves.move_ts instead, which is when the cargo was actually worked.';
 COMMENT ON COLUMN port_calls.berth_ts     IS 'When the vessel was allocated a berth and cargo work could begin. NULL for cancelled calls.';
 COMMENT ON COLUMN port_calls.departure_ts IS 'When the vessel left the berth. NULL for cancelled calls.';
 COMMENT ON COLUMN port_calls.status       IS 'One of: completed, cancelled. Cancelled calls never berthed and have NULL berth_ts, departure_ts and berth_wait_hours.';
@@ -205,5 +214,12 @@ COMMENT ON COLUMN cargo_moves.port_call_id     IS 'Port call this work belongs t
 COMMENT ON COLUMN cargo_moves.crane_id         IS 'Crane that performed the moves. Always belongs to the same terminal as the port call.';
 COMMENT ON COLUMN cargo_moves.move_type        IS 'One of: load (containers onto the vessel), discharge (containers off the vessel).';
 COMMENT ON COLUMN cargo_moves.container_count  IS 'Number of containers moved in this batch. SUM this column for throughput or volume questions.';
-COMMENT ON COLUMN cargo_moves.move_ts          IS 'When this batch of moves was performed.';
+-- Paired with port_calls.arrival_ts, for the same reason terminal_name and port_name are
+-- paired above. "Monthly container volume" has two plausible time axes: when the boxes
+-- moved (this column) and when the vessel arrived (arrival_ts). A call that arrives on 31
+-- January is worked in February, so the two group into different months and both produce
+-- SQL that runs. Observed: eval q28 grouped by arrival_ts and returned twelve rows that
+-- silently disagreed with the reference from March onward.
+COMMENT ON COLUMN cargo_moves.move_ts          IS
+  'When this batch of moves was performed. THIS is the time axis for container volume: group by move_ts for throughput or volume over time, never by the port call arrival_ts, because cargo is often worked in a later month than the one the vessel arrived in.';
 COMMENT ON COLUMN cargo_moves.duration_minutes IS 'MINUTES taken to complete the batch. Crane productivity = container_count / (duration_minutes / 60.0) moves per hour.';

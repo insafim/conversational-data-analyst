@@ -61,13 +61,13 @@ with `command not found`.
 
 **Done.** Streamlit opens at [http://localhost:8501](http://localhost:8501). Ask
 *"Which terminal has the longest average berth wait?"* — you should get Jebel Ali Terminal 2 at
-17.46 hours, a bar chart, and the SQL one click away.
+17.46 hours as a metric card, and the SQL one click away.
 
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 121 unit tests, no database or network needed
-pytest                        # all 180, needs the seeded database
+pytest -m "not integration"   # 274 unit tests, no database or network needed
+pytest                        # all 343, needs the seeded database
 python eval/run_eval.py       # ~3.5 min, ~$0.32 of tokens
 ```
 
@@ -194,7 +194,7 @@ Three independent layers. Only the bottom two are load-bearing.
 | # | Layer | Mechanism | Can the model affect it? |
 | - | --- | --- | --- |
 | 1 | **Database permissions** | `analyst_ro`: `CONNECT`, `USAGE`, `SELECT`. No write grant exists to revoke. | **No** — enforced by PostgreSQL, below the process |
-| 2 | **Code validator** | sqlglot parse; one statement; SELECT-family root; **no write node anywhere in the tree**; denied functions and system schemas | **No** — pure code, no LLM in it |
+| 2 | **Code validator** | sqlglot parse; one statement; SELECT-family root; **no write node anywhere in the tree**; denied functions, system schemas and system catalogs | **No**, pure code with no LLM in it |
 | 3 | **Prompt hardening** | `classify` refuses hostile/out-of-scope questions before SQL is written | **Yes** — so it is not counted as a security control |
 
 ### The attack that shaped the validator
@@ -231,6 +231,15 @@ Every failure is on **permissions**, not on the bypassable flag. `tests/test_sec
 asserts exactly that, and fails if a write is ever stopped only by the transaction guard — which
 would mean the boundary had silently moved to the weaker layer.
 
+**Where this argument does not hold.** Permissions stop every *write* above, but they do not stop
+system-catalog *reads*. Probing on 2026-08-08 found that this role can read `pg_roles`,
+`pg_database`, `pg_tables` and `pg_class`, and can call `version()` and `inet_server_addr()`,
+disclosing role names, database names, the table list, the exact server build and the server's IP.
+Those catalogs are world-readable in PostgreSQL, so no `GRANT` change removes the exposure. The
+block is enforced in `src/validator.py` instead, which makes this the one case where the validator
+rather than the permission system is the only control. `pg_authid` stays unreadable throughout.
+See [ADR-004](docs/ADR/ADR-004-defence-in-depth-sql.md), "The case where layer 1 does not hold".
+
 **Prompts can be fooled. Permissions cannot.**
 ([ADR-004](docs/ADR/ADR-004-defence-in-depth-sql.md))
 
@@ -249,25 +258,47 @@ would mean the boundary had silently moved to the weaker layer.
 ## Evaluation
 
 <!-- EVAL_RESULTS_START -->
-Six full runs. The gold set grew twice, so read across the row and not down the column: runs 1 to 3
-scored 22 answerable items, run 4 scored 25, and runs 5 and 6 score 28 after three window-function
-questions were added.
+Ten full runs. The gold set grew twice, so read across the row and not down the column: runs 1 to 3
+scored 22 answerable items, run 4 scored 25, and runs 5 onward score 28 after three window-function
+questions were added. Runs 1 to 4 are shown for history and are **not comparable** with the rest.
 
-| | Run 1 | Run 2 | Run 3 | Run 4 | Run 5 | Run 6 |
+Runs 8 to 10 follow two schema-comment fixes described below, so they measure different code from
+runs 5 to 7.
+
+| | Run 5 | Run 6 | Run 7 | Run 8 | Run 9 | Run 10 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Execution accuracy | 86.4% | 95.5% | 86.4% | 92.0% | 92.9% | **96.4%** |
-| Answer groundedness | not measured | not measured | not measured | 100% | 89.3% | **92.9%** |
-| Ambiguity handling | 100% | 100% | 66.7% | 100% | 100% | **100%** |
+| Execution accuracy | 92.9% | 96.4% | 96.4% | **100%** | **100%** | **100%** |
+| Answer groundedness | 89.3% | 92.9% | 96.4% | 96.4% | 92.9% | **96.4%** |
+| Ambiguity handling | 100% | 100% | 100% | 100% | 100% | **100%** |
 | Safety / refusals | 100% | 100% | 100% | 100% | 100% | **100%** |
-| Overall | 90.0% | 96.7% | 86.7% | 93.9% | 94.4% | **97.2%** |
-| Mean latency | 8.3s | 9.1s | 12.0s | 6.0s | 6.1s | 5.9s |
-| Cost per run | $0.228 | $0.238 | $0.224 | $0.274 | $0.325 | $0.315 |
-| Gold items | 30 | 30 | 30 | 33 | 36 | 36 |
+| Mean latency | 6.1s | 5.9s | 6.1s | 7.7s | 5.6s | 6.7s |
+| Cost per run | $0.325 | $0.315 | $0.328 | $0.341 | $0.339 | $0.335 |
+| Gold items | 36 | 36 | 36 | 36 | 36 | 36 |
 
-**Execution accuracy across all six runs is 86.4% to 96.4%.** Quoting only the best run would be
-the wrong number to trust: runs 2 and 3 were identical code and prompts and landed nine points
-apart. At 28 answerable items one case is 3.6 points, so a single run cannot distinguish 93 from
-96. This is a regression detector, not a capability measurement.
+**Read the 100% carefully.** It is 28 of 28 on three consecutive runs, which is 84 of 84
+question-runs on a 28-question set — a genuine result, and not the same claim as "100% accurate".
+Groundedness is still 92.9–96.4%: `q28`'s summariser keeps reporting a month-on-month delta it
+computed rather than one the query returned, which is the failure the groundedness metric exists to
+expose and the accuracy metric cannot see.
+
+**What moved accuracy from ~96% to 28/28 was column comments, not model changes.** The eval caught
+two failures of the same kind, both SQL that ran cleanly and answered a slightly different question:
+
+- `q19` filtered `terminals.terminal_name = 'Jebel Ali'` and matched nothing, because every terminal
+  name *begins with* its port name — the terminal is `Jebel Ali Terminal 2` and the port is
+  `Jebel Ali`. Zero rows, no error.
+- `q28` grouped monthly container volume by `port_calls.arrival_ts` instead of `cargo_moves.move_ts`.
+  A vessel arriving on 31 January is worked in February, so the two group into different months.
+
+Both were fixed by rewriting the `COMMENT ON` text for the columns involved, which
+`src/schema.py` injects into the SQL-generation prompt. `tests/test_schema.py` now asserts those
+comments reach the prompt, so deleting them fails the suite instead of quietly costing accuracy.
+
+**On the 28-question set, execution accuracy runs 92.9% to 100% across six runs.** Quoting only the
+best run would be the wrong number to trust: runs 2 and 3 were identical code and prompts and landed
+nine points apart. At 28 answerable items one case is 3.6 points, so a single run cannot distinguish
+93 from 96. Three consecutive clean runs is a stronger signal than any one of them, and it is still
+a regression detector rather than a capability measurement.
 
 The clearest evidence of that is which item fails. Run 5 failed `q09` and passed `q19`; run 6 did
 the exact opposite, with `q19` returning zero rows from a filter on the wrong column. Same code,
@@ -340,11 +371,12 @@ a single run of 22 items cannot distinguish 86% from 95%** — one item is 4.5 p
 ADR-006 predicted about small gold sets, now measured rather than theorised. The fix is more items
 and repeated runs, which is a real cost, not a footnote.
 
-> **These three runs predate two later additions to the gold set.** They were measured against 22
-> answerable items; the set now holds 24, after a scatter-chart case and a free-text case were added
-> to close coverage gaps. The numbers above have deliberately **not** been restated against the
-> larger set, because that would mean reporting results the harness never actually produced. Re-run
-> `python eval/run_eval.py` for current figures.
+> **These three runs predate every later addition to the gold set.** They were measured against 22
+> answerable items. The set grew twice after that: to 25 when a scatter-chart case and a free-text
+> case were added to close coverage gaps, then to 28 when three window-function questions were
+> added. The numbers above have deliberately **not** been restated against the larger set, because
+> that would mean reporting results the harness never actually produced. See the table at the top
+> of this section for the current figures.
 
 **The one number that did not move: safety — 5/5 in all three runs, 15/15 attempts.** That is the
 result the design is built to guarantee, and it is the one guaranteed by permissions rather than by
@@ -465,26 +497,28 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── models.py           Typed state and results
 │   └── config.py           Settings; separates admin and read-only identities
 ├── eval/
-│   ├── gold_questions.jsonl  36 scored cases
+│   ├── gold_questions.yaml   36 scored cases
+│   ├── gold.py               Gold-set schema; validated at load
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output — evidence for the numbers above
-└── tests/                  180 tests
+└── tests/                  343 tests
 ```
 
 ---
 
 ## Testing
 
-180 tests. They exist to catch regressions, not to raise a coverage number — so the suite is
+343 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
 | --- | --- | --- |
-| `test_validator.py` | 63 | The security gate: every attack, evasion, and fail-closed case |
-| `test_eval_scoring.py` | 29 | The comparison logic — i.e. the definition of "correct" |
-| `test_security_boundary.py` | 15 | That `GRANT`s hold with the read-only guard disabled |
+| `test_gold_set.py` | 120 | The gold set's schema, parametrized over all 36 cases |
+| `test_validator.py` | 93 | The security gate: every attack, evasion, and fail-closed case |
+| `test_eval_scoring.py` | 32 | The comparison logic, i.e. the definition of "correct" |
+| `test_security_boundary.py` | 17 | That `GRANT`s hold with the read-only guard disabled |
 | `test_llm_extraction.py` | 15 | Parsing model output; functions that raise rather than half-parse |
-| `test_agent_routing.py` | 14 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
+| `test_agent_routing.py` | 22 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
 | `test_charts.py` | 14 | Every chart rule, at its boundaries |
 | `test_executor.py` | 13 | Row cap and its boundary, statement timeout, verbatim execution, errors |
 | `test_schema.py` | 5 | Catalog introspection, and that composed identifiers are quoted |

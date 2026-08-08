@@ -23,7 +23,7 @@ the order in which they must hold:
 | # | Layer | Mechanism | Can the model affect it? |
 | - | --- | --- | --- |
 | 1 | **Database permissions** | `analyst_ro` role: `CONNECT`, `USAGE`, `SELECT` only. No `INSERT`/`UPDATE`/`DELETE`/DDL grants anywhere. | **No.** Enforced by PostgreSQL, below the process. |
-| 2 | **Code validator** | `validator.py`: sqlglot parse, exactly one statement, root must be `Select`/`SetOperation`/`Subquery`, **and no write node anywhere in the parse tree at any depth**, plus denied functions and system schemas. Runs before execution, on the only edge into `execute`. | **No.** Pure code with no LLM call in it. |
+| 2 | **Code validator** | `validator.py`: sqlglot parse, exactly one statement, root must be `Select`/`SetOperation`/`Subquery`, **and no write node anywhere in the parse tree at any depth**, plus denied functions, system schemas and system catalogs. Runs before execution, on the only edge into `execute`. | **No.** Pure code with no LLM call in it. |
 | 3 | **Classification / prompt** | `classify` routes `out_of_scope` questions to `refuse` before any SQL is generated. | **Yes** — and therefore it is not counted as a security control. |
 
 The grant that makes layer 1 real, in `db/02_roles.sql`:
@@ -158,6 +158,49 @@ Two constructs were allowed and one was subsequently blocked:
 - `SELECT * FROM generate_series(1, 1000000000)` — still allowed, deliberately. `generate_series`
   is legitimate, and the defence is the one already designed for expensive reads: verified blocked
   by the statement timeout after 5.1s. Blocking the function outright would be over-broad.
+
+### The case where layer 1 does not hold
+
+Added 2026-08-08, after a verification pass probed the validator with reconnaissance queries
+rather than with writes. Every construct below **passed the validator and executed
+successfully** as `analyst_ro` *before this fix*. All of them are denied now, and
+`tests/test_validator.py` pins each one:
+
+| Query | What it returned |
+| --- | --- |
+| `SELECT rolname FROM pg_roles` | every role name on the server |
+| `SELECT datname FROM pg_database` | every database on the server |
+| `SELECT tablename FROM pg_tables` | the full table list, including system tables |
+| `SELECT version()` | `PostgreSQL 18.4 on aarch64-unknown-linux-musl, ...` |
+| `SELECT current_user` | `analyst_ro` |
+| `SELECT inet_server_addr()` | `172.22.0.2/32` |
+
+Two independent causes, and both are worth naming because each defeats a different check.
+
+**The schema deny-list only ever matched the qualified form.** It reads `table.db`, which is
+the empty string for an unqualified reference, and `pg_catalog` is in the default
+`search_path`. So `SELECT * FROM pg_catalog.pg_authid` was blocked while
+`SELECT * FROM pg_roles` was not, even though the second is the form a model actually writes.
+The named-table list held five entries, which covered `pg_authid` and missed everything else.
+
+**Server functions do not parse as named calls.** sqlglot gives `version()`, `current_user`,
+`session_user`, `current_database()` and `current_schema()` dedicated node types
+(`CurrentVersion`, `CurrentUser`, and so on), so a deny-list matching on function *name* never
+sees them no matter how many names it lists. They are now matched by node class.
+
+The important part is what this says about the layering argument. Everywhere else in this
+document, the GRANTs are the backstop and the validator is a convenience that produces a
+better error message. Here that is reversed: these catalogs are **world-readable in
+PostgreSQL**, so no privilege change blocks them and the validator is the only layer that can.
+`tests/test_security_boundary.py` asserts that they remain readable at the database level,
+precisely so that this stays visible rather than being quietly assumed away.
+
+The fix denies any table named `pg_*` that is not a CTE alias. That is a naming convention
+rather than a rule PostgreSQL enforces: `CREATE TABLE pg_mytable` was run against this database
+and succeeded, so a business table could legally use the prefix and would then be unqueryable.
+The trade is accepted because no table in this schema uses it, which is asserted against the
+live database rather than assumed, and because the CTE exclusion keeps
+`WITH pg_summary AS (...)` working.
 
 One finding worth recording, because it would mislead anyone testing this casually: **`GRANT INSERT
 ON terminals TO analyst_ro`, issued by `analyst_ro` itself, does not raise an error.** PostgreSQL

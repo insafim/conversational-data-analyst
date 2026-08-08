@@ -27,6 +27,7 @@ on the column's *name*, which would be the fragile version of this idea.
 
 from __future__ import annotations
 
+import numbers
 import re
 from decimal import Decimal
 from typing import NamedTuple
@@ -130,6 +131,16 @@ def _bar_or_table(result: QueryResult, roles: ColumnRoles) -> ChartSpec:
     multi-dimensional breakdown and a single-axis bar chart would silently collapse a
     dimension — so those still render as a table.
     """
+    # A bar chart of one bar is not a chart, it is a number drawn very wide. Rule 2 has
+    # already claimed the readable single-row shapes, so anything arriving here with one
+    # row carries extra columns that a metric cannot show, and a table is the honest
+    # render. See the note on Rule 2 for how this defect reached the demo.
+    if result.row_count == 1:
+        return ChartSpec(
+            kind=ChartKind.TABLE,
+            reason="A single row is shown as a table rather than a one-bar chart.",
+        )
+
     label = roles.categorical[0]
     distinct = len({row[result.columns.index(label)] for row in result.rows})
     is_label_like = distinct == result.row_count
@@ -158,6 +169,84 @@ def _bar_or_table(result: QueryResult, roles: ColumnRoles) -> ChartSpec:
     )
 
 
+class MetricFields(NamedTuple):
+    """The three strings a metric card renders."""
+
+    label: str
+    value: str
+    help: str | None
+
+
+def format_metric(value: object) -> str:
+    """Render a headline number without lying about its precision.
+
+    Reals are fixed to two decimals because they arrive as PostgreSQL `numeric`
+    aggregates: an unformatted average prints as 17.459999999999999, which reads as false
+    precision on the one figure the eye treats as the answer. Integers keep thousands
+    separators and no decimal point, because a count of 239099 containers is not
+    239,099.00.
+
+    Three type checks here are less obvious than they look, and each was wrong in a
+    first draft:
+
+    Listed in the order the checks execute. Each was wrong in a first draft, and the ABCs
+    are load-bearing rather than stylistic.
+    Source: https://docs.python.org/3/library/numbers.html - Verified: 2026-08-08
+
+    * `None` becomes "n/a" rather than "None". A null aggregate is a real result and
+      "None" on a headline card reads as a failure rather than as missing data.
+    * `bool` is rejected next, because `isinstance(True, numbers.Integral)` is True and a
+      boolean measure would otherwise render as "1".
+    * `numbers.Integral` rather than `int`. A value that has passed through pandas is a
+      `numpy.int64`, and `isinstance(numpy.int64(1), int)` is **False** while
+      `isinstance(numpy.int64(1), numbers.Integral)` is True, because numpy registers its
+      scalar types with the ABCs rather than subclassing the builtins. A plain `int` check
+      therefore drops the separators from exactly the COUNT and SUM aggregates this
+      function exists to format. `metric_fields` reads `result.rows` and so never hands
+      over a numpy type today, but this function is importable and the trap is invisible
+      at the call site. Confirmed by running both checks, not by reading docs.
+    * `Decimal` is named explicitly, because it is deliberately **not** registered as a
+      `numbers.Real` — the stdlib keeps it out to prevent silent float/Decimal mixing.
+    """
+    # See the docstring for why each of these four branches is in this order.
+    if value is None:
+        return "n/a"
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, numbers.Integral):
+        return f"{int(value):,}"
+    if isinstance(value, (numbers.Real, Decimal)):
+        return f"{float(value):,.2f}"
+    return str(value)
+
+
+def metric_fields(result: QueryResult, chart: ChartSpec) -> MetricFields:
+    """Resolve a METRIC spec into what the UI shows.
+
+    This is here rather than in the Streamlit layer because it is a decision, and the
+    argument of ADR-005 is that chart decisions belong in code a test can reach. It was
+    briefly inline in `app.py`, where nothing but running the app by hand exercised it:
+    reverting to positional access (`frame.iloc[0, 0]`) would have passed the entire
+    suite while crashing on the first superlative question, because column 0 of
+    `terminal_name, avg_wait` is a string and `f"{value:,}"` raises on a string.
+
+    The measure is therefore looked up **by name**. When a label column is present the
+    entity takes the label slot and the measure name moves to the tooltip, because
+    "17.46" with the unit nowhere on screen is not an answer.
+    """
+    measure = chart.y[0] if chart.y else result.columns[0]
+    row = result.rows[0]
+    value = row[result.columns.index(measure)]
+
+    if chart.x and chart.x in result.columns:
+        return MetricFields(
+            label=str(row[result.columns.index(chart.x)]),
+            value=format_metric(value),
+            help=measure,
+        )
+    return MetricFields(label=measure, value=format_metric(value), help=None)
+
+
 def pick_chart(result: QueryResult) -> ChartSpec:
     """Choose a chart for a result set. Rules are applied in order; first match wins."""
     # Rule 1 — nothing to draw.
@@ -169,15 +258,31 @@ def pick_chart(result: QueryResult) -> ChartSpec:
     roles = classify_columns(result)
     temporal, numeric, categorical = roles
 
-    # Rule 2 — one row, one number: a headline figure needs no axes.
-    if result.row_count == 1 and len(numeric) == 1 and len(result.columns) == 1:
+    # Rule 2 — a single row carrying a single measure is a headline figure, not a chart.
+    #
+    # The `<= 2` here rather than `== 1` is deliberate and was a real defect. A superlative
+    # question ("which terminal has the longest berth wait?") answers with a label AND a
+    # measure, so it returns two columns, missed this rule, and fell through to Rule 4 —
+    # which drew a bar chart containing exactly one bar, stretched across the full width of
+    # the container. Every "which X is the most Y" question in the demo hit it, including
+    # the first example button in the UI. Found by rendering the gold set, not predicted.
+    if result.row_count == 1 and len(numeric) == 1 and len(result.columns) <= 2:
+        label = next((name for name in result.columns if name != numeric[0]), None)
         return ChartSpec(
-            kind=ChartKind.METRIC, y=[numeric[0]],
-            reason="Single row with a single numeric value renders as a metric.",
+            kind=ChartKind.METRIC, x=label, y=[numeric[0]],
+            reason=(
+                f"Single row with one measure renders as a metric labelled by '{label}'."
+                if label
+                else "Single row with a single numeric value renders as a metric."
+            ),
         )
 
-    # Rule 3 — a time axis plus at least one measure is a line chart.
-    if temporal and numeric:
+    # Rule 3 — a time axis plus at least one measure is a line chart. More than one row is
+    # required: a line drawn through a single point shows no trend, so a one-row result is
+    # left to the metric rule above or falls through to a table. This guard is preventive,
+    # unlike the Rule 2 widening above: no gold question produced a one-point line, but the
+    # same shape reaches it whenever a time filter narrows to a single period.
+    if temporal and numeric and result.row_count > 1:
         return ChartSpec(
             kind=ChartKind.LINE, x=temporal[0], y=numeric,
             reason=f"'{temporal[0]}' is a time axis, so the trend renders as a line chart.",
@@ -189,7 +294,13 @@ def pick_chart(result: QueryResult) -> ChartSpec:
         return _bar_or_table(result, roles)
 
     # Rule 5 — two measures and nothing to group by: a relationship, so scatter.
-    if len(numeric) == 2 and not categorical and not temporal:
+    #
+    # The row guard is the same defect as the one-bar chart, found by audit rather than by
+    # rendering: a scatter plot of a single point draws no relationship, and this is the
+    # shape a superlative takes whenever its label column is itself numeric (grouped by
+    # `year` or `crane_id`, say), because `classify_columns` reads a numeric ID as a
+    # measure. Rules 2, 3 and 4 all refuse single rows; this one was missed.
+    if len(numeric) == 2 and not categorical and not temporal and result.row_count > 1:
         return ChartSpec(
             kind=ChartKind.SCATTER, x=numeric[0], y=[numeric[1]],
             reason="Two numeric columns with no category or time axis render as a scatter plot.",

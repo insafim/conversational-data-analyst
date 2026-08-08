@@ -33,6 +33,8 @@ The model decides content; the graph decides flow.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -48,6 +50,68 @@ from .validator import validate_sql
 # Rows are rendered for the summariser as delimited text rather than JSON: it is more
 # compact per token, and there is no nesting to preserve.
 _MAX_SUMMARY_ROWS = 50
+
+
+@dataclass
+class Timings:
+    """Wall-clock seconds per graph node, accumulated across one question.
+
+    A single total tells you a question took nine seconds; it does not tell you whether
+    that was the model, the database, or the schema read, which is the only version of
+    the number that supports a decision. The three LLM nodes and `execute` differ by
+    roughly an order of magnitude, so attributing the total is what makes it actionable.
+
+    Mutable and carried through state by reference, exactly like `llm.Usage`. That is
+    deliberate: LangGraph's default channel for a plain TypedDict key REPLACES the value
+    on each node return, so a node returning `{"timings": {...}}` would discard every
+    earlier stage rather than merge. Accumulating into one object sidesteps the reducer
+    question entirely, and matches the pattern already used for token usage.
+
+    That replace behaviour was measured rather than taken from documentation, against the
+    `langgraph>=1.2.10,<2` pin in pyproject.toml. A two-node graph in which each node
+    returns a dict under the same key ends with only the second node's dict, and
+    `tests/test_agent_routing.py::test_langgraph_replaces_dict_state_so_timings_must_accumulate`
+    pins that finding so this rationale fails loudly if a future version starts merging.
+
+    `record` ADDS rather than assigns, because `generate_sql` and `validate` run twice
+    when the SQL retry fires. The sum is the honest figure for "where did the wall clock
+    go"; `passes` keeps the retry visible rather than hiding it inside a larger number.
+    """
+
+    stages: dict[str, float] = field(default_factory=dict)
+    passes: dict[str, int] = field(default_factory=dict)
+
+    def record(self, stage: str, seconds: float) -> None:
+        self.stages[stage] = round(self.stages.get(stage, 0.0) + seconds, 3)
+        self.passes[stage] = self.passes.get(stage, 0) + 1
+
+    def as_dict(self) -> dict[str, float]:
+        """Ordered slowest first, since that is the order they get read in."""
+        return dict(sorted(self.stages.items(), key=lambda kv: kv[1], reverse=True))
+
+
+def _timed(
+    stage: str, node: Callable[[State], dict[str, Any]]
+) -> Callable[[State], dict[str, Any]]:
+    """Wrap a node so its wall-clock cost is recorded.
+
+    Applied at graph-assembly time rather than as a decorator on each function, so the
+    node functions stay plain and directly unit-testable without a timing object in
+    state. The `finally` matters: a node that raises still reports the time it burned,
+    which is the case where the number is most worth having.
+    """
+
+    def wrapper(state: State) -> dict[str, Any]:
+        started = time.perf_counter()
+        try:
+            return node(state)
+        finally:
+            timings = state.get("timings")
+            if timings is not None:
+                timings.record(stage, time.perf_counter() - started)
+
+    wrapper.__name__ = stage
+    return wrapper
 
 
 class State(TypedDict, total=False):
@@ -67,6 +131,7 @@ class State(TypedDict, total=False):
     answer: str
     chart: ChartSpec
     usage: llm.Usage
+    timings: Timings
     outcome: str
 
 
@@ -224,15 +289,21 @@ def build_graph():
     design (ADR-008), so there is no cross-turn state to persist."""
     graph = StateGraph(State)
 
-    graph.add_node("classify", classify)
-    graph.add_node("clarify", clarify)
-    graph.add_node("refuse", refuse)
-    graph.add_node("generate_sql", generate_sql)
-    graph.add_node("validate", validate)
-    graph.add_node("reject", reject)
-    graph.add_node("execute", execute)
-    graph.add_node("summarize", summarize)
-    graph.add_node("pick_chart", pick_chart)
+    # Every node is registered through `_timed`, so the latency breakdown covers the
+    # whole graph by construction. Adding a node without timing it would take a
+    # deliberate departure from the line above it rather than an oversight.
+    for name, node in (
+        ("classify", classify),
+        ("clarify", clarify),
+        ("refuse", refuse),
+        ("generate_sql", generate_sql),
+        ("validate", validate),
+        ("reject", reject),
+        ("execute", execute),
+        ("summarize", summarize),
+        ("pick_chart", pick_chart),
+    ):
+        graph.add_node(name, _timed(name, node))
 
     graph.add_edge(START, "classify")
     graph.add_conditional_edges(
@@ -285,7 +356,36 @@ def ask(question: str) -> AgentResult:
     """
     started = time.perf_counter()
     usage = llm.Usage()
+    timings = Timings()
 
+    # Bound the input before it reaches a provider. This is the only guardrail that acts
+    # on the question itself rather than on the SQL derived from it, and it is refused in
+    # code for the same reason the SQL gate is: the classifier is a model, so it cannot
+    # be the thing that decides whether input is too large to send to a model.
+    question = question.strip()
+    if not question:
+        return AgentResult(
+            question=question,
+            outcome=Outcome.REFUSED,
+            answer="Please ask a question.",
+            elapsed_s=round(time.perf_counter() - started, 3),
+        )
+    if len(question) > settings.max_question_chars:
+        return AgentResult(
+            question=question[: settings.max_question_chars],
+            outcome=Outcome.REFUSED,
+            answer=(
+                f"That question is too long ({len(question):,} characters). "
+                f"Please keep it under {settings.max_question_chars:,}."
+            ),
+            elapsed_s=round(time.perf_counter() - started, 3),
+        )
+
+    # Timed like a node even though it runs outside the graph. It is cached after the
+    # first call (ADR-003), so it costs several catalog round trips once and nothing
+    # afterwards. A breakdown that omitted it would misattribute that first
+    # question's latency to whichever node happened to run next.
+    schema_started = time.perf_counter()
     try:
         schema = get_schema_context()
     except Exception as exc:  # noqa: BLE001
@@ -296,10 +396,17 @@ def ask(question: str) -> AgentResult:
             error=str(exc),
             elapsed_s=round(time.perf_counter() - started, 3),
         )
+    timings.record("schema", time.perf_counter() - schema_started)
 
     try:
         final: State = _graph().invoke(
-            {"question": question, "schema": schema, "usage": usage, "attempts": 0}
+            {
+                "question": question,
+                "schema": schema,
+                "usage": usage,
+                "timings": timings,
+                "attempts": 0,
+            }
         )
     except llm.LLMError as exc:
         return AgentResult(
@@ -308,6 +415,7 @@ def ask(question: str) -> AgentResult:
             answer=f"The language model call failed: {exc}",
             error=str(exc),
             elapsed_s=round(time.perf_counter() - started, 3),
+            stage_timings=timings.as_dict(),
             llm_calls=usage.calls,
             cost_usd=round(usage.cost_usd, 6),
         )
@@ -325,6 +433,7 @@ def ask(question: str) -> AgentResult:
             sql=final.get("sql"),
             error=final.get("error"),
             elapsed_s=elapsed,
+            stage_timings=timings.as_dict(),
             llm_calls=usage.calls,
             cost_usd=round(usage.cost_usd, 6),
             retried=attempts > 1,
@@ -338,6 +447,7 @@ def ask(question: str) -> AgentResult:
         result=final.get("result"),
         chart=final.get("chart"),
         elapsed_s=elapsed,
+        stage_timings=timings.as_dict(),
         llm_calls=usage.calls,
         cost_usd=round(usage.cost_usd, 6),
         retried=attempts > 1,

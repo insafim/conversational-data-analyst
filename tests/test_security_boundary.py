@@ -175,3 +175,60 @@ def test_statement_timeout_is_enforced() -> None:
                 cur.execute(
                     "SELECT COUNT(*) FROM port_calls a, port_calls b, port_calls c, port_calls d"
                 )
+
+
+def test_system_catalogs_are_readable_so_the_validator_must_block_them() -> None:
+    """Establishes why the validator's system-catalog rule cannot be dropped.
+
+    The rest of this file shows the GRANTs holding. This shows where they do not. These
+    catalogs are world-readable in PostgreSQL, so `analyst_ro` can read them and no
+    privilege change fixes that. The validator is the only layer that stops them, which
+    is the opposite of the usual argument in this repo and worth pinning down: if this
+    test ever starts failing, the database has changed and the validator rule is
+    redundant rather than load-bearing.
+    """
+    readable = []
+    for sql in ("SELECT rolname FROM pg_roles LIMIT 1",
+                "SELECT datname FROM pg_database LIMIT 1",
+                "SELECT version()"):
+        with psycopg.connect(settings.analyst_dsn) as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(sql)
+                    cur.fetchall()
+                    readable.append(sql)
+                except psycopg.Error:
+                    pass
+    assert readable, (
+        "no system catalog was readable; the validator's system_table rule may now be "
+        "redundant, so re-check the premise before relying on it"
+    )
+
+
+def test_no_business_table_is_hidden_by_the_system_catalog_prefix_rule() -> None:
+    """The validator denies any table named `pg_*`, so no real table may be named that.
+
+    PostgreSQL does not reserve the prefix for user tables (`CREATE TABLE pg_mytable`
+    succeeds), so this is a convention the validator imposes rather than one the database
+    enforces. Asserting it against the live schema turns "no table is called that" from an
+    assumption into a checked fact, and fails loudly if someone later adds one and finds
+    it silently unqueryable.
+    """
+    from src.validator import validate_sql
+
+    with psycopg.connect(settings.analyst_dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+            )
+            tables = [row[0] for row in cur.fetchall()]
+
+    assert tables, "no business tables found; is the database seeded?"
+    for table in tables:
+        assert not table.lower().startswith("pg_"), (
+            f"table {table!r} starts with pg_ and is therefore denied by the validator"
+        )
+        assert validate_sql(f"SELECT * FROM {table}").ok, (
+            f"the validator blocks a real business table: {table}"
+        )

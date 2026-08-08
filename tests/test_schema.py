@@ -82,3 +82,220 @@ def test_schema_summary_covers_every_table() -> None:
     summary = dict(get_schema_summary())
     assert set(summary) == {"terminals", "vessels", "cranes", "port_calls", "cargo_moves"}
     assert all(count > 0 for count in summary.values())
+
+
+# ---------------------------------------------------------------------------------
+# The COMMENT ON statements in db/01_schema.sql are functional, not decorative: they
+# are the only channel carrying units, enum values and grain to the model, none of
+# which a column type can express. Until these tests existed, deleting every comment
+# in the schema would have left the whole suite green while accuracy silently fell,
+# so the claim was enforced by a docstring rather than by anything executable.
+#
+# The oracle below is deliberately read from `pg_description` via pg_catalog joins.
+# `src/schema.py` reads comments through `information_schema` plus `col_description`,
+# so these queries share no code path with the thing under test. A copy of the
+# production query would keep passing if the production query regressed.
+# ---------------------------------------------------------------------------------
+
+_TABLE_COMMENT_ORACLE = """
+SELECT cl.relname AS table_name, d.description
+FROM pg_description d
+JOIN pg_class cl     ON cl.oid = d.objoid
+JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+WHERE ns.nspname = 'public' AND cl.relkind = 'r' AND d.objsubid = 0
+"""
+
+_COLUMN_COMMENT_ORACLE = """
+SELECT cl.relname AS table_name, att.attname AS column_name, d.description
+FROM pg_description d
+JOIN pg_class cl      ON cl.oid = d.objoid
+JOIN pg_namespace ns  ON ns.oid = cl.relnamespace
+JOIN pg_attribute att ON att.attrelid = cl.oid AND att.attnum = d.objsubid
+WHERE ns.nspname = 'public' AND cl.relkind = 'r' AND d.objsubid > 0
+  AND NOT att.attisdropped
+"""
+
+
+def _catalog(sql: str) -> list[tuple]:
+    with psycopg.connect(settings.analyst_dsn, connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            return cur.fetchall()
+
+
+_UNCOMMENTED_COLUMNS = """
+SELECT cl.relname || '.' || att.attname
+FROM pg_attribute att
+JOIN pg_class cl      ON cl.oid = att.attrelid
+JOIN pg_namespace ns  ON ns.oid = cl.relnamespace
+LEFT JOIN pg_description d ON d.objoid = cl.oid AND d.objsubid = att.attnum
+WHERE ns.nspname = 'public' AND cl.relkind = 'r'
+  AND att.attnum > 0 AND NOT att.attisdropped
+  AND d.description IS NULL
+"""
+
+
+def test_every_table_carries_a_comment() -> None:
+    """Guard the guard. The two tests below iterate over whatever comments the catalog
+    happens to hold, so both pass vacuously against a database with none. Pin
+    non-emptiness here, or dropping the whole `COMMENT ON` block satisfies the suite."""
+    tables = _catalog(_TABLE_COMMENT_ORACLE)
+    assert len(tables) == 5, f"expected a comment on all 5 tables, found {len(tables)}"
+
+
+def test_only_surrogate_keys_are_left_undocumented() -> None:
+    """Every column except the generated primary keys must carry a comment.
+
+    This encodes the instruction at the top of `db/01_schema.sql`: change a column, change
+    its comment. A new column added without one fails here, which is the only mechanism
+    that catches the omission — a missing comment breaks no query and no other test.
+
+    Surrogate keys are exempt because `terminals.terminal_id` has no semantics a sentence
+    could add. Every column that carries meaning a type cannot express is in scope.
+    """
+    undocumented = {row[0] for row in _catalog(_UNCOMMENTED_COLUMNS)}
+    surrogate_keys = {
+        "terminals.terminal_id",
+        "vessels.vessel_id",
+        "cranes.crane_id",
+        "port_calls.port_call_id",
+        "cargo_moves.move_id",
+    }
+    assert undocumented == surrogate_keys, (
+        f"columns missing a COMMENT ON: {sorted(undocumented - surrogate_keys)}"
+    )
+
+
+def _rendered_table_comments(context: str) -> dict[str, str]:
+    """Map each table to the comment rendered immediately above its CREATE TABLE line.
+
+    `get_schema_context` emits a table comment as a single `-- ...` line directly
+    preceding `CREATE TABLE <name> (`, so attribution is positional and checkable.
+    """
+    rendered: dict[str, str] = {}
+    lines = context.splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("CREATE TABLE "):
+            continue
+        table = stripped[len("CREATE TABLE "):].split("(")[0].strip()
+        previous = lines[index - 1].strip() if index else ""
+        rendered[table] = previous[2:].strip() if previous.startswith("--") else ""
+    return rendered
+
+
+def test_every_table_comment_reaches_the_rendered_context() -> None:
+    """Attribution, not presence — the same correction applied to the column test.
+
+    An audit demonstrated that the previous `description in context` form let a
+    `terminals`/`cranes` table-comment swap through untouched: both strings were still
+    somewhere in the prompt, just describing the wrong table. Misattribution is less
+    likely here than for columns, because `schema.py` keys table comments by name rather
+    than filling them by ordinal, but the assertion shape was identical and worth fixing
+    for the same reason.
+    """
+    rendered = _rendered_table_comments(get_schema_context())
+    misattributed = [
+        table
+        for table, description in _catalog(_TABLE_COMMENT_ORACLE)
+        if rendered.get(table) != description
+    ]
+    assert not misattributed, (
+        f"table comments missing from, or attached to the wrong table: {misattributed}"
+    )
+
+
+def _table_blocks(context: str) -> dict[str, str]:
+    """Split the rendered context into one text block per table.
+
+    Needed because attribution has to be checked within a table: `terminal_id` appears in
+    both `terminals` and `cranes`, so a context-wide substring search cannot tell which
+    column a comment is attached to.
+    """
+    blocks: dict[str, str] = {}
+    current: str | None = None
+    for line in context.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("CREATE TABLE "):
+            current = stripped[len("CREATE TABLE "):].split("(")[0].strip()
+            blocks[current] = ""
+        elif current is not None:
+            if stripped.startswith(");"):
+                current = None
+            else:
+                blocks[current] += line + "\n"
+    return blocks
+
+
+def test_every_column_comment_reaches_the_rendered_context() -> None:
+    """The load-bearing one. If `schema.py` stopped selecting `col_description`, or the
+    renderer stopped emitting it, generated SQL would still parse and still execute while
+    silently losing every unit and enum definition. That failure is invisible to every
+    other test in this suite.
+
+    Attribution is checked, not mere presence. An earlier version asserted only
+    `description in context`, which an audit correctly flagged as too weak: an off-by-one
+    that attached `duration_minutes`'s comment to `container_count` would leave every
+    string present somewhere and pass. Here each comment must appear on the line that
+    declares its own column, inside its own table's block.
+    """
+    context = get_schema_context()
+    blocks = _table_blocks(context)
+    misattributed = []
+
+    for table, column, description in _catalog(_COLUMN_COMMENT_ORACLE):
+        block = blocks.get(table, "")
+        on_own_line = any(
+            line.strip().startswith(f"{column} ") and description in line
+            for line in block.splitlines()
+        )
+        if not on_own_line:
+            misattributed.append(f"{table}.{column}")
+
+    assert not misattributed, (
+        "column comments missing from, or not attached to, their own column: "
+        f"{misattributed}"
+    )
+
+
+def test_units_and_enums_survive_into_the_prompt() -> None:
+    """Spot-check the specific semantics that a column type cannot carry. These are the
+    facts a wrong guess turns into a confidently wrong number rather than an error:
+    hours vs minutes, and the closed set a status column accepts."""
+    context = get_schema_context()
+    assert "HOURS waited at anchor" in context          # port_calls.berth_wait_hours
+    assert "MINUTES taken to complete the batch" in context  # cargo_moves.duration_minutes
+    assert "One of: completed, cancelled" in context    # port_calls.status
+    assert "One of: active, maintenance, retired" in context  # cranes.status
+
+
+def test_port_name_is_disambiguated_from_terminal_name() -> None:
+    """Regression guard for eval q19, which wrote `WHERE terminal_name = 'Jebel Ali'` and
+    returned zero rows.
+
+    Every terminal_name in this schema begins with its own port_name, so a bare port name
+    is a plausible value for either column and nothing in the types resolves it. The only
+    available fix was to state the relationship in the comments, which makes those two
+    comment strings load-bearing for a measured accuracy score. Assert the relationship is
+    still described rather than asserting the exact wording, so the sentences can be
+    reworded without breaking this.
+    """
+    context = get_schema_context()
+    assert "port_name" in context and "terminal_name" in context
+
+    # The precondition that makes the ambiguity real. If it ever stops holding, this fix
+    # is no longer needed and this test should be revisited rather than patched.
+    rows = _catalog("SELECT terminal_name, port_name FROM terminals")
+    assert all(terminal.startswith(port) for terminal, port in rows)
+
+    port_comment = next(
+        description
+        for table, column, description in _catalog(_COLUMN_COMMENT_ORACLE)
+        if (table, column) == ("terminals", "port_name")
+    )
+    assert "terminal_name" in port_comment, (
+        "terminals.port_name must tell the model when NOT to use terminal_name"
+    )
+    assert "Jebel Ali" in port_comment, (
+        "the ambiguous value itself should appear as an example port name"
+    )

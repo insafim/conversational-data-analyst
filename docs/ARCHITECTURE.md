@@ -402,7 +402,7 @@ Full reasoning in [ADR-004](ADR/ADR-004-defence-in-depth-sql.md). The organising
 | # | Layer                | Mechanism                                                                                                         | Can the model affect it?                     | Load-bearing?                                      |
 | - | -------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------- |
 | 3 | Prompt hardening     | `classify` refuses hostile / out-of-scope questions                                                             | **Yes**                                | **No.** Written assuming it will be defeated |
-| 2 | Code validator       | sqlglot AST: one statement, SELECT-family root, no write node at any depth, no denied functions or system schemas | No, pure code with no LLM inside             | Yes                                                |
+| 2 | Code validator       | sqlglot AST: one statement, SELECT-family root, no write node at any depth, no denied functions, system schemas or system catalogs | No, pure code with no LLM inside             | Yes                                                |
 | 1 | Database permissions | `analyst_ro`: `CONNECT`, `USAGE`, `SELECT`. No write grant exists to revoke                               | No, enforced by PostgreSQL below the process | **Yes, decisively**                          |
 
 ### The attack that shaped the validator
@@ -447,6 +447,15 @@ So `tests/test_security_boundary.py` **disables that guard first**, then attempt
 Every failure is on **permissions**. The test asserts that specifically, and fails if a write
 is ever stopped only by the transaction flag, which would mean the boundary had silently
 moved to the weaker layer.
+
+**Where this argument does not hold.** Permissions stop every write above, but they do not
+stop system-catalog reads. Probing on 2026-08-08 found this role can read `pg_roles`,
+`pg_database`, `pg_tables` and `pg_class`, and can call `version()` and `inet_server_addr()`,
+disclosing role names, database names, the table list, the exact server build and the
+server's IP. These catalogs are world-readable in PostgreSQL, so no `GRANT` change removes
+the exposure; the block is enforced in `src/validator.py` instead. This is the one case where
+the validator, not the permission system, is the only control. `pg_authid` stays unreadable.
+See [ADR-004](ADR/ADR-004-defence-in-depth-sql.md), "The case where layer 1 does not hold".
 
 One finding worth recording: **`GRANT INSERT ON terminals TO analyst_ro`, issued by
 `analyst_ro`, does not raise.** PostgreSQL emits a warning and reports success. No privilege
@@ -548,12 +557,18 @@ judgement remains, so there is nothing for a language model to contribute.
 | #  | Condition                                         | Output                                                   |
 | -- | ------------------------------------------------- | -------------------------------------------------------- |
 | 1  | Zero rows                                         | **No chart** (the answer says nothing matched)     |
-| 2  | One row, one numeric column                       | **Metric**                                         |
-| 3  | A temporal column + ≥1 numeric                   | **Line**                                           |
-| 4  | A label column + ≥1 numeric, ≤12 distinct       | **Bar**                                            |
+| 2  | One row, one numeric column, at most two columns  | **Metric** (a second column labels the figure)     |
+| 3  | A temporal column + ≥1 numeric, **>1 row**       | **Line**                                           |
+| 4  | A label column + ≥1 numeric, ≤12 distinct, **>1 row** | **Bar**                                       |
 | 4b | Several categoricals without a unique first label | **Table** (a bar chart would collapse a dimension) |
-| 5  | Exactly two numerics, nothing else                | **Scatter**                                        |
-| 6  | Anything else                                     | **Table**                                          |
+| 5  | Exactly two numerics, nothing else, **>1 row**    | **Scatter**                                        |
+| 6  | Anything else, including a single row carrying more than a label and a measure | **Table**             |
+
+The `>1 row` guards on rules 3, 4 and 5 are not decoration. A superlative question ("which
+terminal has the longest berth wait?") returns one row holding a label and a measure, which
+before this guard fell through to rule 4 and drew a bar chart of exactly one bar stretched
+across the full container. Four gold questions produced it, including the first example
+button in the UI. See ADR-005.
 
 Every `ChartSpec` carries a `reason` naming the rule that fired; it is shown in the UI and
 asserted in tests, so the behaviour is inspectable rather than magic.
@@ -855,10 +870,11 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── models.py               Typed state and results (pydantic)
 │   └── config.py               Settings; separates admin and read-only identities
 ├── eval/
-│   ├── gold_questions.jsonl    36 scored cases
+│   ├── gold_questions.yaml     36 scored cases
+│   ├── gold.py                 Gold-set schema; validated at load
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers
-├── tests/                      180 tests
+├── tests/                      343 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Eight decision records
@@ -878,15 +894,16 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 180 tests
+### Test suite: 343 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
-| `test_validator.py`              | 63    | The security gate: every attack, evasion and fail-closed case            |
-| `test_eval_scoring.py`           | 29    | Comparison and scoring logic, the definition of "correct"                |
-| `test_security_boundary.py`      | 15    | Integration: GRANTs hold with the read-only guard disabled               |
+| `test_gold_set.py`               | 120   | Gold-set schema, parametrized over all 36 cases                          |
+| `test_validator.py`              | 93    | The security gate: every attack, evasion and fail-closed case            |
+| `test_eval_scoring.py`           | 32    | Comparison and scoring logic, the definition of "correct"                |
+| `test_security_boundary.py`      | 17    | Integration: GRANTs hold with the read-only guard disabled               |
 | `test_llm_extraction.py`         | 15    | Parsing model output; total functions that raise rather than half-parse  |
-| `test_agent_routing.py`          | 14    | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
+| `test_agent_routing.py`          | 22    | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
 | `test_charts.py`                 | 14    | Every chart rule, at its boundaries                                      |
 | `test_executor.py`               | 13    | Row cap and its boundary, timeout, verbatim execution, errors            |
 | `test_schema.py`                 | 5     | Catalog introspection; composed identifiers are quoted                   |
@@ -957,6 +974,13 @@ deployments stall.
    pool this container runs with, so the latency threshold is far off, and nothing ingests
    continuously today. Both are stated with their observable trigger conditions in
    [ADR-001](ADR/ADR-001-domain-and-data-model.md#where-this-model-stops-holding).
+7. **A connection pool.** Each query opens its own connection and closes it
+   ([§9](#9-query-execution--runtime-limits)), while `analyst_ro` is created with
+   `CONNECTION LIMIT 10` (`db/02_roles.sql`). Ten concurrent in-flight queries therefore
+   exhaust the role's budget and the eleventh is refused. A single-user Streamlit session
+   never reaches that, which is why the connection-per-query shape is acceptable here and
+   is the first thing that breaks under concurrent use. Pooling is a small change, and it
+   belongs to the same increment as the FastAPI serving model rather than preceding it.
 
 ---
 

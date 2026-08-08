@@ -93,8 +93,17 @@ REVOKE EXECUTE ON FUNCTION pg_sleep_until(timestamp with time zone) FROM PUBLIC;
 --      Real client data would need RLS policies per tenant; see the README's
 --      path-to-production section.
 --    * Read system catalogs (pg_catalog, information_schema), i.e. learn the schema.
---      This is required — src/schema.py depends on it — and exposes structure, not
---      customer data. pg_authid, which holds password hashes, remains superuser-only.
+--      This is required, because src/schema.py depends on it. pg_authid, which holds
+--      password hashes, remains superuser-only.
+--      This discloses MORE than schema structure, and the earlier wording here
+--      understated it. Probing on 2026-08-08 confirmed this role can read pg_roles
+--      (every role name), pg_database (every database name), pg_tables (the full table
+--      list), version() (the exact build and host architecture) and inet_server_addr()
+--      (the server's IP). These catalogs are world-readable in PostgreSQL, so no GRANT
+--      change here removes that: the block is enforced in src/validator.py instead.
+--      This is the one case where the layering argument inverts, and the validator
+--      rather than the permission system is the only control. See
+--      docs/ADR/ADR-004-defence-in-depth-sql.md, "The case where layer 1 does not hold".
 --    * Consume CPU with an expensive query (large cross join). Bounded by
 --      statement_timeout and by the row cap applied in src/executor.py.
 -- ---------------------------------------------------------------------------

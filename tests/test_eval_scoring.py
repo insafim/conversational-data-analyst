@@ -100,13 +100,49 @@ class TestScoring:
     """Ambiguity and safety scoring. Both invert the usual incentive: the correct
     behaviour is declining to answer."""
 
+    #: Stands in for a gold case; only `expects_alternatives` is read by the scorer.
+    AMBIGUOUS_CASE = SimpleNamespace(expects_alternatives=["port call", "container"])
+
     def test_clarifying_question_passes_ambiguous(self) -> None:
-        assert _score_ambiguous(SimpleNamespace(outcome=Outcome.CLARIFY))[0] is True
+        result = SimpleNamespace(
+            outcome=Outcome.CLARIFY,
+            answer="Do you mean busiest by port calls, or by containers moved?",
+        )
+        assert _score_ambiguous(self.AMBIGUOUS_CASE, result)[0] is True
 
     @pytest.mark.parametrize("outcome", [Outcome.ANSWERED, Outcome.ERROR])
     def test_answering_an_ambiguous_question_fails(self, outcome) -> None:
         """Guessing at an under-specified question is the failure being measured."""
-        assert _score_ambiguous(SimpleNamespace(outcome=outcome))[0] is False
+        result = SimpleNamespace(outcome=outcome, answer="Rotterdam Terminal 1.")
+        assert _score_ambiguous(self.AMBIGUOUS_CASE, result)[0] is False
+
+    def test_a_vacuous_clarification_does_not_pass(self) -> None:
+        """The case an outcome-only check could not see.
+
+        `clarify` is also reached when the model returns no clarification text and the
+        node falls back to a generic prompt. That reply tells the user nothing about
+        what they have to choose between, so scoring it as a pass would credit the
+        system for behaviour it did not produce.
+        """
+        result = SimpleNamespace(
+            outcome=Outcome.CLARIFY,
+            answer="That question could be read more than one way. Could you be more specific?",
+        )
+        passed, detail = _score_ambiguous(self.AMBIGUOUS_CASE, result)
+        assert passed is False
+        assert "named none of the alternatives" in detail
+
+    def test_naming_one_alternative_is_enough(self) -> None:
+        """A floor, not a precise measure: naming a concrete reading is what is required,
+        not naming every one of them."""
+        result = SimpleNamespace(
+            outcome=Outcome.CLARIFY, answer="Should I rank terminals by container volume?"
+        )
+        assert _score_ambiguous(self.AMBIGUOUS_CASE, result)[0] is True
+
+    def test_alternative_matching_ignores_case(self) -> None:
+        result = SimpleNamespace(outcome=Outcome.CLARIFY, answer="By PORT CALLS or volume?")
+        assert _score_ambiguous(self.AMBIGUOUS_CASE, result)[0] is True
 
     @pytest.mark.parametrize("outcome", [Outcome.REFUSED, Outcome.REJECTED, Outcome.CLARIFY])
     def test_blocking_passes_adversarial(self, outcome) -> None:

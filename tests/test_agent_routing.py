@@ -238,3 +238,138 @@ def test_empty_results_are_reported_without_asking_the_model(stub) -> None:
     assert result.answer == "No data matched that question."
     # Only the classify call, no summarize call.
     assert len(stubbed.cheap_calls) == cheap_before + 1
+
+
+# ---------------------------------------------------------------------------------
+# Latency attribution.
+#
+# The total was always reported; the split was not, so "the agent takes nine seconds"
+# could not be turned into a decision about what to change. These tests pin the
+# properties the breakdown has to have to be trustworthy, rather than asserting
+# specific durations, which would be flaky and would measure the machine.
+# ---------------------------------------------------------------------------------
+def test_every_stage_that_ran_reports_a_timing(stub) -> None:
+    stub()
+    result = agent_module.ask("How many port calls are there?")
+
+    assert result.outcome is Outcome.ANSWERED
+    for stage in ("schema", "classify", "generate_sql", "validate", "execute",
+                  "summarize", "pick_chart"):
+        assert stage in result.stage_timings, f"{stage} ran but reported no timing"
+        assert result.stage_timings[stage] >= 0.0
+
+
+def test_stages_that_did_not_run_are_absent_rather_than_zero(stub) -> None:
+    """A stage reporting 0.0s and a stage that never executed are different facts.
+
+    Recording only what ran keeps the breakdown honest: on a refusal there is no
+    `execute` entry at all, rather than an entry implying the database was reached in no
+    time.
+    """
+    stub(route="out_of_scope")
+    result = agent_module.ask("What is the weather tomorrow?")
+
+    assert result.outcome is Outcome.REFUSED
+    assert "refuse" in result.stage_timings
+    for never_ran in ("generate_sql", "validate", "execute", "summarize"):
+        assert never_ran not in result.stage_timings
+
+
+def test_stage_timings_do_not_exceed_the_reported_total(stub) -> None:
+    """The parts cannot be larger than the whole.
+
+    Catches the mistake this instrumentation is most prone to: double-counting a stage
+    by timing both a node and something that wraps it.
+    """
+    stub()
+    result = agent_module.ask("How many port calls are there?")
+
+    assert sum(result.stage_timings.values()) <= result.elapsed_s + 1e-6
+
+
+def test_a_retried_question_sums_both_passes_of_the_node(stub) -> None:
+    """`generate_sql` runs twice when the retry fires, and the breakdown must account
+    for both. Reporting only the last pass would understate exactly the case where the
+    latency question is being asked."""
+    stubbed = stub(sql_sequence=["SELECT * FROM nonexistent_table", "SELECT 1 AS n"])
+    result = agent_module.ask("How many port calls are there?")
+
+    assert result.retried is True
+    assert len(stubbed.strong_calls) == 2
+    assert "generate_sql" in result.stage_timings
+
+
+# ---------------------------------------------------------------------------------
+# Input bounds. The only guardrail applied to the question rather than to the SQL.
+# ---------------------------------------------------------------------------------
+def test_an_oversized_question_is_refused_without_calling_the_model(stub) -> None:
+    """Refused in code, before a provider is paid to read it.
+
+    The check cannot live in the classifier, because the classifier is the model being
+    protected from the input.
+    """
+    stubbed = stub()
+    oversized = "how many port calls " * 1000
+
+    result = agent_module.ask(oversized)
+
+    assert result.outcome is Outcome.REFUSED
+    assert "too long" in result.answer
+    assert stubbed.cheap_calls == [] and stubbed.strong_calls == []
+    assert result.llm_calls == 0
+
+
+def test_an_empty_question_is_refused_without_calling_the_model(stub) -> None:
+    stubbed = stub()
+
+    result = agent_module.ask("   ")
+
+    assert result.outcome is Outcome.REFUSED
+    assert stubbed.cheap_calls == [] and stubbed.strong_calls == []
+
+
+def test_a_question_at_the_limit_is_still_accepted(stub) -> None:
+    """The bound must not clip legitimate questions; a validator that blocks real
+    questions is broken, and the same applies to an input limit."""
+    from src.config import settings
+
+    stub()
+    at_limit = "a" * settings.max_question_chars
+
+    result = agent_module.ask(at_limit)
+
+    assert result.outcome is not Outcome.REFUSED
+
+
+def test_langgraph_replaces_dict_state_so_timings_must_accumulate() -> None:
+    """Pins the library behaviour that forced `Timings` to be a mutable object.
+
+    `Timings` is threaded through state by reference instead of each node returning a
+    `{"timings": {...}}` update. The stated reason is that LangGraph's default channel
+    for a plain TypedDict key replaces rather than merges, so the dict-return design
+    would silently report only the last stage.
+
+    That is a claim about a third-party library, so it is measured here rather than
+    asserted in a comment. If a future LangGraph version starts merging, this test fails
+    and the rationale in `Timings` can be revisited instead of quietly becoming folklore.
+    """
+    from typing import TypedDict
+
+    from langgraph.graph import END, START, StateGraph
+
+    class _S(TypedDict, total=False):
+        timings: dict
+
+    graph = StateGraph(_S)
+    graph.add_node("first", lambda state: {"timings": {"first": 1.0}})
+    graph.add_node("second", lambda state: {"timings": {"second": 2.0}})
+    graph.add_edge(START, "first")
+    graph.add_edge("first", "second")
+    graph.add_edge("second", END)
+
+    final = graph.compile().invoke({})
+
+    assert final["timings"] == {"second": 2.0}, (
+        "LangGraph now merges dict state; the accumulate-by-reference design in "
+        "Timings may no longer be necessary"
+    )

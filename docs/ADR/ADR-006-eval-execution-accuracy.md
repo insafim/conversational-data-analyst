@@ -20,7 +20,7 @@ on every change is a different kind of artefact from a demo that worked once on 
 **A gold question set plus an execution-accuracy harness: run the agent's SQL and the reference SQL
 against the same database, and compare the result sets.**
 
-The gold set (`eval/gold_questions.jsonl`) contains three categories of case, because the brief
+The gold set (`eval/gold_questions.yaml`) contains three categories of case, because the brief
 names three behaviours:
 
 | Category | What the item asserts | How it is scored |
@@ -31,6 +31,15 @@ names three behaviours:
 
 Reported metrics: execution accuracy, ambiguity handling rate, refusal rate, mean and p95 latency,
 and per-item failure diffs.
+
+The set is stored as YAML with reference SQL in literal block scalars, so a query is reviewable as
+SQL rather than as a single-line string, and it is parsed through the schema in `eval/gold.py`
+rather than as bare dicts. The three categories above have two different record shapes, and nothing
+previously enforced the split: a case missing its reference SQL, or carrying a misspelled `ordered`
+flag, was accepted at load and misbehaved only when it was scored. Because every published accuracy
+figure is computed from this file, that class of defect corrupts a reported number instead of
+raising an error, so the schema is validated before any case runs and is itself tested in
+`tests/test_gold_set.py`.
 
 ### Why compare results, not SQL text
 

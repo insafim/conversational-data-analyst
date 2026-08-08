@@ -17,6 +17,11 @@ dependencies = [
                                #   2.x floor it replaced was never actually installed or tested
     "pydantic>=2.13,<3",       # AgentResult/QueryResult/ChartSpec; direct import, so declared
                                #   directly rather than leaned on transitively via langgraph
+    "pyyaml>=6.0.3,<7",        # eval gold set is YAML (ADR-006); direct import in eval/gold.py,
+                               #   so declared directly rather than leaned on transitively via
+                               #   litellm. 6.0 made the Loader argument to yaml.load mandatory,
+                               #   which is the floor that matters for the safe_load-only rule.
+                               # Source: https://github.com/yaml/pyyaml/blob/main/CHANGES - Verified: 2026-08-08
     "streamlit>=1.60.0,<2",    # chat UI (ADR-008)
     "python-dotenv>=1.0",      # .env loading for local dev
 ]

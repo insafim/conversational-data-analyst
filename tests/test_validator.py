@@ -244,3 +244,127 @@ def test_state_mutating_and_disclosing_functions_are_blocked(sql: str, why: str)
     result = validate_sql(sql)
     assert not result.ok, f"NOT blocked ({why}): {sql}"
     assert result.violation == "forbidden_function"
+
+
+# ---------------------------------------------------------------------------------
+# System catalog reconnaissance.
+#
+# Every query below was run against the live database as `analyst_ro` BEFORE these
+# denials existed, and every one of them succeeded: `pg_roles` returned the server's
+# role names, `pg_database` its database names, `pg_tables` the full table list,
+# `version()` the exact build and host architecture, and `inet_server_addr()` the
+# container's IP.
+#
+# This is the case where layer 1 does not hold. The GRANTs stop `pg_authid`, but these
+# catalogs are world-readable in PostgreSQL, so no privilege change blocks them. The
+# validator is the only layer that can, which makes these the highest-value tests here
+# after the data-modifying CTE.
+#
+# The reason the earlier deny-list missed them is worth keeping visible: the schema
+# check reads `table.db`, which is empty for an unqualified reference, and `pg_catalog`
+# is in the default `search_path`. The qualified form was blocked while the form the
+# model would actually write was not.
+# ---------------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "sql,leaks",
+    [
+        ("SELECT rolname FROM pg_roles", "every role name on the server"),
+        ("SELECT datname FROM pg_database", "every database on the server"),
+        ("SELECT tablename FROM pg_tables", "tables outside the business schema"),
+        ("SELECT proname FROM pg_proc", "every callable function"),
+        ("SELECT relname FROM pg_class", "every relation, including system ones"),
+        ("SELECT extname FROM pg_extension", "installed extensions, an attack surface map"),
+        ("SELECT * FROM pg_stat_activity", "other sessions and their queries"),
+        ("SELECT * FROM pg_settings", "server configuration"),
+        # Case and quoting must not defeat the prefix match, for the same reason they
+        # must not defeat the schema deny-list.
+        ("SELECT * FROM PG_ROLES", "case variation"),
+        ('SELECT * FROM "pg_roles"', "quoted identifier"),
+        # Quoting and case together. PostgreSQL folds unquoted identifiers to lower case
+        # but preserves the case of quoted ones, so these two forms are not equivalent to
+        # the database. The prefix check lowercases before matching, which is what makes
+        # both of them land on the same rule rather than only the unquoted one.
+        ('SELECT * FROM "PG_Roles"', "quoted identifier with mixed case"),
+        ("SELECT * FROM Pg_RoLeS", "alternating case on an unquoted identifier"),
+        # Nested a level down, to confirm the check walks the whole tree rather than
+        # only inspecting the top-level FROM.
+        ("SELECT 1 UNION SELECT count(*)::text FROM pg_roles", "hidden in a set operation"),
+        ("SELECT * FROM terminals WHERE 1 = (SELECT count(*) FROM pg_database)",
+         "hidden in a correlated subquery"),
+    ],
+)
+def test_system_catalog_reconnaissance_is_blocked(sql: str, leaks: str) -> None:
+    result = validate_sql(sql)
+    assert not result.ok, f"NOT blocked, leaks {leaks}: {sql}"
+    assert result.violation == "system_table"
+
+
+@pytest.mark.parametrize(
+    "sql,leaks",
+    [
+        ("SELECT version()", "PostgreSQL build and host architecture"),
+        ("SELECT current_user", "the role the agent connects as"),
+        ("SELECT session_user", "the session role"),
+        ("SELECT current_database()", "the database name"),
+        ("SELECT current_schema()", "the active schema"),
+        ("SELECT inet_server_addr()", "the database server's IP address"),
+        ("SELECT inet_server_port()", "the database server's port"),
+        ("SELECT pg_backend_pid()", "the backend process ID"),
+        ("SELECT has_table_privilege('terminals', 'SELECT')", "this role's privileges"),
+        ("SELECT pg_get_userbyid(10)", "role names by OID"),
+    ],
+)
+def test_server_disclosure_functions_are_blocked(sql: str, leaks: str) -> None:
+    """These parse into dedicated sqlglot node types rather than named calls.
+
+    `version()` becomes `CurrentVersion` and `current_user` becomes `CurrentUser`, so a
+    deny-list matching on function *name* never sees them regardless of what it lists.
+    They are matched by node class instead, which is why this is a separate test from
+    the pg_sleep-style cases above.
+    """
+    result = validate_sql(sql)
+    assert not result.ok, f"NOT blocked, leaks {leaks}: {sql}"
+    assert result.violation == "forbidden_function"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # A CTE parses as a Table node, so the prefix rule would deny this unless CTE
+        # names are excluded. This is the false-positive case the rule has to avoid.
+        "WITH pg_summary AS (SELECT 1 AS x) SELECT * FROM pg_summary",
+        "WITH pg_a AS (SELECT 1 AS x), pg_b AS (SELECT * FROM pg_a) SELECT * FROM pg_b",
+    ],
+)
+def test_a_cte_named_like_a_catalog_is_not_mistaken_for_one(sql: str) -> None:
+    assert validate_sql(sql).ok, f"legitimate CTE blocked by the prefix rule: {sql}"
+
+
+@pytest.mark.parametrize(
+    "sql,why",
+    [
+        # The CTE exclusion is a hole by construction: it tells the rule to ignore some
+        # `pg_*` names. These prove it only ignores names the query DEFINES, never a
+        # real catalog the query READS.
+        ("WITH pg_x AS (SELECT rolname FROM pg_roles) SELECT * FROM pg_x",
+         "catalog read hidden in a CTE body"),
+        ("WITH a AS (SELECT * FROM pg_database) SELECT * FROM a",
+         "catalog in a CTE body under a harmless alias"),
+        ("WITH pg_a AS (SELECT 1 AS x) SELECT * FROM pg_a JOIN pg_roles ON true",
+         "a defined pg_ name used to smuggle a real one alongside it"),
+        ("WITH pg_a AS (SELECT 1 AS x), pg_b AS (SELECT * FROM pg_settings) "
+         "SELECT * FROM pg_a JOIN pg_b ON true",
+         "second CTE reads a catalog while the first is legitimate"),
+    ],
+)
+def test_a_cte_alias_cannot_smuggle_a_real_catalog_read(sql: str, why: str) -> None:
+    """The negative half of the CTE exclusion.
+
+    `test_a_cte_named_like_a_catalog_is_not_mistaken_for_one` proves the exclusion does
+    not block legitimate queries. On its own that is the dangerous half to have tested,
+    because the cheapest way to make it pass is to ignore every `pg_*` name, which would
+    reopen the reconnaissance hole entirely. These cases pin the other side.
+    """
+    result = validate_sql(sql)
+    assert not result.ok, f"NOT blocked ({why}): {sql}"
+    assert result.violation == "system_table"

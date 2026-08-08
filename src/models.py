@@ -93,6 +93,14 @@ class AgentResult(BaseModel):
     chart: ChartSpec | None = None
 
     elapsed_s: float = 0.0
+    stage_timings: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Seconds spent in each graph node, keyed by node name. Populated for every "
+            "run so latency can be attributed to a stage rather than only totalled. "
+            "A node that ran twice (the SQL retry) reports the sum of both passes."
+        ),
+    )
     llm_calls: int = 0
     cost_usd: float = 0.0
     retried: bool = False

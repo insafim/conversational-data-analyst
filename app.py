@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.charts import to_dataframe
+from src.charts import metric_fields, to_dataframe
 from src.models import ChartKind, Outcome
 from src.schema import get_schema_summary
 
@@ -33,7 +33,10 @@ EXAMPLE_QUESTIONS = [
 # clarification is never mistaken for an answer.
 _OUTCOME_BADGE = {
     Outcome.CLARIFY: ("❓", "Needs clarification"),
-    Outcome.REFUSED: ("🛡️", "Refused at classification"),
+    # Not "refused at classification": REFUSED also covers the input-length and
+    # empty-question guards in `ask()`, which return before the classifier runs. The
+    # badge states the outcome and the answer text gives the specific reason.
+    Outcome.REFUSED: ("🛡️", "Refused"),
     Outcome.REJECTED: ("🛡️", "Blocked by the SQL validator"),
     Outcome.ERROR: ("⚠️", "Error"),
 }
@@ -54,12 +57,16 @@ def render_chart(result, chart) -> None:
     if chart is None or chart.kind == ChartKind.NONE:
         return
 
+    if chart.kind == ChartKind.METRIC:
+        # Resolution lives in charts.py so it is unit-testable; see `metric_fields`. It
+        # reads the result rows directly, so no DataFrame is built for this branch.
+        fields = metric_fields(result, chart)
+        st.metric(label=fields.label, value=fields.value, help=fields.help)
+        return
+
     frame = to_dataframe(result)
 
-    if chart.kind == ChartKind.METRIC:
-        value = frame.iloc[0, 0]
-        st.metric(label=chart.y[0] if chart.y else result.columns[0], value=f"{value:,}")
-    elif chart.kind == ChartKind.LINE:
+    if chart.kind == ChartKind.LINE:
         st.line_chart(frame, x=chart.x, y=chart.y)
     elif chart.kind == ChartKind.BAR:
         st.bar_chart(frame, x=chart.x, y=chart.y)
@@ -97,6 +104,20 @@ def render_answer(entry: dict) -> None:
     if result.retried:
         bits.append("retried once")
     st.caption(" · ".join(bits))
+
+    # Latency attributed to the stage that spent it. Shown behind an expander because a
+    # user wants the total; whoever is deciding what to optimise wants the split, and
+    # otherwise has to guess which of the three model calls dominates.
+    if result.stage_timings:
+        with st.expander("Latency breakdown"):
+            total = sum(result.stage_timings.values())
+            for stage, seconds in result.stage_timings.items():
+                share = 100.0 * seconds / total if total else 0.0
+                st.text(f"{stage:<14} {seconds:>6.2f}s  {share:>5.1f}%")
+            st.caption(
+                "Stages are timed individually, so these sum to slightly less than the "
+                "total above; the difference is graph overhead."
+            )
 
 
 # --- sidebar ----------------------------------------------------------------------

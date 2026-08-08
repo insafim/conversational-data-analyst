@@ -6,9 +6,18 @@ not just the chart kind, so a test failing tells you *which* rule broke.
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
-from src.charts import MAX_BAR_CATEGORIES, pick_chart, to_dataframe
+import pytest
+
+from src.charts import (
+    MAX_BAR_CATEGORIES,
+    format_metric,
+    metric_fields,
+    pick_chart,
+    to_dataframe,
+)
 from src.models import ChartKind, QueryResult
 
 
@@ -156,3 +165,200 @@ def test_genuine_two_dimensional_breakdown_stays_a_table() -> None:
          ["Felixstowe South", "discharge", 80]],
     ))
     assert spec.kind == ChartKind.TABLE
+
+
+# ---------------------------------------------------------------------------------
+# Single-row results. A superlative question ("which terminal waits longest?") returns
+# one row holding a label and a measure. That shape used to reach the bar rule and draw
+# a single bar stretched across the full width of the container — the answer rendered as
+# a wall. It affected four of the gold questions including the first example button in
+# the UI, so it was the most likely chart to appear on camera.
+# ---------------------------------------------------------------------------------
+
+
+def test_superlative_answer_is_a_labelled_metric_not_one_bar() -> None:
+    """The regression guard. This is eval q01, the first example in the sidebar."""
+    spec = pick_chart(result(
+        ["terminal_name", "avg_berth_wait_hours"], ["text", "numeric"],
+        [["Jebel Ali Terminal 2", Decimal("17.46")]],
+    ))
+    assert spec.kind == ChartKind.METRIC, "a one-row answer must never render as one bar"
+    assert spec.x == "terminal_name", "the entity must be carried through as the label"
+    assert spec.y == ["avg_berth_wait_hours"]
+
+
+def test_metric_names_the_measure_not_the_first_column() -> None:
+    """`y` must identify the measure by name.
+
+    The UI reads the value by that name. Falling back to positional access puts the
+    label string in the value slot, which raises when formatted as a number rather than
+    rendering something merely ugly.
+    """
+    spec = pick_chart(result(
+        ["vessel_name", "port_calls"], ["text", "int8"], [["MV Kestrel", 41]],
+    ))
+    assert spec.y == ["port_calls"]
+    assert spec.x == "vessel_name"
+
+
+def test_bare_single_number_keeps_its_unlabelled_metric() -> None:
+    """The pre-existing single-column case must not regress: no label to carry."""
+    spec = pick_chart(result(["port_call_count"], ["int8"], [[1500]]))
+    assert spec.kind == ChartKind.METRIC
+    assert spec.x is None
+
+
+def test_single_row_with_extra_columns_is_a_table_not_one_bar() -> None:
+    """Beyond a label and a measure there is nothing a metric can show, so the fallback
+    must be a table. It must not fall through to the bar rule and draw one bar again."""
+    spec = pick_chart(result(
+        ["terminal_name", "port_name", "country", "avg_wait"],
+        ["text", "text", "text", "numeric"],
+        [["Jebel Ali Terminal 2", "Jebel Ali", "United Arab Emirates", Decimal("17.46")]],
+    ))
+    assert spec.kind == ChartKind.TABLE
+
+
+def test_two_categories_still_render_as_bars() -> None:
+    """The fix must not overreach. Two bars is a legible comparison and stays a chart;
+    this is eval q12, loaded versus discharged."""
+    spec = pick_chart(result(
+        ["move_type", "total_containers"], ["text", "int8"],
+        [["load", 120544], ["discharge", 118555]],
+    ))
+    assert spec.kind == ChartKind.BAR
+
+
+def test_single_point_time_series_is_not_a_line() -> None:
+    """A line through one point shows no trend. One month of data is a headline figure.
+
+    Note this case is claimed by Rule 2 before Rule 3 is reached, so it does NOT guard
+    Rule 3's row guard. `test_rule_3_row_guard_is_reachable` below does that.
+    """
+    spec = pick_chart(result(
+        ["month", "total_containers"], ["date", "int8"], [["2025-01-01", 15421]],
+    ))
+    assert spec.kind == ChartKind.METRIC
+    assert spec.x == "month"
+
+
+def test_rule_3_row_guard_is_reachable() -> None:
+    """Guard Rule 3's `row_count > 1` clause with a shape Rule 2 cannot intercept.
+
+    Found by audit: the test above was written to protect this clause but never reaches
+    it, because one row with one measure and two columns matches Rule 2 first. Deleting
+    `and result.row_count > 1` left the whole chart suite green.
+
+    Two measures defeat Rule 2's `len(numeric) == 1`, and three columns defeat its
+    `<= 2`, so this input arrives at Rule 3 with a temporal column and a single row.
+    """
+    spec = pick_chart(result(
+        ["month", "loaded", "discharged"], ["date", "int8", "int8"],
+        [["2025-01-01", 120, 140]],
+    ))
+    assert spec.kind is not ChartKind.LINE, "a line through a single point is not a trend"
+    assert spec.kind == ChartKind.TABLE
+
+
+def test_single_row_of_two_measures_is_not_a_one_point_scatter() -> None:
+    """Rule 5 had no row guard while Rules 2, 3 and 4 all had one.
+
+    A scatter plot of one point draws no relationship. This is the shape a superlative
+    takes whenever its label column is numeric — grouped by `year` or `crane_id` — since
+    `classify_columns` reads a numeric ID as a measure rather than a label. Found by
+    audit, not by rendering the gold set, which contains no such question.
+    """
+    spec = pick_chart(result(
+        ["capacity_teu", "avg_berth_wait_hours"], ["int8", "numeric"],
+        [[15000, Decimal("17.46")]],
+    ))
+    assert spec.kind is not ChartKind.SCATTER
+    assert spec.kind == ChartKind.TABLE
+
+
+# ---------------------------------------------------------------------------------
+# What the metric card actually displays. This lived inline in `app.py` until the
+# rule change, where nothing but running the app by hand exercised it — reverting it
+# to positional access would have passed the entire suite and then crashed on the
+# first superlative question. It is here so a test can reach it.
+# ---------------------------------------------------------------------------------
+
+
+def test_metric_reads_the_measure_by_name_not_by_position() -> None:
+    """The regression guard for the crash.
+
+    Column 0 of a superlative result is the label, a string. Positional access puts that
+    string in the value slot, where number formatting raises `ValueError`. Asserting the
+    value is the number, not merely that something rendered, is what makes this test able
+    to fail.
+    """
+    r = result(["terminal_name", "avg_berth_wait_hours"], ["text", "numeric"],
+               [["Jebel Ali Terminal 2", Decimal("17.46")]])
+    fields = metric_fields(r, pick_chart(r))
+    assert fields.value == "17.46", "the measure, not the label, belongs in the value slot"
+    assert fields.label == "Jebel Ali Terminal 2"
+    assert fields.help == "avg_berth_wait_hours", "the unit must appear somewhere on screen"
+
+
+def test_metric_without_a_label_names_the_measure_instead() -> None:
+    r = result(["port_call_count"], ["int8"], [[1500]])
+    fields = metric_fields(r, pick_chart(r))
+    assert fields.label == "port_call_count"
+    assert fields.value == "1,500"
+    assert fields.help is None
+
+
+def test_measure_is_found_even_when_it_is_not_the_last_column() -> None:
+    """Guards against a positional shortcut that happens to work on the common shape.
+    Here the measure comes first, so 'take the last column' would also be wrong."""
+    r = result(["avg_wait", "terminal_name"], ["numeric", "text"],
+               [[Decimal("17.46"), "Jebel Ali Terminal 2"]])
+    fields = metric_fields(r, pick_chart(r))
+    assert fields.value == "17.46"
+    assert fields.label == "Jebel Ali Terminal 2"
+
+
+def test_counts_keep_separators_and_averages_keep_two_decimals() -> None:
+    assert format_metric(239099) == "239,099"
+    assert format_metric(Decimal("17.4599999")) == "17.46"
+    assert format_metric(17.4599999) == "17.46"
+
+
+def test_numpy_integers_are_not_dropped_to_a_bare_string() -> None:
+    """`isinstance(numpy.int64(1), int)` is False.
+
+    A plain `int` check therefore silently loses the thousands separators on exactly the
+    COUNT and SUM aggregates this formatting exists for, and does it for any caller that
+    routes a value through pandas. Found by audit, confirmed by running it.
+    """
+    numpy = pytest.importorskip("numpy")
+    assert format_metric(numpy.int64(239099)) == "239,099"
+    assert format_metric(numpy.float64(17.4599999)) == "17.46"
+
+
+def test_booleans_are_not_formatted_as_numbers() -> None:
+    """`isinstance(True, numbers.Integral)` is True, so a boolean would render as "1"
+    without the explicit guard."""
+    assert format_metric(True) == "True"
+
+
+def test_a_null_measure_reads_as_missing_data_not_as_a_crash() -> None:
+    """A null aggregate is a real outcome: AVG over a terminal whose calls were all
+    cancelled returns NULL. Rendering that as "None" on a headline card looks like a
+    failure, so it reads "n/a" instead. Threaded through `metric_fields` as well as the
+    formatter, because the audit found the formatter tested in isolation only."""
+    assert format_metric(None) == "n/a"
+
+    r = result(["terminal_name", "avg_berth_wait_hours"], ["text", "numeric"],
+               [["Colombo East Container Terminal", None]])
+    fields = metric_fields(r, pick_chart(r))
+    assert fields.value == "n/a"
+    assert fields.label == "Colombo East Container Terminal"
+
+
+def test_non_numeric_values_fall_through_unformatted() -> None:
+    """The fallback branch, previously uncovered. Nothing routes a string or a date here
+    today, but the function is public and returning something number-shaped would be
+    worse than passing the value through."""
+    assert format_metric("Rotterdam") == "Rotterdam"
+    assert format_metric(date(2025, 3, 1)) == "2025-03-01"

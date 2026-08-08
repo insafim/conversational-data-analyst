@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import statistics
 import sys
@@ -39,11 +40,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from eval.gold import AmbiguousCase, AnswerableCase, GoldCase, load_gold_set  # noqa: E402
 from src.agent import ask  # noqa: E402
 from src.executor import ExecutionError, run_query  # noqa: E402
 from src.models import Outcome  # noqa: E402
-
-GOLD_PATH = Path(__file__).parent / "gold_questions.jsonl"
 
 # Aggregates computed by different-but-equivalent query plans can differ in the last
 # bits, so floats are compared to a tolerance rather than for exact equality.
@@ -109,20 +109,20 @@ def _rows_equal(actual: list[list], expected: list[list], ordered: bool) -> bool
     return True
 
 
-def _score_answerable(item: dict, result) -> tuple[bool, str]:
+def _score_answerable(item: AnswerableCase, result) -> tuple[bool, str]:
     if result.outcome != Outcome.ANSWERED:
         return False, f"outcome was {result.outcome.value}, expected answered"
     if not result.sql:
         return False, "no SQL produced"
     try:
-        expected = run_query(item["gold_sql"])
+        expected = run_query(item.gold_sql)
     except ExecutionError as exc:  # a broken reference query is a harness bug, not a miss
         return False, f"GOLD SQL FAILED (fix the eval set): {exc}"
 
     actual = result.result
     if actual is None:
         return False, "agent returned no result set"
-    if _rows_equal(actual.rows, expected.rows, item.get("ordered", False)):
+    if _rows_equal(actual.rows, expected.rows, item.ordered):
         return True, ""
     return False, (
         f"result mismatch: agent {actual.row_count} rows vs gold {expected.row_count} rows\n"
@@ -227,11 +227,35 @@ def _check_groundedness(result) -> tuple[bool, str]:
     return True, ""
 
 
-def _score_ambiguous(result) -> tuple[bool, str]:
-    """Correct behaviour is asking back. Answering confidently is the failure."""
-    if result.outcome == Outcome.CLARIFY:
-        return True, ""
-    return False, f"expected a clarifying question, got {result.outcome.value}"
+def _score_ambiguous(item: AmbiguousCase, result) -> tuple[bool, str]:
+    """Correct behaviour is asking back with the actual alternatives named.
+
+    Scoring the outcome alone is not enough, and the reason is specific. `clarify` is
+    reached whenever the classifier picks that route, and the node falls back to a
+    generic "That question could be read more than one way. Could you be more specific?"
+    whenever the model returns no clarification text. That fallback is indistinguishable
+    from a good clarifying question under an outcome-only check, while being useless to
+    the user: it restates that the question was ambiguous without saying what the reader
+    has to choose between. The prompt asks for the concrete alternatives; this is what
+    makes that instruction measured rather than merely stated.
+
+    KNOWN LIMITATION, stated rather than hidden, for the same reason the groundedness
+    check states its own: substring matching accepts a reply that mentions an
+    alternative without genuinely offering a choice. It is a floor on clarification
+    quality, not a measure of it. The floor is still worth having, because the failure
+    it catches, the empty fallback, is the one that actually occurs.
+    """
+    if result.outcome != Outcome.CLARIFY:
+        return False, f"expected a clarifying question, got {result.outcome.value}"
+
+    reply = (result.answer or "").lower()
+    named = [alt for alt in item.expects_alternatives if alt.lower() in reply]
+    if not named:
+        return False, (
+            f"clarified but named none of the alternatives "
+            f"{item.expects_alternatives}. Reply was: {result.answer!r}"
+        )
+    return True, ""
 
 
 def _score_adversarial(result) -> tuple[bool, str]:
@@ -250,15 +274,17 @@ def main() -> int:
     parser.add_argument("--json", type=Path, help="write full results to this path")
     args = parser.parse_args()
 
-    items = [json.loads(line) for line in GOLD_PATH.read_text().splitlines() if line.strip()]
+    # Validated up front, so a malformed case fails here rather than after the run has
+    # already spent LLM calls on the cases preceding it.
+    items: list[GoldCase] = load_gold_set()
     if args.category:
-        items = [i for i in items if i["category"] == args.category]
+        items = [i for i in items if i.category == args.category]
     if args.limit:
         items = items[: args.limit]
 
     scorers = {
         "answerable": lambda item, res: _score_answerable(item, res),
-        "ambiguous": lambda item, res: _score_ambiguous(res),
+        "ambiguous": lambda item, res: _score_ambiguous(item, res),
         "adversarial": lambda item, res: _score_adversarial(res),
     }
 
@@ -267,8 +293,8 @@ def main() -> int:
 
     print(f"Running {len(items)} gold questions...\n")
     for item in items:
-        result = ask(item["question"])
-        passed, detail = scorers[item["category"]](item, result)
+        result = ask(item.question)
+        passed, detail = scorers[item.category](item, result)
 
         # Groundedness is scored independently of category correctness: an answer can
         # carry the right rows and still describe them with an invented figure.
@@ -279,21 +305,22 @@ def main() -> int:
         records.append({
             "grounded": grounded,
             "grounding_detail": grounding_detail,
-            "id": item["id"],
-            "category": item["category"],
-            "question": item["question"],
+            "id": item.id,
+            "category": item.category,
+            "question": item.question,
             "passed": passed,
             "detail": detail,
             "outcome": result.outcome.value,
             "sql": result.sql,
             "answer": result.answer,
             "elapsed_s": result.elapsed_s,
+            "stage_timings": result.stage_timings,
             "llm_calls": result.llm_calls,
             "cost_usd": result.cost_usd,
             "retried": result.retried,
         })
-        print(f"  [{'PASS' if passed else 'FAIL'}] {item['id']:<4} "
-              f"{item['question'][:58]:<58} {result.elapsed_s:>5.2f}s")
+        print(f"  [{'PASS' if passed else 'FAIL'}] {item.id:<4} "
+              f"{item.question[:58]:<58} {result.elapsed_s:>5.2f}s")
         if not passed:
             print(f"         -> {detail}")
         if grounded is False:
@@ -352,7 +379,28 @@ def main() -> int:
     print(f"  Mean latency         {statistics.mean(latencies):.2f}s")
     print(f"  Median latency       {statistics.median(latencies):.2f}s")
     if len(latencies) >= 2:
+        # p95 alongside the median because they answer different questions: the median
+        # is the ordinary experience, p95 is the one a user complains about. Reported
+        # as a nearest-rank order statistic, so it is always an observed latency rather
+        # than an interpolation between two runs that never happened.
+        ranked = sorted(latencies)
+        p95_index = min(len(ranked) - 1, math.ceil(0.95 * len(ranked)) - 1)
+        print(f"  p95 latency          {ranked[p95_index]:.2f}s")
         print(f"  Slowest              {max(latencies):.2f}s")
+
+    # Where the wall clock actually went. Summed across the run rather than averaged per
+    # question, because the stages do not all run on every question. A refused question
+    # never reaches `execute`, so a per-question mean would divide by the wrong count
+    # and understate every stage after `classify`.
+    stage_totals: dict[str, float] = {}
+    for record in records:
+        for stage, seconds in (record.get("stage_timings") or {}).items():
+            stage_totals[stage] = stage_totals.get(stage, 0.0) + seconds
+    if stage_totals:
+        measured = sum(stage_totals.values())
+        print("\n  Latency by stage (share of measured time):")
+        for stage, seconds in sorted(stage_totals.items(), key=lambda kv: -kv[1]):
+            print(f"    {stage:<14} {seconds:>7.1f}s  {100.0 * seconds / measured:>5.1f}%")
     print(f"  Total LLM calls      {sum(r['llm_calls'] for r in records)}")
     print(f"  Total cost           ${sum(r['cost_usd'] for r in records):.4f}")
     print(f"  Retries fired        {sum(1 for r in records if r['retried'])}")
@@ -361,6 +409,22 @@ def main() -> int:
     failures = [r for r in records if not r["passed"]]
     if failures:
         print(f"\n  {len(failures)} failure(s): {', '.join(r['id'] for r in failures)}")
+
+        # Failures split by the outcome that produced them, because "wrong rows" and
+        # "refused a legitimate question" are different defects with different fixes,
+        # and a single accuracy percentage hides which one a run actually suffered.
+        #
+        # Over-refusal is the specific thing this makes visible. Every guardrail in this
+        # system trades away some willingness to answer, and without this line that cost
+        # is invisible: a change that tightened the classifier until it refused half the
+        # gold set would show up only as a lower accuracy number, indistinguishable from
+        # a change that made the SQL worse.
+        by_outcome: dict[str, list[str]] = {}
+        for record in failures:
+            by_outcome.setdefault(record["outcome"], []).append(record["id"])
+        print("  Failure modes:")
+        for outcome, ids in sorted(by_outcome.items()):
+            print(f"    {outcome:<10} {len(ids):>2}  ({', '.join(ids)})")
 
     if args.json:
         args.json.write_text(json.dumps(records, indent=2, default=str))

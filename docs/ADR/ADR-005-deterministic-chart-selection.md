@@ -24,11 +24,40 @@ The rules, applied in order, first match wins:
 | # | Condition on the result set | Output |
 | --- | --- | --- |
 | 1 | Zero rows | No chart — the answer states that nothing matched |
-| 2 | Exactly one row, exactly one numeric column | **Metric card** — a single number needs no axes |
-| 3 | A temporal column present, plus ≥1 numeric column | **Line chart** — time on x, ordered chronologically |
-| 4 | One categorical column with ≤ 12 distinct values, plus ≥1 numeric | **Bar chart** |
-| 5 | Exactly two numeric columns, nothing temporal or categorical | **Scatter chart** |
-| 6 | Anything else (wide, many-category, or multi-dimensional results) | **Table** |
+| 2 | Exactly one row, exactly one numeric column, at most two columns | **Metric card** — a single number needs no axes; the second column, if present, labels it |
+| 3 | A temporal column present, plus ≥1 numeric column, **and more than one row** | **Line chart** — time on x, ordered chronologically |
+| 4 | A leading categorical label with ≤ 12 distinct values, plus ≥1 numeric, **and more than one row** | **Bar chart** |
+| 4b | Several categorical columns where the first does **not** uniquely label each row | **Table** — a single-axis bar chart would silently collapse a dimension |
+| 5 | Exactly two numeric columns, nothing temporal or categorical, **and more than one row** | **Scatter chart** |
+| 6 | Anything else (wide, many-category, or multi-dimensional) | **Table** |
+
+A single row that carries more than a label and a measure also ends as a table, but it is
+refused inside rules 3, 4 and 5 rather than falling through to row 6.
+
+**A second exception, also found by rendering rather than by reasoning.** Rule 2 originally
+required *exactly one column*. A superlative question — "which terminal has the longest berth
+wait?" — answers with a label **and** a measure, so it returns two columns, missed Rule 2, and
+fell to Rule 4, which drew a bar chart containing a single bar stretched across the full width of
+the container. Four gold questions produced it, including the first example in the UI sidebar, so
+it was the chart most likely to be seen first. Rule 2 now admits the label-plus-measure shape and
+carries the label through as the metric's caption; Rules 3, 4 and 5 refuse single-row results
+outright, because a line through one point shows no trend, one bar is a number drawn wide, and a
+scatter of one point draws no relationship.
+
+Rule 5's guard was the last of the four and came from an audit rather than from rendering, because
+no gold question produces its shape. It arises whenever a superlative groups by a numeric column —
+`year`, or `crane_id` — since column classification reads a numeric identifier as a measure rather
+than as a label. That the same defect survived in one rule after being fixed in three is the
+argument for auditing rule tables as a set rather than fixing the case that was reported.
+
+**Row 4b is a third exception, and it runs the other way.** A strict "exactly one categorical
+column" test would send a great many chartable results to a table, because models routinely add a
+descriptive companion column: asked for average wait by terminal, they return `terminal_name,
+port_name, avg_wait`. Rule 4 therefore tolerates extra categorical columns, but only when the
+first one already identifies each row uniquely — that is, when it is a label and the rest are
+attributes of it. When the first column repeats, the rows are a genuine multi-dimensional
+breakdown and a single-axis bar chart would hide a dimension, so those fall to a table. Observed
+on the first live query, not anticipated.
 
 Column classification comes from the PostgreSQL type codes returned with the cursor description —
 that is, from the database's own declared types, not from guessing from column names.
