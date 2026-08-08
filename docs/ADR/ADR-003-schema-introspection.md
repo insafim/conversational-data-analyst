@@ -52,7 +52,8 @@ let it explore). Rejected, and the reasoning generalises:
   an assessed dimension, to rediscover information that has not changed since startup.
 - It reintroduces model-controlled flow into a graph deliberately built to avoid it
   ([ADR-002](ADR-002-fixed-path-graph-over-agent-loop.md)).
-- At five tables the entire schema is roughly 600–900 tokens. Retrieval is a technique for when
+- At five tables the entire schema is 6,180 characters, roughly 1,500 tokens. Retrieval is a
+  technique for when
   context is scarce. Here it is not scarce, so discovery buys nothing and costs latency, money, and
   determinism.
 

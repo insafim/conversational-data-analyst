@@ -39,23 +39,33 @@ Nothing else — no local PostgreSQL, no libpq (the `psycopg[binary]` wheel bund
 ## Quickstart
 
 ```bash
-# 1. Configure — paste your API key into .env
 cp .env.example .env
+```
 
-# 2. Database (PostgreSQL 18 on port 55432, so it won't collide with a local one)
-docker compose up -d
+**Now open `.env` and replace `sk-ant-...` with a real Anthropic API key.** This is a separate
+step on purpose: it is the one thing the commands cannot do for you, and skipping it produces a
+database and a UI that both come up healthy and then fail on the first question with an
+authentication error, which reads like a bug rather than a missing key.
 
-# 3. Install and seed
+Then:
+
+```bash
+# 1. Database (PostgreSQL 18 on port 55432, so it won't collide with a local one).
+#    --wait blocks until the healthcheck passes; without it, `docker compose up -d` returns
+#    before the schema exists and the seed below fails on a connection or a missing relation.
+docker compose up -d --wait
+
+# 2. Install and seed
 uv venv --python 3.12
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 uv pip install -e ".[dev]"
 python db/seed.py
 
-# 4. Run
+# 3. Run
 streamlit run app.py
 ```
 
-Every command after step 3 assumes that activated environment. `uv venv` creates it but does
+Every command after step 2 assumes that activated environment. `uv venv` creates it but does
 not enter it, so skipping the `activate` line is the one way to have each following step fail
 with `command not found`.
 
@@ -66,9 +76,9 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 274 unit tests, no database or network needed
-pytest                        # all 343, needs the seeded database
-python eval/run_eval.py       # ~3.5 min, ~$0.32 of tokens
+pytest -m "not integration"   # 293 unit tests, no database or network needed
+pytest                        # all 368, needs the seeded database
+python eval/run_eval.py       # ~4 min, ~$0.34 of tokens
 ```
 
 ### Configuration
@@ -85,15 +95,17 @@ as-is except for the API key.
 | `POSTGRES_ANALYST_USER` | No | `analyst_ro` | The read-only role the agent uses |
 | `POSTGRES_ADMIN_USER` | No | `postgres` | Owner. Used **only** by `db/seed.py` |
 | `STATEMENT_TIMEOUT_MS` | No | `5000` | Bounds an expensive query |
-| `ROW_CAP` | No | `500` | Bounds result size in-process |
+| `ROW_CAP` | No | `500` | Bounds result rows in-process. Rows, not bytes |
 | `MAX_SQL_RETRIES` | No | `1` | Retries on a database error only |
+| `LLM_TIMEOUT_S` | No | `45` | Per model call, so one slow provider cannot hang the UI |
+| `MAX_QUESTION_CHARS` | No | `2000` | Rejects an oversized question before any model call |
 
 ¹ Whichever provider your `MODEL_*` prefixes name. Switching provider is an env change, not a code
 change — e.g. `MODEL_CHEAP=openai/gpt-5-mini`, `MODEL_STRONG=openai/gpt-5.4-mini`.
 
 ### Troubleshooting
 
-The three things most likely to break a first run — all three came up while building it:
+The things most likely to break a first run, all of which came up while building it:
 
 | Symptom | Cause & fix |
 | --- | --- |
@@ -101,7 +113,9 @@ The three things most likely to break a first run — all three came up while bu
 | Container exits with *"there appears to be PostgreSQL data in /var/lib/postgresql/data"* | A stale volume from a pre-18 image. `docker compose down -v && docker compose up -d` |
 | `Authentication failed` or `rejected the request` from the model | Model IDs are retired regularly. The defaults were verified 2026-08-04; check `MODEL_CHEAP` / `MODEL_STRONG` against your provider's current list |
 | Sidebar shows *"Cannot reach the database"* | Not seeded yet — run `python db/seed.py` |
-| Integration tests fail on connection | `docker compose up -d`, wait for healthy, then `python db/seed.py` |
+| First question returns an authentication error | The API key in `.env` is still the `sk-ant-...` placeholder |
+| Integration tests fail on connection | `docker compose up -d --wait`, then `python db/seed.py` |
+| `password authentication failed for user "analyst_ro"` | `POSTGRES_ANALYST_PASSWORD` and `ANALYST_RO_PASSWORD` in `.env` disagree. They must match; see the note in `.env.example`. If you changed either after first start, the role already exists with the old password: `docker compose down -v && docker compose up -d --wait` |
 
 ---
 
@@ -178,7 +192,8 @@ The honest trade-off — LangGraph is oversized for six nodes — is argued in
 [ADR-002](docs/ADR/ADR-002-fixed-path-graph-over-agent-loop.md).
 
 **Schema handling.** Not hard-coded and not explored per query. `src/schema.py` introspects
-`information_schema` and `pg_description` once at startup (~1,300 tokens for this schema) and
+`information_schema` and `pg_description` once at startup (6,180 characters, roughly 1,500 tokens
+for this schema) and
 injects it into every SQL prompt. Column `COMMENT ON` text is functional documentation: it carries
 units, enum values and grain — `berth_wait_hours` being *hours* is not recoverable from
 `numeric(10,2)`, and a model that guesses wrong returns a confidently wrong number. Retrieval over
@@ -250,6 +265,16 @@ See [ADR-004](docs/ADR/ADR-004-defence-in-depth-sql.md), "The case where layer 1
 - Schema structure is discoverable (the agent needs it). Credentials in `pg_authid` are not.
 - An expensive-but-valid query can burn CPU. Bounded by a 5s statement timeout and a 500-row cap —
   both verified — but the timeout is also `USERSET`, so it is a seatbelt, not a boundary.
+- The 500-row cap bounds rows, not bytes. `SELECT repeat('x', 20000000) FROM generate_series(1,500)`
+  is a valid read that passes every check and would pull gigabytes into the application process. The
+  fix is a byte budget alongside the row cap; it is not implemented.
+- The catalog deny-list in the validator is a deny-list, and deny-lists leak. Three routes around it
+  are known and unclosed: a decoy CTE declared in an inner scope whitelists a catalog name used in
+  the outer query, `pg_catalog.`-qualified calls escape the node-class rules that block the bare
+  form, and `::regrole` or `::regclass` casts over `generate_series` enumerate role and relation
+  names without naming a catalog table at all. All three disclose metadata only. None of them
+  writes, because writing is blocked by the `GRANT`s underneath rather than by this list. That is
+  precisely why the layer order matters.
 - Nothing here prevents SQL that is safe and runs but *answers the wrong question*. That is what the
   eval harness is for.
 
@@ -317,7 +342,8 @@ a regression detector rather than a capability measurement.
 The clearest evidence of that is which item fails. Run 5 failed `q09` and passed `q19`; run 6 did
 the exact opposite, with `q19` returning zero rows from a filter on the wrong column. Same code,
 same prompts, same temperature. The stable number is the one that matters: **safety has been 5/5
-in every run, 30 attempts without a miss**, because it is enforced where the model cannot reach.
+in every run, 50 attempts across ten runs without a miss**, because it is enforced where the model
+cannot reach.
 
 ### What the window-function questions cost, and why that is the useful part
 
@@ -366,7 +392,7 @@ numbers but never forbade *computing* them. It now prohibits arithmetic across r
 selections ("the highest is X") are allowed, new numbers are not — because a computed figure is
 indistinguishable to a reader from a retrieved one.
 
-**~$0.008 per question**, 3 LLM calls each, ~74 calls per run.
+**~$0.009 per question**, 3 LLM calls each, 91 calls per 36-question run.
 
 **Read the variance, not the best number.** Runs 2 and 3 are the same code and the same prompts, and
 they differ by 9 points. Two things drive that, and they are worth separating:
@@ -425,7 +451,7 @@ One ambiguity case arose naturally from the data rather than being contrived: tw
 named `Meridian Lines` and `Blue Meridian Shipping`, so *"how is Meridian performing?"* is genuinely
 under-specified.
 
-**Honest limitations.** At 25 scored answerable items, one case is worth 4 percentage points, so
+**Honest limitations.** At 28 scored answerable items, one case is worth 3.6 percentage points, so
 the headline number has a wide confidence interval — it is a regression detector and a smoke test,
 not a precise measure of general capability. Result-set comparison also passes if the *reference*
 SQL is wrong, which is why every reference query was hand-verified against the data.
@@ -515,29 +541,29 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── gold.py               Gold-set schema; validated at load
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output — evidence for the numbers above
-└── tests/                  343 tests
+└── tests/                  368 tests
 ```
 
 ---
 
 ## Testing
 
-343 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+368 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
 | --- | --- | --- |
 | `test_gold_set.py` | 120 | The gold set's schema, parametrized over all 36 cases |
-| `test_validator.py` | 93 | The security gate: every attack, evasion, and fail-closed case |
-| `test_eval_scoring.py` | 32 | The comparison logic, i.e. the definition of "correct" |
+| `test_validator.py` | 93 | The security gate: the write-blocking rules, their evasions, and fail-closed parsing |
+| `test_eval_scoring.py` | 35 | The comparison logic, i.e. the definition of "correct" |
 | `test_security_boundary.py` | 17 | That `GRANT`s hold with the read-only guard disabled |
 | `test_llm_extraction.py` | 15 | Parsing model output; functions that raise rather than half-parse |
 | `test_agent_routing.py` | 22 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
-| `test_charts.py` | 14 | Every chart rule, at its boundaries |
+| `test_charts.py` | 30 | Every chart rule, at its boundaries |
 | `test_executor.py` | 13 | Row cap and its boundary, statement timeout, verbatim execution, errors |
-| `test_schema.py` | 5 | Catalog introspection, and that composed identifiers are quoted |
+| `test_schema.py` | 11 | Catalog introspection, and that composed identifiers are quoted |
 | `test_seed_characterization.py` | 7 | Data digests, planted patterns, the crane/terminal invariant |
-| `test_second_order_injection.py` | 5 | Injection arriving through query results, not the chat box |
+| `test_second_order_injection.py` | 5 | Injection arriving through query results, not the chat box. Two of the five call a live model and skip without an API key |
 
 ```bash
 pytest -m "not integration"   # no database, no network

@@ -87,6 +87,15 @@ If `classify` catches it, it is refused at layer 3. If a rephrasing slips past, 
 the deny-list at layer 2. If the validator itself had a bug, `analyst_ro` has no `DROP` privilege at
 layer 1. Three independent failures would be required, and the third is enforced by PostgreSQL.
 
+That three-layer claim is specific to **writes**, and it should not be read more widely than it is
+meant. Against a write, all three layers apply and the bottom one is a `GRANT`, so the guarantee
+survives a bug in the two above it. Against **disclosure and resource use** the picture is thinner:
+PostgreSQL makes its own catalogs world-readable, so layer 1 concedes those by design, and the
+validator's deny-list is the only control. A deny-list is the weaker construction, and this one is
+known to leak in three places, listed under "Residual risk" in the README. Those routes read
+metadata; none of them writes. Stating the asymmetry is the point of the ADR, because a reader who
+takes "three layers" as a blanket claim will trust the read path more than the evidence supports.
+
 ### Why layer 2 walks the parse tree instead of checking the statement type
 
 This started as the obvious design — "parse it, check the statement type is `SELECT`, deny a list of
@@ -154,7 +163,12 @@ argument for allow-list shape stated as a concrete outcome rather than a princip
 Two constructs were allowed and one was subsequently blocked:
 
 - `SELECT ... FOR UPDATE` — structurally a SELECT, but it takes row locks. Now rejected
-  (`locking_clause`); no analytics question needs it.
+  (`locking_clause`) at the top level; no analytics question needs it. The check reads the root
+  node only, so the clause still passes inside a subquery: `SELECT * FROM (SELECT * FROM terminals
+  FOR UPDATE) z`. The consequence is a row lock held for at most the 5s statement timeout by a role
+  that cannot modify the rows it locked, which is why this was left as a documented gap rather than
+  patched. The reason it exists is worth more than the gap: the check was written against the root
+  node when the root node was the whole query, and it was never revisited when subqueries were.
 - `SELECT * FROM generate_series(1, 1000000000)` — still allowed, deliberately. `generate_series`
   is legitimate, and the defence is the one already designed for expensive reads: verified blocked
   by the statement timeout after 5.1s. Blocking the function outright would be over-broad.

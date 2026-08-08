@@ -81,8 +81,11 @@ class ChartSpec(BaseModel):
 class AgentResult(BaseModel):
     """What the UI and the eval harness both consume.
 
-    The eval harness depends on `sql` and `outcome` being populated even on failure
-    paths, so a run can be attributed to the stage that failed (ADR-006).
+    `outcome` is populated on every path, including failures, so a run can always be
+    attributed to the stage that failed (ADR-006). `sql` is populated on every path that
+    reached SQL generation, which excludes a refusal, a clarification, and a provider
+    failure raised out of the graph before it returned any state. A consumer must treat
+    `sql` as optional and read `outcome` to know why it is absent.
     """
 
     question: str

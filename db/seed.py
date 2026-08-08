@@ -24,12 +24,13 @@ Run with the OWNER credentials (not the read-only analyst role, which by design 
 
 from __future__ import annotations
 
-import os
 import random
 from datetime import date, datetime, timedelta
 
 import psycopg
 from psycopg import sql
+
+from src.config import settings
 
 # --- Determinism -------------------------------------------------------------------
 # One seeded Random instance used for everything. Never use the module-level `random.*`
@@ -208,15 +209,12 @@ def _apply_remarks(cur) -> None:
 
 
 def main() -> None:
-    conn_str = (
-        f"host={os.getenv('POSTGRES_HOST', 'localhost')} "
-        f"port={os.getenv('POSTGRES_PORT', '55432')} "
-        f"dbname={os.getenv('POSTGRES_DB', 'ports')} "
-        f"user={os.getenv('POSTGRES_ADMIN_USER', 'postgres')} "
-        f"password={os.getenv('POSTGRES_ADMIN_PASSWORD', 'postgres')}"
-    )
-
-    with psycopg.connect(conn_str) as conn, conn.cursor() as cur:
+    # The admin identity is defined once, in src/config.py, alongside the read-only
+    # identity it is deliberately separated from. Building a second connection string
+    # here would mean two places to change a credential and one of them silently
+    # disagreeing with the other, which is the failure mode the split identities exist
+    # to make impossible.
+    with psycopg.connect(settings.admin_dsn) as conn, conn.cursor() as cur:
         # Idempotent: a re-run must replace the data, not append to it.
         cur.execute(
             "TRUNCATE cargo_moves, port_calls, cranes, vessels, terminals "

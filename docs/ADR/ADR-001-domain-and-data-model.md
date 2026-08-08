@@ -113,7 +113,7 @@ tables start degrading SQL accuracy by distraction. The data model deserves the 
 since five tables holding 1,500 port calls and 6,577 cargo moves on single-node PostgreSQL are a
 choice rather than a default. It has two expiry conditions, and they are reached independently.
 
-**Interactive latency.** `pg_database_size` reports 9,598 kB for the seeded database, and
+**Interactive latency.** `pg_database_size` reports about 9,600 kB for the seeded database, and
 `pg_total_relation_size`, summed across the five user tables, totals 1,680 kB, against the 16,384
 8 kB buffers (128 MB) this container runs with, as reported by `pg_settings`. The working set is
 therefore resident in the buffer pool with close to eighty times headroom, and it shows in the

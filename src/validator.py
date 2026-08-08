@@ -158,7 +158,10 @@ def validate_sql(sql: str) -> ValidationResult:
 
     Returns:
         A ValidationResult. On failure, ``reason`` is safe to show a user and
-        ``violation`` is a stable code for tests and metrics.
+        ``violation`` is a stable code that the tests assert against, so a rejection can
+        be pinned to a specific rule rather than to the wording of its message. Nothing
+        aggregates these codes yet, so there is no rejection-rate metric; the code is
+        shaped to support one when there is somewhere to send it.
     """
     if not sql or not sql.strip():
         return _fail("empty", "No SQL was produced.")

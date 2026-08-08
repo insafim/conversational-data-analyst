@@ -27,7 +27,7 @@ The UI's entire job is to make four things visible, because each maps to an asse
 | Chat input and message history | The conversational requirement |
 | Natural-language answer | Groundedness — phrased only from returned rows |
 | Chart, rendered from a typed `ChartSpec` | Chart-type selection ([ADR-005](ADR-005-deterministic-chart-selection.md)) |
-| Collapsed "View SQL" expander + `1.8s · 3 rows` caption | Auditability and latency visibility |
+| Collapsed "View SQL" expander + `6.24s · 3 LLM calls · 6 rows · $0.0093` caption | Auditability, latency and cost visibility |
 
 Plus one sidebar block with a schema summary and four example questions as buttons, which exists so
 a reviewer can drive the demo without inventing questions.

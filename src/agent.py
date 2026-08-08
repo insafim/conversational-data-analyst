@@ -75,15 +75,15 @@ class Timings:
 
     `record` ADDS rather than assigns, because `generate_sql` and `validate` run twice
     when the SQL retry fires. The sum is the honest figure for "where did the wall clock
-    go"; `passes` keeps the retry visible rather than hiding it inside a larger number.
+    go". It does mean a stage total does not say how many passes produced it, which is
+    why `AgentResult.retried` is reported separately rather than being inferred from
+    these numbers.
     """
 
     stages: dict[str, float] = field(default_factory=dict)
-    passes: dict[str, int] = field(default_factory=dict)
 
     def record(self, stage: str, seconds: float) -> None:
         self.stages[stage] = round(self.stages.get(stage, 0.0) + seconds, 3)
-        self.passes[stage] = self.passes.get(stage, 0) + 1
 
     def as_dict(self) -> dict[str, float]:
         """Ordered slowest first, since that is the order they get read in."""

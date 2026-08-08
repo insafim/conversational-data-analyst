@@ -194,7 +194,7 @@ places.
 | **Data frames**     | `pandas` (result frames for charting)                    | 3.0.5                   |
 | **UI**              | `streamlit` (chat, charts, SQL expander)                 | 1.60.0                  |
 | **Typed models**    | `pydantic`                                               | 2.13.4                  |
-| **Tests / lint**    | `pytest`, `ruff`                                       | 9.1.1                   |
+| **Tests / lint**    | `pytest` 9.1.1, `ruff` 0.16.1                        | see left                |
 | **Packaging**       | `uv` + `pyproject.toml`                                | n/a                     |
 
 **Notably absent:** no ORM (the queries are model-generated SQL, so an ORM has nothing to
@@ -383,7 +383,7 @@ artefact of synthetic data: production systems hit the same problem the moment a
 | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Hard-coded schema string                                                 | Rejected. Rots silently on the first schema change, and makes this a demo of*this* database rather than a system that works against *a* database                                                  |
 | Per-query agentic discovery (`list_tables` / `describe_table` tools) | Rejected. 2 to 4 extra sequential round trips**per question** to rediscover something unchanged since startup, on a system where latency is assessed, and it reintroduces model-controlled flow |
-| **Startup introspection + full injection**                         | **Chosen.** The entire schema is ~5,400 characters (~1,300 tokens)                                                                                                                              |
+| **Startup introspection + full injection**                         | **Chosen.** The entire schema is 6,180 characters (roughly 1,500 tokens)                                                                                                                              |
 
 The generalisable principle: **retrieval earns its place when the schema stops fitting in
 context, not before.** At five tables context is not scarce. Knowing when *not* to reach for
@@ -730,19 +730,27 @@ so `numeric` vs `double precision`, and `date` vs midnight `timestamp`, compare 
 
 ### Measured results
 
-Six full runs. The item set grew twice, so the row is comparable and the column is not:
+Ten full runs. The item set grew twice, so the row is comparable and the column is not:
 runs 1 to 3 scored a 30-item set (22 answerable), run 4 scored 33 items (25 answerable), and
-runs 5 and 6 score 36 items (28 answerable) after three window-function questions were added.
-Run 4 is the first with groundedness measured.
+runs 5 to 10 score 36 items (28 answerable) after three window-function questions were added.
+Run 4 is the first with groundedness measured. Only the six comparable runs are tabulated here;
+runs 1 to 4 are cited in the prose below and their raw output is in `eval/results/`.
 
-| Metric              | Run 1        | Run 2        | Run 3        | Run 4  | Run 5  | Run 6      |
-| ------------------- | ------------ | ------------ | ------------ | ------ | ------ | ---------- |
-| Execution accuracy  | 86.4%        | 95.5%        | 86.4%        | 92.0%  | 92.9%  | **96.4%** |
-| Answer groundedness | not measured | not measured | not measured | 100%   | 89.3%  | **92.9%** |
-| Ambiguity handling  | 100%         | 100%         | 66.7%        | 100%   | 100%   | **100%**  |
-| Safety / refusals   | 100%         | 100%         | 100%         | 100%   | 100%   | **100%**  |
-| Mean latency        | 8.3s         | 9.1s         | 12.0s        | 6.0s   | 6.1s   | 5.9s       |
-| Cost per run        | $0.228       | $0.238       | $0.224       | $0.274 | $0.325 | $0.315     |
+| Metric              | Run 5  | Run 6  | Run 7  | Run 8  | Run 9  | Run 10     |
+| ------------------- | ------ | ------ | ------ | ------ | ------ | ---------- |
+| Execution accuracy  | 92.9%  | 96.4%  | 96.4%  | 100%   | 100%   | **100%**  |
+| Answer groundedness | 89.3%  | 92.9%  | 96.4%  | 96.4%  | 92.9%  | **96.4%** |
+| Ambiguity handling  | 100%   | 100%   | 100%   | 100%   | 100%   | **100%**  |
+| Safety / refusals   | 100%   | 100%   | 100%   | 100%   | 100%   | **100%**  |
+| Mean latency        | 6.1s   | 5.9s   | 6.1s   | 7.7s   | 5.6s   | 6.7s       |
+| Cost per run        | $0.325 | $0.315 | $0.328 | $0.341 | $0.339 | $0.335     |
+
+**Runs 8 to 10 follow two column-comment fixes, and that is what moved the number.** The eval kept
+catching SQL that ran clean and answered a slightly different question: one query filtered on
+terminal name where the question meant port name, another grouped container volume by arrival date
+rather than the date the containers moved. Both return rows and neither errors. The repair was
+writing the grain and the meaning into the column comments, which are what `src/schema.py` injects
+into the prompt, so it is a schema-documentation fix rather than a model or prompt fix.
 
 **The first groundedness measurement caught a real failure on a question whose SQL was correct.**
 The agent returned the right monthly rows, then wrote "the total annual volume reaching 228,499
@@ -763,14 +771,19 @@ and now reports separately:
 Infrastructure errors are reported separately but **not excluded** from the headline: a metric
 that silently drops its own failed requests flatters exactly when the system is least usable.
 
-The honest claim is therefore a range: **execution accuracy of 86.4% to 96.4% across six
-runs**. At 28 answerable items one case is worth 3.6 points, so a single run cannot distinguish
-93 from 96. Runs 5 and 6 make the point without needing the infrastructure caveat: they differ
-by one item, and it is not the same item. Run 5 failed `q09` and passed `q19`; run 6 passed
-`q09` and failed `q19`, where the agent filtered on the wrong column and returned zero rows.
+The honest claim is therefore a range: **execution accuracy of 86.4% to 100% across ten runs**,
+and 92.9% to 100% across the six that score the same 28 answerable items. At 28 items one case is
+worth 3.6 points, so a single run cannot distinguish 93 from 96, and the three consecutive 28/28
+runs are 84 of 84 question-runs rather than a claim of general correctness. Runs 5 and 6 make the
+variance point without needing the infrastructure caveat: they differ by one item, and it is not
+the same item. Run 5 failed `q09` and passed `q19`; run 6 passed `q09` and failed `q19`, where the
+agent filtered on the wrong column and returned zero rows. Groundedness has not converged the same
+way: it sits at 92.9% to 96.4% over runs 8 to 10 and moves between runs, so the accuracy result
+should not be read as the system being finished.
 
-**The one number that did not move: safety, 5/5 in every run, 30 attempts without a miss.** That stability is not a
-property of the model; it comes from enforcing the guarantee where the model cannot reach.
+**The one number that did not move: safety, 5/5 in every run, 50 attempts across ten runs without a
+miss.** That stability is not a property of the model; it comes from enforcing the guarantee where
+the model cannot reach.
 
 ### What the harness found, about the system and about itself
 
@@ -828,11 +841,12 @@ Two model tiers behind one wrapper ([ADR-007](ADR/ADR-007-llm-provider-and-tieri
 
 Two of three calls go to the cheap tier. Provider is chosen by the model-string prefix
 (`anthropic/…`, `openai/…`, `gemini/…`), so switching provider is an environment change, not a
-code change. Measured cost is **~$0.008 per question**.
+code change. Measured cost is **~$0.009 per question**, or about $0.34 for a 36-question run.
 
 ### Latency
 
-**~8 to 9s mean**, and this is the weakest number in the system. It is a direct consequence
+**5.6 to 7.7s mean across runs 5 to 10**, and this is the weakest number in the system. It is a
+direct consequence
 of three sequential LLM calls, not a defect. The honest fixes are caching and a smaller
 classifier, not a rewrite. What the architecture *does* guarantee is that latency is a
 **ceiling** (3 calls, 4 with a retry) rather than a distribution with a long tail, which is
@@ -874,7 +888,7 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── gold.py                 Gold-set schema; validated at load
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers
-├── tests/                      343 tests
+├── tests/                      368 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Eight decision records
@@ -894,19 +908,19 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 343 tests
+### Test suite: 368 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
 | `test_gold_set.py`               | 120   | Gold-set schema, parametrized over all 36 cases                          |
-| `test_validator.py`              | 93    | The security gate: every attack, evasion and fail-closed case            |
-| `test_eval_scoring.py`           | 32    | Comparison and scoring logic, the definition of "correct"                |
+| `test_validator.py`              | 93    | The security gate: the write-blocking rules, evasions, fail-closed parse |
+| `test_eval_scoring.py`           | 35    | Comparison and scoring logic, the definition of "correct"                |
 | `test_security_boundary.py`      | 17    | Integration: GRANTs hold with the read-only guard disabled               |
 | `test_llm_extraction.py`         | 15    | Parsing model output; total functions that raise rather than half-parse  |
 | `test_agent_routing.py`          | 22    | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
-| `test_charts.py`                 | 14    | Every chart rule, at its boundaries                                      |
+| `test_charts.py`                 | 30    | Every chart rule, at its boundaries                                      |
 | `test_executor.py`               | 13    | Row cap and its boundary, timeout, verbatim execution, errors            |
-| `test_schema.py`                 | 5     | Catalog introspection; composed identifiers are quoted                   |
+| `test_schema.py`                 | 11    | Catalog introspection; composed identifiers are quoted                   |
 | `test_seed_characterization.py`  | 7     | Data digests, planted patterns, the crane/terminal invariant             |
 | `test_second_order_injection.py` | 5     | Stored-payload injection arriving through query results                  |
 
@@ -916,7 +930,7 @@ Integration tests are marked, so unit tests run without a database:
 pytest -m "not integration"   # no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
-python eval/run_eval.py       # ~3.5 min, ~$0.32
+python eval/run_eval.py       # ~4 min, ~$0.34
 ```
 
 ### Testing philosophy
@@ -993,7 +1007,7 @@ deployments stall.
 | **Read-only DB role as the real boundary**                    | A control the model can influence is a tendency; one it cannot reach is a guarantee                                                                | Requires provisioning a role, which is what a client DBA would do anyway                           |
 | **sqlglot AST walk, not a `sqlparse` statement-type check** | A data-modifying CTE has top-level type`Select`, so a check on the top-level type alone admits it and it executes                                | An extra dependency; allow-list shape occasionally blocks exotic-but-valid SQL                     |
 | **Allow-list validator, not a keyword deny-list**             | An unanticipated construct is denied by default rather than admitted by omission                                                                   | False positives (e.g.`INTERSECT` initially), which is the correct direction to fail in           |
-| **Startup schema introspection, not per-query discovery**     | ~1,300 tokens injected once beats 2 to 4 extra round trips per question                                                                            | Cached, so DDL changes need a restart; breaks down in the hundreds of tables                       |
+| **Startup schema introspection, not per-query discovery**     | roughly 1,500 tokens injected once beats 2 to 4 extra round trips per question                                                                            | Cached, so DDL changes need a restart; breaks down in the hundreds of tables                       |
 | **Column comments as prompt context**                         | Units, enums and grain are not recoverable from types, and guessing them yields confidently wrong numbers                                          | Comments become production code, maintained with the schema                                        |
 | **Rule-based chart selection, no LLM**                        | Chart choice is a function of data shape rather than language, so the rule is deterministic, free, and unit-testable                               | Ignores explicit user intent ("show as a pie chart")                                               |
 | **Port operations domain, not e-commerce**                    | E-commerce is over-represented in training data, so accuracy would partly measure memorisation rather than schema comprehension                    | Less immediately familiar to a reader than orders and products                                     |

@@ -17,7 +17,7 @@ from __future__ import annotations
 import streamlit as st
 
 from src.charts import metric_fields, to_dataframe
-from src.models import ChartKind, Outcome
+from src.models import AgentResult, ChartKind, Outcome
 from src.schema import get_schema_summary
 
 st.set_page_config(page_title="Conversational Data Analyst", page_icon="🛳️", layout="wide")
@@ -169,7 +169,26 @@ if question:
         st.markdown(question)
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            result = _agent()(question)
+            try:
+                result = _agent()(question)
+            except Exception as exc:  # noqa: BLE001
+                # ask() converts the failures it anticipates into an ERROR outcome, so
+                # reaching here means an unanticipated one: a dropped database connection,
+                # an import-time fault in a lazily loaded dependency, a bug. Streamlit's
+                # default for an uncaught exception is to print the traceback into the
+                # page, which shows a non-technical user a stack trace and shows anyone
+                # else the internal structure of the app. Converting it to the same
+                # AgentResult shape the rest of the UI already renders keeps one failure
+                # presentation instead of two.
+                result = AgentResult(
+                    question=question,
+                    outcome=Outcome.ERROR,
+                    answer=(
+                        "Something failed while answering that. The database or the model "
+                        "provider is the usual cause. The error is in the server log."
+                    ),
+                    error=f"{type(exc).__name__}: {exc}",
+                )
         entry = {"question": question, "result": result}
         render_answer(entry)
     st.session_state.history.append(entry)

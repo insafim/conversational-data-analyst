@@ -641,7 +641,7 @@ The column comment carries the warning into the prompt itself:
 ## 9. How the data reaches the model
 
 The model never sees rows before writing SQL. It sees a **schema context** assembled once at
-startup by `src/schema.py` (~1,300 tokens for this schema), from four sources:
+startup by `src/schema.py` (roughly 1,500 tokens for this schema), from four sources:
 
 **1. Structure**, from `information_schema.columns` and `information_schema.tables` —
 tables, columns, ordinal position, types and nullability.
