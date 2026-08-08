@@ -168,11 +168,31 @@ def _check_groundedness(result) -> tuple[bool, str]:
       * the SQL (literals such as a year or a LIMIT).
     Row count is also allowed, since "6 terminals" is a legitimate observation.
 
-    KNOWN LIMITATION, stated rather than hidden: a genuinely *derived* figure — "three
-    times higher", "up 12%" — is not in the result set and will be reported as
-    ungrounded. That is a false positive. It is tolerated because the alternative,
-    permitting any arithmetic, would permit exactly the invented numbers this is meant to
-    catch. The metric is therefore a floor on groundedness, not a precise measure.
+    TWO KNOWN FALSE POSITIVES, stated rather than hidden. Both are tolerated, and the
+    metric is therefore a floor on groundedness rather than a precise measure.
+
+    1. **Derived figures.** "three times higher", "up 12%" — arithmetic the model
+       performed, present in no row. Tolerated because the alternative, permitting any
+       arithmetic, permits exactly the invented numbers this exists to catch.
+
+    2. **The magnitude of a negative value.** A `LAG` column holds -988 for a month that
+       fell, and the natural English is "dropped 988 containers". The answer carries the
+       magnitude, the data carries the sign, and set membership rejects it. The answer is
+       correct and the checker is wrong. This is eval q28, flagged in every run since
+       groundedness was first measured.
+
+       Not fixed, because both available fixes are worse. Matching on absolute value
+       would accept "July increased by 3,845" against a -3845 cell, trading this false
+       positive for a false negative on exactly the sign errors that matter. Matching the
+       magnitude only when a decrease word sits near the figure would remove this case but
+       detect nothing new: the matching below is pure set membership with no relation to
+       the surrounding words, so a sign error on a *positive* value ("August decreased by
+       4,532" against +4532) already passes by exact match and would continue to, because
+       that branch short-circuits before any proximity logic could run.
+
+       See `tests/test_eval_scoring.py`, where both the false positive and that blind spot
+       are pinned. The pins were themselves rebuilt after an audit found the first version
+       still passed under the absolute-value fix it claimed to guard against.
     """
     if result.result is None:
         return True, ""  # nothing was returned, so nothing could be ungrounded

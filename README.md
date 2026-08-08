@@ -277,9 +277,23 @@ runs 5 to 7.
 
 **Read the 100% carefully.** It is 28 of 28 on three consecutive runs, which is 84 of 84
 question-runs on a 28-question set — a genuine result, and not the same claim as "100% accurate".
-Groundedness is still 92.9–96.4%: `q28`'s summariser keeps reporting a month-on-month delta it
-computed rather than one the query returned, which is the failure the groundedness metric exists to
-expose and the accuracy metric cannot see.
+
+**Groundedness is lower, at 92.9–96.4%, and one of the two flags is a false positive I chose not to
+engineer around.** They differ in kind, and the difference is the interesting part:
+
+- `q04` is a real catch. The answer said three months each exceeded "24,000 containers". That
+  threshold appears in no row; the model invented it for emphasis. Exactly what this metric is for.
+- `q28` is a false positive. The `LAG` column holds `-988` for a month that fell, and the answer
+  says "dropped 988 containers" — correct English that a signed set-membership check rejects. The
+  answer is right and the checker is wrong.
+
+The checker was **not** loosened to clear `q28`. Matching on absolute value would accept "July
+increased by 3,845" against a `-3845` cell, trading a false positive for a false negative on the
+sign errors that actually matter. A proximity rule keyed on decrease words would remove this case
+and catch nothing new, since a sign error on a positive value already passes by exact match. So the
+metric under-reports, knowingly, and both halves of that behaviour are pinned in
+`tests/test_eval_scoring.py` so it cannot drift silently. The true groundedness figure is higher
+than the reported one.
 
 **What moved accuracy from ~96% to 28/28 was column comments, not model changes.** The eval caught
 two failures of the same kind, both SQL that ran cleanly and answered a slightly different question:

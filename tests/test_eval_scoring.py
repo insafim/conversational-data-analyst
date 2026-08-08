@@ -210,6 +210,89 @@ class TestGroundedness:
         assert passed is False
         assert "24.91" in detail
 
+    def test_the_magnitude_of_a_negative_value_is_reported_ungrounded(self) -> None:
+        """A KNOWN FALSE POSITIVE, pinned deliberately rather than fixed.
+
+        A `LAG` column holds -988 for a month that fell. The natural English for that is
+        "dropped 988 containers", so the answer carries the magnitude while the data
+        carries the signed value, and a set-membership check rejects it. The answer is
+        correct; the checker is wrong. This is eval q28, ungrounded in every run since
+        groundedness was first measured.
+
+        It is pinned rather than fixed because the available fixes are both bad. Matching
+        on absolute value would accept "July increased by 3,845" against a -3845 cell,
+        trading a false positive for a false negative on exactly the sign errors this
+        metric should catch. Matching the magnitude only when a decrease word sits near
+        the figure removes this false positive but catches nothing new: a sign error on a
+        *positive* value ("August decreased by 4,532" against +4532) already passes today
+        by exact match and would still pass, because exact match short-circuits first.
+        Proximity parsing would add fragility to a checker whose worth is being simple and
+        deterministic, and would buy no detection.
+
+        So the metric under-reports, knowingly, and this test is the record of that. If
+        this test ever fails, someone has changed the checker's treatment of signed
+        values and should confirm they have not loosened it.
+
+        TWO THINGS THIS TEST GETS RIGHT ONLY BECAUSE AN AUDIT CAUGHT THEM WRONG. The
+        first draft said "dropping 988 containers to 1,712" against a row holding only
+        -988, so 1712 was itself ungrounded and kept the result False no matter what
+        happened to 988 — the assertion could not distinguish the bug from the confound.
+        And it asserted `"988" in detail`, which is satisfied by the raw answer text the
+        detail message echoes back, whether or not 988 was ever flagged. Both survived a
+        simulated absolute-value fix. The answer here therefore carries exactly one
+        figure, and the assertion reads the flagged list rather than the whole message.
+        """
+        r = self._result(
+            "Volume fell in March, dropping 988 containers.",
+            [["2025-03-01", Decimal("-988")]],
+        )
+        passed, detail = _check_groundedness(r)
+        assert passed is False, "behaviour changed: signed values are now matched by magnitude"
+
+        # Read the flagged figures only. The detail message ends with the answer text
+        # verbatim, so a substring search over the whole string proves nothing.
+        parts = detail.split(" — answer was:")
+        # Without this, a change to the message format makes `split` a no-op, `flagged`
+        # becomes the whole message including the echoed answer, and the assertion below
+        # starts passing via the echo again — silently restoring the defect this test was
+        # rebuilt to remove. Fail loudly on the format change instead.
+        assert len(parts) == 2, f"detail message format changed; cannot isolate: {detail}"
+        flagged = parts[0]
+        assert "988" in flagged, f"988 was not the figure flagged; detail was: {detail}"
+
+    def test_a_sign_error_on_a_positive_value_is_not_caught(self) -> None:
+        """The blind spot that justifies leaving the false positive above alone.
+
+        A month that ROSE by 4,532 described as "decreased by 4,532" is a genuine sign
+        error, and it passes: 4532 matches the returned +4532 exactly, and matching is
+        pure set membership with no relation to the surrounding words. Pinning this is
+        what makes the argument against a proximity-based fix concrete — such a fix would
+        remove the false positive above while leaving this untouched, because exact match
+        short-circuits before any word-proximity logic could run.
+
+        This test asserts a WEAKNESS, not a feature. If it ever fails, someone has taught
+        the checker to validate direction, which would be a real improvement and should
+        be kept.
+        """
+        r = self._result(
+            "Volume decreased by 4,532 containers in August.",
+            [["2025-08-01", Decimal("4532")]],
+        )
+        assert _check_groundedness(r)[0] is True, (
+            "the checker now detects direction errors — good; update this pin and the "
+            "reasoning in _check_groundedness that cites this blind spot"
+        )
+
+    def test_a_signed_value_quoted_with_its_sign_is_grounded(self) -> None:
+        """The other half of the pin. Nothing is wrong with the checker's handling of
+        negatives as such — quoting -988 directly is accepted. The false positive above
+        is caused by English convention, not by a defect in set membership."""
+        r = self._result(
+            "March recorded a change of -988 containers.",
+            [["2025-03-01", Decimal("-988")]],
+        )
+        assert _check_groundedness(r)[0] is True
+
     def test_small_integers_are_not_treated_as_data(self) -> None:
         """'the top 3 operators' echoes the question; flagging it would make the metric
         useless through false positives."""
