@@ -19,9 +19,11 @@ htmlcov/
 # OS
 .DS_Store
 
-# Agent workspace (research notes and scratch state, not deliverables)
-.claude/work/
-.claude/agent-memory/
+# Agent tooling state. Gate files, verifier evidence, session handoffs and research notes
+# are the scaffolding used to build this, not the thing being delivered. The whole
+# directory is excluded rather than named subdirectories, because the tooling adds new
+# state paths over time and a per-path list silently stops covering them.
+.claude/
 
 # Internal working documents — kept locally, not shipped to the reviewer.
 # The assignment brief, the build plan, the demo script and the slide skeleton are
@@ -31,6 +33,7 @@ docs/problem.md
 docs/repo.md
 docs/video.md
 docs/presentation.md
+docs/deck.md
 
 # Personal interview preparation. These would be actively bad to ship: the Q&A scripts
 # answers to questions the reviewer has not asked yet, and the study guide is a record of
