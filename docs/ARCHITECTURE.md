@@ -888,7 +888,7 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── gold.py                 Gold-set schema; validated at load
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers
-├── tests/                      373 tests
+├── tests/                      376 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Eight decision records
@@ -908,7 +908,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 373 tests
+### Test suite: 376 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
@@ -924,6 +924,7 @@ streamlit run app.py
 | `test_seed_characterization.py`  | 7     | Data digests, planted patterns, the crane/terminal invariant             |
 | `test_second_order_injection.py` | 5     | Stored-payload injection arriving through query results                  |
 | `test_forecast_grounding.py`     | 5     | That a historical figure is never reported as a forecast                 |
+| `test_data_coverage.py`          | 3     | That the sidebar's date range is derived, not written down               |
 
 Integration tests are marked, so unit tests run without a database:
 

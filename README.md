@@ -77,7 +77,7 @@ Then, to reproduce the numbers below:
 
 ```bash
 pytest -m "not integration"   # 293 unit tests, no database or network needed
-pytest                        # all 373, needs the seeded database
+pytest                        # all 376, needs the seeded database
 python eval/run_eval.py       # ~4 min, ~$0.34 of tokens
 ```
 
@@ -559,14 +559,14 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── gold.py               Gold-set schema; validated at load
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output — evidence for the numbers above
-└── tests/                  373 tests
+└── tests/                  376 tests
 ```
 
 ---
 
 ## Testing
 
-373 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+376 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
@@ -583,6 +583,7 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_seed_characterization.py` | 7 | Data digests, planted patterns, the crane/terminal invariant |
 | `test_second_order_injection.py` | 5 | Injection arriving through query results, not the chat box. Two of the five call a live model and skip without an API key |
 | `test_forecast_grounding.py` | 5 | That a historical figure is never reported as a forecast. Live model calls; skipped without an API key |
+| `test_data_coverage.py` | 3 | That the sidebar's date range is derived from the data, not written down |
 
 ```bash
 pytest -m "not integration"   # no database, no network
