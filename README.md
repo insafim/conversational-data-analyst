@@ -77,7 +77,7 @@ Then, to reproduce the numbers below:
 
 ```bash
 pytest -m "not integration"   # 293 unit tests, no database or network needed
-pytest                        # all 368, needs the seeded database
+pytest                        # all 373, needs the seeded database
 python eval/run_eval.py       # ~4 min, ~$0.34 of tokens
 ```
 
@@ -283,21 +283,39 @@ See [ADR-004](docs/ADR/ADR-004-defence-in-depth-sql.md), "The case where layer 1
 ## Evaluation
 
 <!-- EVAL_RESULTS_START -->
-Ten full runs. The gold set grew twice, so read across the row and not down the column: runs 1 to 3
-scored 22 answerable items, run 4 scored 25, and runs 5 onward score 28 after three window-function
-questions were added. Runs 1 to 4 are shown for history and are **not comparable** with the rest.
+Fourteen full runs. The gold set grew twice, so read across the row and not down the column: runs 1
+to 3 scored 22 answerable items, run 4 scored 25, and runs 5 onward score 28 after three
+window-function questions were added. Runs 1 to 4 are **not comparable** with the rest and are
+discussed below rather than tabulated.
 
-Runs 8 to 10 follow two schema-comment fixes described below, so they measure different code from
-runs 5 to 7.
+Three code states are represented. Runs 5 to 7 predate two schema-comment fixes. Runs 8 to 10
+follow them. Runs 11 onward follow a summariser change, and runs 11 and 12 are the regression it
+caused, kept here because deleting them would make the number mean less.
 
-| | Run 5 | Run 6 | Run 7 | Run 8 | Run 9 | Run 10 |
-| --- | --- | --- | --- | --- | --- | --- |
-| Execution accuracy | 92.9% | 96.4% | 96.4% | **100%** | **100%** | **100%** |
-| Answer groundedness | 89.3% | 92.9% | 96.4% | 96.4% | 92.9% | **96.4%** |
-| Ambiguity handling | 100% | 100% | 100% | 100% | 100% | **100%** |
-| Safety / refusals | 100% | 100% | 100% | 100% | 100% | **100%** |
-| Mean latency | 6.1s | 5.9s | 6.1s | 7.7s | 5.6s | 6.7s |
-| Cost per run | $0.325 | $0.315 | $0.328 | $0.341 | $0.339 | $0.335 |
+| | Run 5 | Run 6 | Run 7 | Run 8 | Run 9 | Run 10 | Run 11 | Run 12 | Run 13 | Run 14 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Execution accuracy | 92.9% | 96.4% | 96.4% | **100%** | **100%** | **100%** | **100%** | **100%** | **100%** | **100%** |
+| Answer groundedness | 89.3% | 92.9% | 96.4% | 96.4% | 92.9% | 96.4% | 89.3% | 89.3% | 92.9% | **92.9%** |
+| Ambiguity handling | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | **100%** |
+| Safety / refusals | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | **100%** |
+| Mean latency | 6.1s | 5.9s | 6.1s | 7.7s | 5.6s | 6.7s | 6.2s | 6.8s | 6.1s | 6.0s |
+| Cost per run | $0.325 | $0.315 | $0.328 | $0.341 | $0.339 | $0.335 | $0.344 | $0.354 | $0.357 | $0.352 |
+
+**The clearest thing this harness has done is catch a regression in a fix.** Probing beyond the
+gold set found the agent answering *"project how many port calls we should expect in July 2026"*
+with `SELECT ROUND(AVG(monthly_count), 2) AS projected_port_calls_july_2026`: a real historical
+mean over every month on record, reported as a forward-looking figure, for a period the data does
+not reach. Groundedness scored it correct, because the number genuinely was in the rows. Only the
+claim about what it meant was false, and set-membership cannot see that.
+
+The fix was a summariser rule. Runs 11 and 12 then dropped groundedness from 92.9-96.4% to 89.3%
+twice, failing the same questions both times, because the new rule made the summariser more
+descriptive and the extra description arrived as rounded bands: *"around 2,500 to 5,000 TEU"*,
+*"crossed 100,000 in June"*. Those are new numbers wearing the clothes of description, and it is
+the same defect the no-arithmetic rule already existed to prevent. Extending that rule to cover
+rounding and banding returned groundedness to 92.9% on runs 13 and 14, with the forecast case
+fixed. The regression was mine, the harness found it in one run, and the two bad runs stay in the
+table.
 | Gold items | 36 | 36 | 36 | 36 | 36 | 36 |
 
 **Read the 100% carefully.** It is 28 of 28 on three consecutive runs, which is 84 of 84
@@ -342,8 +360,8 @@ a regression detector rather than a capability measurement.
 The clearest evidence of that is which item fails. Run 5 failed `q09` and passed `q19`; run 6 did
 the exact opposite, with `q19` returning zero rows from a filter on the wrong column. Same code,
 same prompts, same temperature. The stable number is the one that matters: **safety has been 5/5
-in every run, 50 attempts across ten runs without a miss**, because it is enforced where the model
-cannot reach.
+in every run, 70 attempts across fourteen runs without a miss**, because it is enforced where the
+model cannot reach.
 
 ### What the window-function questions cost, and why that is the useful part
 
@@ -541,14 +559,14 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── gold.py               Gold-set schema; validated at load
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output — evidence for the numbers above
-└── tests/                  368 tests
+└── tests/                  373 tests
 ```
 
 ---
 
 ## Testing
 
-368 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+373 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
@@ -564,6 +582,7 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_schema.py` | 11 | Catalog introspection, and that composed identifiers are quoted |
 | `test_seed_characterization.py` | 7 | Data digests, planted patterns, the crane/terminal invariant |
 | `test_second_order_injection.py` | 5 | Injection arriving through query results, not the chat box. Two of the five call a live model and skip without an API key |
+| `test_forecast_grounding.py` | 5 | That a historical figure is never reported as a forecast. Live model calls; skipped without an API key |
 
 ```bash
 pytest -m "not integration"   # no database, no network

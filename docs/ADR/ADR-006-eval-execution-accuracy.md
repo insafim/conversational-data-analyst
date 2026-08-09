@@ -146,7 +146,7 @@ err in.
 
 ### Run-to-run variance is real, and was measured rather than assumed
 
-Ten full runs have now been executed. Runs 2 and 3 share identical code and prompts and scored **95.5%**
+Fourteen full runs have now been executed. Runs 2 and 3 share identical code and prompts and scored **95.5%**
 and **86.4%** execution accuracy respectively. That is a nine-point spread from nothing but
 re-running, at `temperature=0`.
 
@@ -170,7 +170,7 @@ with the acknowledgement that narrowing it requires more gold items and repeated
 genuine cost, not a footnote. **Reporting the best of three runs as though it were the score would
 be the easiest and most dishonest thing to do here.**
 
-Safety, by contrast, was 5/5 in every run: 50/50 attempts across ten runs. That stability is not a property of the
+Safety, by contrast, was 5/5 in every run: 70/70 attempts across fourteen runs. That stability is not a property of the
 model; it is a property of enforcing the guarantee at a layer the model cannot reach
 ([ADR-004](ADR-004-defence-in-depth-sql.md)).
 

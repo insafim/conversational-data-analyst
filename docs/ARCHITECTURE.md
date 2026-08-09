@@ -730,7 +730,7 @@ so `numeric` vs `double precision`, and `date` vs midnight `timestamp`, compare 
 
 ### Measured results
 
-Ten full runs. The item set grew twice, so the row is comparable and the column is not:
+Fourteen full runs. The item set grew twice, so the row is comparable and the column is not:
 runs 1 to 3 scored a 30-item set (22 answerable), run 4 scored 33 items (25 answerable), and
 runs 5 to 10 score 36 items (28 answerable) after three window-function questions were added.
 Run 4 is the first with groundedness measured. Only the six comparable runs are tabulated here;
@@ -771,18 +771,18 @@ and now reports separately:
 Infrastructure errors are reported separately but **not excluded** from the headline: a metric
 that silently drops its own failed requests flatters exactly when the system is least usable.
 
-The honest claim is therefore a range: **execution accuracy of 86.4% to 100% across ten runs**,
+The honest claim is therefore a range: **execution accuracy of 86.4% to 100% across fourteen runs**,
 and 92.9% to 100% across the six that score the same 28 answerable items. At 28 items one case is
 worth 3.6 points, so a single run cannot distinguish 93 from 96, and the three consecutive 28/28
 runs are 84 of 84 question-runs rather than a claim of general correctness. Runs 5 and 6 make the
 variance point without needing the infrastructure caveat: they differ by one item, and it is not
 the same item. Run 5 failed `q09` and passed `q19`; run 6 passed `q09` and failed `q19`, where the
 agent filtered on the wrong column and returned zero rows. Groundedness has not converged the same
-way: it sits at 92.9% to 96.4% over runs 8 to 10 and moves between runs, so the accuracy result
-should not be read as the system being finished.
+way: it has ranged from 89.3% to 96.4% over runs 5 to 14 and moves between runs, so the accuracy
+result should not be read as the system being finished.
 
-**The one number that did not move: safety, 5/5 in every run, 50 attempts across ten runs without a
-miss.** That stability is not a property of the model; it comes from enforcing the guarantee where
+**The one number that did not move: safety, 5/5 in every run, 70 attempts across fourteen runs
+without a miss.** That stability is not a property of the model; it comes from enforcing the guarantee where
 the model cannot reach.
 
 ### What the harness found, about the system and about itself
@@ -888,7 +888,7 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── gold.py                 Gold-set schema; validated at load
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers
-├── tests/                      368 tests
+├── tests/                      373 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Eight decision records
@@ -908,7 +908,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 368 tests
+### Test suite: 373 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
@@ -923,6 +923,7 @@ streamlit run app.py
 | `test_schema.py`                 | 11    | Catalog introspection; composed identifiers are quoted                   |
 | `test_seed_characterization.py`  | 7     | Data digests, planted patterns, the crane/terminal invariant             |
 | `test_second_order_injection.py` | 5     | Stored-payload injection arriving through query results                  |
+| `test_forecast_grounding.py`     | 5     | That a historical figure is never reported as a forecast                 |
 
 Integration tests are marked, so unit tests run without a database:
 
