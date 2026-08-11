@@ -426,6 +426,28 @@ def main() -> int:
     print(f"  Retries fired        {sum(1 for r in records if r['retried'])}")
     print(f"  Wall clock           {total_elapsed:.1f}s")
 
+    # Coverage on the two tag dimensions (ADR-010). Computed from the gold set itself,
+    # not from the run, because coverage is a property of the SET: it answers "what does
+    # this suite exercise", which does not change with a --limit or --category filter.
+    # Untagged cases are counted rather than hidden, so a tagging gap is visible in
+    # every run summary instead of discovered during an audit.
+    full_set = load_gold_set()
+    tagged_topics = sorted({t for case in full_set for t in getattr(case, "topics", [])})
+    untagged = sum(1 for case in full_set if not getattr(case, "topics", [])
+                   and getattr(case, "behaviour", None) is None)
+    behaviours: dict[str, int] = {}
+    for case in full_set:
+        tag = getattr(case, "behaviour", None)
+        if tag:
+            behaviours[tag] = behaviours.get(tag, 0) + 1
+    print("\n  Gold-set coverage (tags, not run results):")
+    print(f"    Syllabus topics tagged   {len(tagged_topics)} distinct "
+          f"({', '.join(str(t) for t in tagged_topics) if tagged_topics else 'none'})")
+    if behaviours:
+        rendered = ", ".join(f"{k}:{v}" for k, v in sorted(behaviours.items()))
+        print(f"    Behaviour tags           {rendered}")
+    print(f"    Untagged cases           {untagged}")
+
     failures = [r for r in records if not r["passed"]]
     if failures:
         print(f"\n  {len(failures)} failure(s): {', '.join(r['id'] for r in failures)}")
