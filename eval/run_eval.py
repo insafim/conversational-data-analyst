@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import re
 import statistics
 import sys
 import time
@@ -43,7 +42,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from eval.gold import AmbiguousCase, AnswerableCase, GoldCase, load_gold_set  # noqa: E402
 from src.agent import ask  # noqa: E402
 from src.executor import ExecutionError, run_query  # noqa: E402
-from src.models import Outcome  # noqa: E402
+from src.grounding import check_groundedness  # noqa: E402
+from src.models import Outcome, Turn  # noqa: E402
 
 # Aggregates computed by different-but-equivalent query plans can differ in the last
 # bits, so floats are compared to a tolerance rather than for exact equality.
@@ -131,120 +131,27 @@ def _score_answerable(item: AnswerableCase, result) -> tuple[bool, str]:
     )
 
 
-# Numbers with at most two decimals, optionally comma-grouped: 17.46, 1,500, 6577
-_NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
-
-# Small integers are almost always ordinals, counts of listed items, or echoes of the
-# question ("the top 3 operators"), not data values. Checking them produces false
-# hallucination reports, which would make the metric useless.
-_SMALL_INT_CEILING = 12
-
-
-def _numbers_in(text: str) -> list[float]:
-    """Every number appearing in a string, comma separators removed."""
-    found = []
-    for token in _NUMBER_RE.findall(text or ""):
-        try:
-            found.append(float(token.replace(",", "")))
-        except ValueError:
-            continue
-    return found
-
-
 def _check_groundedness(result) -> tuple[bool, str]:
-    """Verify the answer's figures actually came from the returned rows.
+    """Score one answer's groundedness. The check itself lives in `src/grounding.py`.
 
-    The brief names groundedness as an evaluated behaviour, and the failure that matters
-    is a model *inventing* a number: a plausible figure that never appeared in the data
-    is far more damaging than a visibly wrong one, because it survives review.
+    Delegates rather than reimplements, because ADR-012 puts the same check inside the
+    graph as a runtime floor. Two copies could drift, and the failure mode of drift is
+    silent: the runtime would pass answers the published metric scores as ungrounded, or
+    the reverse, and neither number would mean anything afterwards.
 
-    Checked structurally rather than by a second model. An LLM judge would be
-    non-deterministic and circular — grading a model's output with a model — and would
-    itself need validating against human labels before its scores meant anything.
-
-    A number in the answer is considered grounded if it appears in:
-      * the returned rows (exactly, or as a rounding of a returned value),
-      * the question (the user's own figures), or
-      * the SQL (literals such as a year or a LIMIT).
-    Row count is also allowed, since "6 terminals" is a legitimate observation.
-
-    TWO KNOWN FALSE POSITIVES, stated rather than hidden. Both are tolerated, and the
-    metric is therefore a floor on groundedness rather than a precise measure.
-
-    1. **Derived figures.** "three times higher", "up 12%" — arithmetic the model
-       performed, present in no row. Tolerated because the alternative, permitting any
-       arithmetic, permits exactly the invented numbers this exists to catch.
-
-    2. **The magnitude of a negative value.** A `LAG` column holds -988 for a month that
-       fell, and the natural English is "dropped 988 containers". The answer carries the
-       magnitude, the data carries the sign, and set membership rejects it. The answer is
-       correct and the checker is wrong. This is eval q28, flagged in every run since
-       groundedness was first measured.
-
-       Not fixed, because both available fixes are worse. Matching on absolute value
-       would accept "July increased by 3,845" against a -3845 cell, trading this false
-       positive for a false negative on exactly the sign errors that matter. Matching the
-       magnitude only when a decrease word sits near the figure would remove this case but
-       detect nothing new: the matching below is pure set membership with no relation to
-       the surrounding words, so a sign error on a *positive* value ("August decreased by
-       4,532" against +4532) already passes by exact match and would continue to, because
-       that branch short-circuits before any proximity logic could run.
-
-       See `tests/test_eval_scoring.py`, where both the false positive and that blind spot
-       are pinned. The pins were themselves rebuilt after an audit found the first version
-       still passed under the absolute-value fix it claimed to guard against.
+    The question passed is the INTERPRETED one where a rewrite happened (ADR-011). On a
+    follow-up turn the summariser saw the standalone rewrite, so the rewrite is the text
+    whose figures it was entitled to quote; scoring against the typed "and Rotterdam?"
+    would flag the user's own carried-over year as invented.
     """
-    if result.result is None:
-        return True, ""  # nothing was returned, so nothing could be ungrounded
-
-    rows = result.result.rows
-
-    # Empty results are the highest-risk case: with nothing to ground an answer in, a
-    # model is most likely to invent one.
-    if result.result.row_count == 0:
-        answer = (result.answer or "").lower()
-        denies = any(
-            phrase in answer
-            for phrase in ("no data", "no matching", "no results", "none", "no port calls",
-                           "nothing", "no records", "did not return", "no rows")
-        )
-        if not denies:
-            return False, f"empty result set but the answer did not say so: {result.answer!r}"
-        return True, ""
-
-    allowed: set[float] = {float(result.result.row_count)}
-    for row in rows:
-        for value in row:
-            if isinstance(value, bool) or value is None:
-                continue
-            if isinstance(value, (int, float, Decimal)):
-                allowed.add(float(value))
-            else:
-                allowed.update(_numbers_in(str(value)))
-
-    allowed.update(_numbers_in(result.question))
-    allowed.update(_numbers_in(result.sql or ""))
-
-    ungrounded = []
-    for candidate in _numbers_in(result.answer):
-        if abs(candidate) <= _SMALL_INT_CEILING and candidate == int(candidate):
-            continue
-        # Grounded if it matches a permitted value, or is a rounding of one. The model
-        # legitimately says "17.5 hours" for a stored 17.46.
-        decimals = len(str(candidate).split(".")[1]) if "." in str(candidate) else 0
-        if any(
-            abs(candidate - value) < 1e-6 or round(value, decimals) == candidate
-            for value in allowed
-        ):
-            continue
-        ungrounded.append(candidate)
-
-    if ungrounded:
-        return False, (
-            f"answer contains figure(s) not present in the results, question or SQL: "
-            f"{ungrounded} — answer was: {result.answer!r}"
-        )
-    return True, ""
+    check = check_groundedness(
+        answer=result.answer,
+        rows=result.result.rows if result.result is not None else None,
+        row_count=result.result.row_count if result.result is not None else None,
+        question=result.interpreted_question or result.question,
+        sql=result.sql,
+    )
+    return check.ok, check.detail
 
 
 def _score_ambiguous(item: AmbiguousCase, result) -> tuple[bool, str]:
@@ -292,11 +199,33 @@ def main() -> int:
     parser.add_argument("--limit", type=int, help="run only the first N items")
     parser.add_argument("--category", choices=["answerable", "ambiguous", "adversarial"])
     parser.add_argument("--json", type=Path, help="write full results to this path")
+    parser.add_argument(
+        "--id",
+        action="append",
+        dest="ids",
+        help="run only these case ids (repeatable). For investigating one failure "
+        "without paying for the whole set.",
+    )
+    parser.add_argument(
+        "--no-verification",
+        action="store_true",
+        help="run with ADR-012's runtime verification off, reproducing the pre-ADR-012 "
+        "pipeline. This is the baseline half of the with/without comparison.",
+    )
     args = parser.parse_args()
+    verification = not args.no_verification
 
     # Validated up front, so a malformed case fails here rather than after the run has
     # already spent LLM calls on the cases preceding it.
     items: list[GoldCase] = load_gold_set()
+    if args.ids:
+        requested = set(args.ids)
+        items = [i for i in items if i.id in requested]
+        # An id that matches nothing is a typo, and silently running fewer cases than
+        # asked for is the kind of thing that gets noticed after the results are quoted.
+        missing = requested - {i.id for i in items}
+        if missing:
+            parser.error(f"no gold case with id(s): {', '.join(sorted(missing))}")
     if args.category:
         items = [i for i in items if i.category == args.category]
     if args.limit:
@@ -311,9 +240,33 @@ def main() -> int:
     records: list[dict] = []
     started = time.perf_counter()
 
-    print(f"Running {len(items)} gold questions...\n")
+    conversational = sum(1 for item in items if item.prior_turns)
+    print(
+        f"Running {len(items)} gold questions "
+        f"({conversational} conversational, runtime verification "
+        f"{'ON' if verification else 'OFF'})...\n"
+    )
     for item in items:
-        result = ask(item.question)
+        # Conversational cases (ADR-011) replay their setup turns first. The setup turns
+        # are NOT scored: the case is a claim about the final turn, and a setup turn that
+        # answered badly still establishes the context the follow-up has to resolve
+        # against. Their cost is counted in the totals, because it is cost the system
+        # really spends on a conversation.
+        history: list[Turn] = []
+        setup_cost, setup_calls, setup_elapsed = 0.0, 0, 0.0
+        for prior in item.prior_turns:
+            prior_result = ask(prior, history=history, verification=verification)
+            history.append(
+                Turn(
+                    question=prior_result.interpreted_question or prior,
+                    sql=prior_result.sql or "",
+                )
+            )
+            setup_cost += prior_result.cost_usd
+            setup_calls += prior_result.llm_calls
+            setup_elapsed += prior_result.elapsed_s
+
+        result = ask(item.question, history=history, verification=verification)
         passed, detail = scorers[item.category](item, result)
 
         # Groundedness is scored independently of category correctness: an answer can
@@ -333,11 +286,20 @@ def main() -> int:
             "outcome": result.outcome.value,
             "sql": result.sql,
             "answer": result.answer,
-            "elapsed_s": result.elapsed_s,
+            # Setup turns are folded into the reported cost, calls and elapsed time, so a
+            # conversational case is charged for the whole conversation. Reporting only
+            # the scored turn would understate what the feature costs to run.
+            "elapsed_s": round(result.elapsed_s + setup_elapsed, 3),
             "stage_timings": result.stage_timings,
-            "llm_calls": result.llm_calls,
-            "cost_usd": result.cost_usd,
-            "retried": result.retried,
+            "llm_calls": result.llm_calls + setup_calls,
+            "cost_usd": round(result.cost_usd + setup_cost, 6),
+            "prior_turns": item.prior_turns,
+            "interpreted_question": result.interpreted_question,
+            "retry_reasons": [reason.value for reason in result.retry_reasons],
+            "reading": result.reading,
+            "caveat": result.caveat,
+            "grounding_flag": result.grounding_flag,
+            "verification": verification,
         })
         print(f"  [{'PASS' if passed else 'FAIL'}] {item.id:<4} "
               f"{item.question[:58]:<58} {result.elapsed_s:>5.2f}s")
@@ -423,7 +385,28 @@ def main() -> int:
             print(f"    {stage:<14} {seconds:>7.1f}s  {100.0 * seconds / measured:>5.1f}%")
     print(f"  Total LLM calls      {sum(r['llm_calls'] for r in records)}")
     print(f"  Total cost           ${sum(r['cost_usd'] for r in records):.4f}")
-    print(f"  Retries fired        {sum(1 for r in records if r['retried'])}")
+
+    # Retries by cause, not as one count (ADR-012). A run that fired six regenerations
+    # says nothing on its own; six database errors and six verifier objections are
+    # different systems, and only the split can attribute a change in accuracy to the
+    # mechanism that produced it.
+    retried_records = [r for r in records if r["retry_reasons"]]
+    by_reason: dict[str, int] = {}
+    for record in records:
+        for reason in record["retry_reasons"]:
+            by_reason[reason] = by_reason.get(reason, 0) + 1
+    print(f"  Retries fired        {len(retried_records)} question(s), "
+          f"{sum(by_reason.values())} retr{'y' if sum(by_reason.values()) == 1 else 'ies'}")
+    for reason, count in sorted(by_reason.items(), key=lambda kv: -kv[1]):
+        print(f"    {reason:<20} {count:>3}")
+
+    # Advisory findings that survived their bounded retry and shipped with the answer.
+    caveated = [r for r in records if r.get("caveat")]
+    flagged = [r for r in records if r.get("grounding_flag")]
+    if caveated:
+        print(f"  Verifier caveats     {len(caveated)}  ({', '.join(r['id'] for r in caveated)})")
+    if flagged:
+        print(f"  Grounding flags      {len(flagged)}  ({', '.join(r['id'] for r in flagged)})")
     print(f"  Wall clock           {total_elapsed:.1f}s")
 
     # Coverage on the two tag dimensions (ADR-010). Computed from the gold set itself,

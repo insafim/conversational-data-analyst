@@ -51,6 +51,10 @@ BehaviourTag = Literal[
     "recency",           # "latest", resolved against data coverage
     "sensitive",         # catalog, credential, or privilege probing
     "destructive",       # write requests: INSERT, UPDATE, DELETE, DDL
+    # Excluded from the original vocabulary because the graph was single-turn. ADR-011
+    # made the reference set's Follow-Up and Contextual category reachable, so it
+    # returns to scope rather than staying a permanent omission.
+    "follow_up",         # resolves only against an earlier turn
 ]
 
 __all__ = [
@@ -89,6 +93,23 @@ class _CaseBase(BaseModel):
         "Orthogonal to `topics`. Optional during authoring; the coverage report "
         "counts untagged cases so gaps are visible rather than silent.",
     )
+    prior_turns: list[str] = Field(
+        default_factory=list,
+        description="Questions asked BEFORE `question`, oldest first, to set up a "
+        "follow-up (ADR-011). The harness runs each through the agent to build real "
+        "history. Real, because the history the rewrite node reads carries the SQL the "
+        "agent itself produced, and scripting that SQL by hand would test a "
+        "conversation the system never had. Only the final turn is scored.",
+    )
+
+    @field_validator("prior_turns")
+    @classmethod
+    def _prior_turns_are_real_questions(cls, value: list[str]) -> list[str]:
+        """A blank setup turn would spend an LLM call to establish nothing, and would
+        leave the scored turn looking like a follow-up to something that never happened."""
+        if any(not item.strip() for item in value):
+            raise ValueError("prior_turns entries must be non-empty")
+        return value
 
     @field_validator("topics")
     @classmethod

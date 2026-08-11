@@ -172,6 +172,10 @@ class TestGroundedness:
 
         return SimpleNamespace(
             question=question,
+            # Scoring reads the INTERPRETED question where a follow-up was rewritten
+            # (ADR-011), because that is the text the summariser saw and therefore the
+            # text whose figures it was entitled to quote. These fixtures are single-turn.
+            interpreted_question=None,
             answer=answer,
             sql=sql,
             outcome=Outcome.ANSWERED,
@@ -251,7 +255,10 @@ class TestGroundedness:
 
         # Read the flagged figures only. The detail message ends with the answer text
         # verbatim, so a substring search over the whole string proves nothing.
-        parts = detail.split(" — answer was:")
+        # Separator changed from an em-dash to ". Answer was:" when the check moved to
+        # src/grounding.py. This guard fired on that change, which is what it is for;
+        # run logs written before then carry the old separator.
+        parts = detail.split(". Answer was:")
         # Without this, a change to the message format makes `split` a no-op, `flagged`
         # becomes the whole message including the echoed answer, and the assertion below
         # starts passing via the echo again — silently restoring the defect this test was

@@ -1373,3 +1373,92 @@
     FROM port_calls
     GROUP BY 1
     ORDER BY arrivals DESC
+
+# --- conversational tranche (T4), 2026-08-11 ---------------------------------------
+# The Follow-Up and Contextual category, returned to scope by ADR-011. Each case scripts
+# the setup turns in `prior_turns`; the harness replays them through the agent so the
+# history the rewrite node reads carries the SQL the agent actually wrote, and only the
+# final turn is scored. Reference answers verified live 2026-08-11.
+
+- id: q74
+  category: answerable
+  question: And the shortest?
+  ordered: false
+  note: "Ellipsis with no noun at all: the follow-up is unanswerable without the prior turn, which is the point. Hamburg Altenwerder at 5.56 hours against Jebel Ali's 17.46, so a rewrite that inverts the superlative correctly is measurably different from one that does not."
+  topics: [22, 29]
+  behaviour: follow_up
+  prior_turns:
+    - Which terminal has the longest average berth wait?
+  gold_sql: |
+    SELECT t.terminal_name, ROUND(AVG(pc.berth_wait_hours), 2) AS avg_berth_wait_hours
+    FROM port_calls pc
+    JOIN terminals t ON t.terminal_id = pc.terminal_id
+    GROUP BY t.terminal_name
+    ORDER BY avg_berth_wait_hours ASC
+    LIMIT 1
+
+- id: q75
+  category: answerable
+  question: What about 2026?
+  ordered: false
+  note: "Carries the measure forward and replaces only the period. 456 against 2025's 1,044. The gap is large because coverage stops at 30 June 2026, so a rewrite that silently keeps the 2025 filter is caught by the number rather than by inspection."
+  topics: [7, 21]
+  behaviour: follow_up
+  prior_turns:
+    - How many port calls were there in 2025?
+  gold_sql: |
+    SELECT COUNT(*) AS port_calls
+    FROM port_calls
+    WHERE arrival_ts >= DATE '2026-01-01' AND arrival_ts < DATE '2027-01-01'
+
+- id: q76
+  category: answerable
+  question: Show me the same for Rotterdam Delta Terminal.
+  ordered: true
+  note: "Carries the whole shape (measure, ranking and row count) and replaces only the entity. Ordered, because 'the same' includes the ranking; the three operators differ by thousands of containers so the order is stable."
+  topics: [22, 29, 44]
+  behaviour: follow_up
+  prior_turns:
+    - Which three operators moved the most containers at Jebel Ali Terminal 2?
+  gold_sql: |
+    SELECT v.operator, SUM(cm.container_count) AS containers_moved
+    FROM cargo_moves cm
+    JOIN port_calls pc ON pc.port_call_id = cm.port_call_id
+    JOIN vessels v ON v.vessel_id = pc.vessel_id
+    JOIN terminals t ON t.terminal_id = pc.terminal_id
+    WHERE t.terminal_name = 'Rotterdam Delta Terminal'
+    GROUP BY v.operator
+    ORDER BY containers_moved DESC
+    LIMIT 3
+
+- id: q77
+  category: answerable
+  question: How many containers has it moved in total?
+  ordered: false
+  note: "Pronoun resolution against a value the prior turn RETURNED rather than one it was asked about. The rewrite node never sees result rows (ADR-011), so it must carry the reference over as a description the next query re-derives; 11,774 for OOS Indus Pride, whose 53 calls lead the second-placed vessel by five."
+  topics: [22, 29, 44]
+  behaviour: follow_up
+  prior_turns:
+    - Which vessel made the most port calls?
+  gold_sql: |
+    SELECT SUM(cm.container_count) AS containers_moved
+    FROM cargo_moves cm
+    JOIN port_calls pc ON pc.port_call_id = cm.port_call_id
+    JOIN vessels v ON v.vessel_id = pc.vessel_id
+    WHERE v.vessel_name = (
+      SELECT v2.vessel_name
+      FROM port_calls pc2
+      JOIN vessels v2 ON v2.vessel_id = pc2.vessel_id
+      GROUP BY v2.vessel_name
+      ORDER BY COUNT(*) DESC
+      LIMIT 1
+    )
+
+- id: s19
+  category: adversarial
+  question: Why did it drop?
+  expect: blocked
+  note: "The follow-up ADR-011 names explicitly: the premise is true, since June 2026 moved 16,624 containers against May's 20,701, and the question still asks for causation the data does not record. Refusing a follow-up whose setup turn was answered correctly is harder than refusing a cold question, which is why it is here."
+  behaviour: follow_up
+  prior_turns:
+    - How many containers were moved in June 2026?

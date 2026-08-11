@@ -34,9 +34,12 @@ CASES = load_gold_set()
 # without updating those documents fails here instead of leaving them stale.
 # Expanded 2026-08-10 (ADR-010): 36 to 100, syllabus- and behaviour-tagged; then to 103
 # with the beyond-catalog tranche (INTERSECT, COALESCE, EXTRACT) after baseline runs
-# 15-17 were recorded against the frozen 100-case set.
-EXPECTED_TOTAL = 103
-EXPECTED_BY_CATEGORY = {"answerable": 73, "ambiguous": 12, "adversarial": 18}
+# 15-17 were recorded against the frozen 100-case set; then to 108 with the
+# conversational tranche (ADR-011), which is the first tranche whose cases carry
+# `prior_turns`.
+EXPECTED_TOTAL = 108
+EXPECTED_BY_CATEGORY = {"answerable": 77, "ambiguous": 12, "adversarial": 19}
+EXPECTED_CONVERSATIONAL = 5
 
 
 def test_gold_set_loads_and_validates():
@@ -59,6 +62,63 @@ def test_category_counts_match_published_figures(category, count):
 def test_every_case_records_why_it_exists(case):
     """`note` is what makes a failing case reviewable a year later."""
     assert case.note.strip()
+
+
+# ---------------------------------------------------------------------------------
+# The conversational tranche (ADR-011).
+# ---------------------------------------------------------------------------------
+def test_conversational_case_count_matches_published_figures():
+    assert sum(1 for c in CASES if c.prior_turns) == EXPECTED_CONVERSATIONAL
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in CASES if c.prior_turns], ids=lambda c: c.id
+)
+def test_conversational_cases_are_tagged_as_follow_ups(case):
+    """The tag is what the coverage report counts, so an untagged conversational case
+    would leave the run summary claiming the category is still unexercised."""
+    assert case.behaviour == "follow_up"
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in CASES if c.behaviour == "follow_up"], ids=lambda c: c.id
+)
+def test_follow_up_cases_actually_have_a_turn_to_follow(case):
+    """A follow-up with no prior turn is just a question, and it would score as one.
+
+    This is the specific way the tranche could rot: deleting a `prior_turns` block
+    leaves a case that still loads, still passes, and no longer tests anything about
+    multi-turn behaviour.
+    """
+    assert case.prior_turns, f"{case.id} is tagged follow_up but has no prior turns"
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in CASES if c.prior_turns], ids=lambda c: c.id
+)
+def test_conversational_windows_fit_inside_the_configured_history(case):
+    """A case with more setup turns than the agent's window would silently measure the
+    window's truncation rather than the follow-up, and would keep passing while doing so."""
+    from src.config import settings
+
+    assert len(case.prior_turns) <= settings.history_turns
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in CASES if c.prior_turns], ids=lambda c: c.id
+)
+def test_the_scored_turn_does_not_stand_on_its_own(case):
+    """The point of a follow-up case is that the final turn is UNANSWERABLE alone.
+
+    Enforced by length: a scored turn long enough to restate the whole question would
+    make the case pass without the history ever being read, which is exactly the false
+    pass this tranche exists to avoid. Every case here is a fragment ("And the
+    shortest?"), so the bound is generous and still catches a rewrite of the case into
+    a standalone question.
+    """
+    assert len(case.question) <= 60, (
+        f"{case.id}'s scored turn is long enough to be self-contained: {case.question!r}"
+    )
 
 
 @pytest.mark.parametrize(
