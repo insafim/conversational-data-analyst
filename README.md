@@ -9,8 +9,10 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 - **Safety is structural, not prompted.** The agent connects as a PostgreSQL role holding `SELECT`
   and nothing else. A fully jailbroken model still cannot write — [verified, not
   asserted](#guardrails-verified-not-asserted).
-- **Correctness is measured, not claimed.** A gold set of 103 questions with hand-verified reference
-  SQL produces a reproducible accuracy number, including for refusals and ambiguity.
+- **Correctness is measured, not claimed.** A gold set of 108 questions with hand-verified reference
+  SQL produces a reproducible accuracy number, including for refusals and ambiguity. When a feature
+  did not pay for itself, the measurement is what said so: see [runtime verification,
+  measured](#runtime-verification-what-it-bought-and-what-it-cost).
 - **Scope is controlled on purpose.** [What was left out, and
   why](docs/ADR/ADR-008-ui-and-scope-boundary.md).
 
@@ -76,9 +78,11 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 475 unit tests, no database or network needed
-pytest                        # all 558, needs the seeded database
-python eval/run_eval.py       # 10 to 18 min across observed runs, ~$0.88 of tokens (103 cases)
+pytest -m "not integration"   # 557 unit tests, no database or network needed
+pytest                        # all 681; needs the seeded database, and 10 of them
+                              # call the live model, so they also need a funded API key
+python eval/run_eval.py       # 10 to 15 min across observed runs, ~$1.03 of tokens (108 cases)
+python eval/run_eval.py --verification      # the same set with ADR-012 checks on, ~$1.34
 ```
 
 ### Configuration
@@ -99,6 +103,8 @@ as-is except for the API key.
 | `MAX_SQL_RETRIES` | No | `1` | Retries on a database error only |
 | `LLM_TIMEOUT_S` | No | `45` | Per model call, so one slow provider cannot hang the UI |
 | `MAX_QUESTION_CHARS` | No | `2000` | Rejects an oversized question before any model call |
+| `HISTORY_TURNS` | No | `3` | Prior exchanges the follow-up rewrite may read (ADR-011). Questions and SQL only |
+| `RUNTIME_VERIFICATION` | No | `false` | ADR-012's three runtime checks. Off by default because the [comparison](#runtime-verification-what-it-bought-and-what-it-cost) measured it costing more accuracy than it bought |
 
 ¹ Whichever provider your `MODEL_*` prefixes name. Switching provider is an env change, not a code
 change — e.g. `MODEL_CHEAP=openai/gpt-5-mini`, `MODEL_STRONG=openai/gpt-5.4-mini`.
@@ -463,15 +469,69 @@ verifier exists to catch. (Run 18 is on disk but invalid: a local DNS outage kil
 resolution 22 items in, and the remaining 81 errored without reaching any model. It is
 kept because deleting evidence is worse than annotating it.)
 
-The gold set has 103 items in three categories (expanded from 36 on 2026-08-10, ADR-010:
-every case now carries a syllabus-topic tag and a behaviour tag), because a system that
-answers well but cannot say no is not deployable:
+### Runtime verification: what it bought, and what it cost
+
+[ADR-012](docs/ADR/ADR-012-runtime-verification.md) added three runtime checks: an LLM
+that reads the question against the generated SQL and may object, a code check that every
+figure in the answer appears in the rows, and three code-detected result-shape triggers.
+Each can force one bounded retry. None of them can block an answer.
+
+Six runs on the 108-case set, alternating the feature on and off so that provider drift
+across the hour could not land on one configuration and be read as an effect of the
+feature. Zero infrastructure errors in any of the six. Ranges, not best runs:
+
+| | Verification ON (runs 20, 22, 24) | OFF (runs 21, 23, 25) |
+| --- | --- | --- |
+| Overall | 100 to 101 / 108 | 102 to 103 / 108 |
+| Execution accuracy | 69 to 71 / 77 (89.6% to 92.2%) | 72 to 73 / 77 (93.5% to 94.8%) |
+| Answer groundedness | 98.7% to 100% | 96.0% to 97.4% |
+| Median latency | 6.74 to 7.11 s | 6.03 to 6.65 s |
+| Cost per run | $1.33 to $1.36 | $1.01 to $1.04 |
+
+**It works, and it does not pay for itself.** Groundedness is the property it was aimed
+at and groundedness improved: the re-summarise loop drove the invented-figure rate to
+near zero, and the only figure still flagged is `q28`, the negative-magnitude false
+positive [ADR-006](docs/ADR/ADR-006-eval-execution-accuracy.md) documents and declines to
+"fix". But execution accuracy fell by more than groundedness rose, and the ranges do not
+overlap on either metric.
+
+The reason codes say where it went. Across the three ON runs there were 13 verifier
+objections, 8 re-summarisations and 6 quality triggers, and **every accuracy regression
+carries a `verifier_objection`**: `q66` in all three runs, `q14`, `q18` and `q65` in one
+each. The groundedness check and the code triggers cost nothing measurable.
+
+`q66` ("How many port calls were there in 2020?", correct answer: none, the data starts in
+2025) is the clearest case, and it fails the same way in all three ON runs. The verifier's
+objection is *correct* and states the problem exactly: "the question asks for port calls in
+2020, but the query filters for arrivals in 2025". The single bounded regeneration does not
+fix it, and the answer ships with that caveat attached and the wrong number beside it. What
+the artifacts do **not** show is why the first attempt differs by configuration at all,
+since the first `generate_sql` prompt is identical in both. That is unresolved: a probe to
+settle it was cut short when the API credit ran out, and it is recorded as open rather than
+explained away.
+
+So the feature ships **off by default** (`RUNTIME_VERIFICATION=false`), with the switch and
+the evidence both in the repo. Turning it on is defensible when an invented figure costs
+more than a wrong row, which is a judgement about the deployment rather than about the code.
+The honest summary is that a plausible idea, built as specified and measured properly, made
+the headline number worse.
+
+The gold set has 108 items in three categories (expanded from 36 on 2026-08-10, ADR-010:
+every case now carries a syllabus-topic tag and a behaviour tag; five conversational
+cases followed on 2026-08-11 with ADR-011), because a system that answers well but
+cannot say no is not deployable:
 
 | Category | Items | What it asserts |
 | --- | --- | --- |
-| **answerable** | 73 | Agent SQL returns the same rows as hand-verified reference SQL |
+| **answerable** | 77 | Agent SQL returns the same rows as hand-verified reference SQL |
 | **ambiguous** | 12 | Agent asks a clarifying question instead of guessing |
-| **adversarial** | 18 | Injection / destructive / out-of-scope / write requests are refused |
+| **adversarial** | 19 | Injection / destructive / out-of-scope / write requests are refused |
+
+Five of those are two-turn conversational cases (ADR-011). Their setup turn is replayed
+through the agent so the history the rewrite node reads carries the SQL the agent itself
+wrote; only the final turn is scored. One of them, `s19`, is a follow-up whose correct
+answer is a refusal: the premise is true, since June 2026 moved 16,624 containers against
+May's 20,701, and the question still asks for causation the data does not record.
 
 Correctness compares **result sets, not SQL text.** The same question has many correct SQL
 formulations — join order, CTE versus subquery, `COUNT(*)` versus `COUNT(1)` — so string comparison
@@ -551,8 +611,8 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 | [008](docs/ADR/ADR-008-ui-and-scope-boundary.md) | A thin Streamlit UI, and the scope boundary |
 | [009](docs/ADR/ADR-009-withheld-runtime-capabilities.md) | Withheld runtime capabilities: docs retrieval, web search, MCP, LLM validation |
 | [010](docs/ADR/ADR-010-syllabus-mapped-eval-expansion.md) | Syllabus-mapped eval expansion, 36 to 103 cases on two tag dimensions |
-| [011](docs/ADR/ADR-011-bounded-multi-turn.md) | Bounded multi-turn at the edge, single-turn core (accepted; implementation pending) |
-| [012](docs/ADR/ADR-012-runtime-verification.md) | Runtime verification, each property gets its instrument (accepted; implementation pending) |
+| [011](docs/ADR/ADR-011-bounded-multi-turn.md) | Bounded multi-turn at the edge, single-turn core |
+| [012](docs/ADR/ADR-012-runtime-verification.md) | Runtime verification, each property gets its instrument (measured; shipped off by default) |
 
 ---
 
@@ -577,29 +637,33 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── models.py           Typed state and results
 │   └── config.py           Settings; separates admin and read-only identities
 ├── eval/
-│   ├── gold_questions.yaml   103 scored cases, topic- and behaviour-tagged
+│   ├── gold_questions.yaml   108 scored cases, topic- and behaviour-tagged
 │   ├── gold.py               Gold-set schema; validated at load
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output — evidence for the numbers above
-└── tests/                  558 tests
+└── tests/                  681 tests
 ```
 
 ---
 
 ## Testing
 
-558 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+681 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
 | --- | --- | --- |
-| `test_gold_set.py` | 302 | The gold set's schema and tag guards, parametrized over all 103 cases |
+| `test_gold_set.py` | 337 | The gold set's schema and tag guards, parametrized over all 108 cases |
 | `test_validator.py` | 93 | The security gate: the write-blocking rules, their evasions, and fail-closed parsing |
 | `test_eval_scoring.py` | 35 | The comparison logic, i.e. the definition of "correct" |
+| `test_charts.py` | 30 | Every chart rule, at its boundaries |
+| `test_quality_triggers.py` | 28 | The code-detected result-shape triggers (ADR-012), weighted toward the cases that must NOT fire |
+| `test_agent_routing.py` | 25 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
+| `test_runtime_verification.py` | 23 | That runtime verification stays advisory: it cannot block, exceed one retry, or approve (ADR-012) |
+| `test_config_defaults.py` | 19 | That `RUNTIME_VERIFICATION` parses to the measured-better default, since a sign error there ships the rejected configuration silently |
 | `test_security_boundary.py` | 17 | That `GRANT`s hold with the read-only guard disabled |
 | `test_llm_extraction.py` | 15 | Parsing model output; functions that raise rather than half-parse |
-| `test_agent_routing.py` | 22 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
-| `test_charts.py` | 30 | Every chart rule, at its boundaries |
+| `test_multi_turn.py` | 15 | That a first turn pays nothing, history carries no answer text, and a rewrite is still untrusted (ADR-011) |
 | `test_executor.py` | 13 | Row cap and its boundary, statement timeout, verbatim execution, errors |
 | `test_schema.py` | 11 | Catalog introspection, and that composed identifiers are quoted |
 | `test_seed_characterization.py` | 7 | Data digests, planted patterns, the crane/terminal invariant |

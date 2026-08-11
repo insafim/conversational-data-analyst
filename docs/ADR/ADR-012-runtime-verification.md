@@ -104,3 +104,70 @@ and on, and the README reports semantic-failure rate, cost, and latency as range
 runs for both configurations. Cases q46 (false-premise fact-check), q56 (deliberately
 empty result), q59 (bands defined in the question), and q65 (partial-month recency trap)
 were designed to exercise exactly the classes this ADR targets.
+
+---
+
+## Addendum, 2026-08-11: measured, and defaulted off
+
+Built as specified: `verify` on a parallel branch, `ground_check` ported from
+`eval/run_eval.py` into `src/grounding.py` and shared with the harness, the three
+code-detected quality triggers, and retry reason codes replacing the single `retried` bit.
+Every mechanism is advisory, bounded at one retry, and fail-open, and
+`tests/test_runtime_verification.py` pins each of those properties.
+
+**The parallelism argument needed correcting.** This ADR reasons that the verifier is
+nearly free because it runs in parallel with `execute` and `summarize`. Measured against
+the installed langgraph, a plain parallel node does not deliver that: parallel branches
+overlap only within one superstep and the runtime synchronises between them, so a
+blocking `verify` node would have overlapped `execute` (0.025 s) and nothing else. The
+node therefore submits its call to a thread pool and `review` collects the verdict after
+`summarize`, which does deliver the overlap. The library behaviour is pinned by
+`tests/test_agent_routing.py::test_langgraph_barriers_between_supersteps_so_verify_must_not_block`
+so the reasoning fails loudly if a future version changes it.
+
+**The result. Six runs on the 108-case set, alternating ON and OFF so that provider drift
+could not be mistaken for an effect of the feature. Zero infrastructure errors.**
+
+| | ON (runs 20, 22, 24) | OFF (runs 21, 23, 25) |
+| --- | --- | --- |
+| Overall | 100 to 101 / 108 | 102 to 103 / 108 |
+| Execution accuracy | 89.6% to 92.2% | 93.5% to 94.8% |
+| Answer groundedness | 98.7% to 100% | 96.0% to 97.4% |
+| Median latency | 6.74 to 7.11 s | 6.03 to 6.65 s |
+| Cost per run | $1.33 to $1.36 | $1.01 to $1.04 |
+
+It improved the property it was aimed at and cost more elsewhere. Groundedness is now
+near-perfect, and the only figure still flagged is q28, the negative-magnitude false
+positive [ADR-006](ADR-006-eval-execution-accuracy.md) documents and declines to fix. But
+execution accuracy fell further than groundedness rose, and neither range overlaps.
+
+**The reason codes located it, which is what they were added for.** Across the three ON
+runs: 13 verifier objections, 8 re-summarisations, 6 quality triggers. Every accuracy
+regression carries a `verifier_objection` (q66 in all three runs; q14, q18, q65 in one
+each). The groundedness check and the code triggers cost nothing measurable. The LLM
+verifier is the part that does not pay for itself.
+
+q66 ("How many port calls were there in 2020?", correct answer: none, the data begins in
+2025) fails identically in all three ON runs. The objection is *correct* and precise: "the
+question asks for port calls in 2020, but the query filters for arrivals in 2025". The
+single bounded regeneration does not fix it, and the answer ships with that caveat beside
+the wrong number. Two things follow, and the second is unresolved:
+
+1. A correct objection is not sufficient. Regenerating with the objection attached
+   recovered four of four *database* errors historically, and it does not transfer to
+   semantic ones: the model that wrote the query is being asked to disagree with itself.
+2. Why the first attempt differs by configuration at all is **not explained by these
+   artifacts**, since the first `generate_sql` prompt is identical either way. A probe to
+   settle it was cut short when the API credit ran out. Recorded as open rather than
+   given a plausible-sounding cause.
+
+One concrete defect is identified and not yet fixed: `VERIFY_SYSTEM` instructs the
+verifier to object to "extra columns beyond the label and the measure(s) asked for", and
+that is what stripped the month column from q65's correct two-column answer.
+
+**Decision: the feature ships behind `RUNTIME_VERIFICATION`, defaulting to false.** The
+machinery, the switch, the reason codes and all six runs stay in the repo. Turning it on
+is defensible when an invented figure costs more than a wrong row, which is a judgement
+about a deployment rather than about this code. This supersedes the implicit expectation
+in the Decision section above that these checks would be on in normal operation; nothing
+else in the ADR changes.

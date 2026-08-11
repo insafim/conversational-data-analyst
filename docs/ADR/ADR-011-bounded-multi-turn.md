@@ -81,3 +81,35 @@ the data does not contain). The harness gains a turns-list case shape. Sequencin
 deliberate: the single-turn baseline on the expanded set (runs 15 onward) is measured
 first, so the effect of this change is attributable rather than confounded with the
 eval expansion.
+
+---
+
+## Addendum, 2026-08-11: implemented, and the projections replaced with measurements
+
+Built and merged. The `contextualize` node hangs off a conditional edge from START, so a
+first turn does not execute it at all rather than executing it and returning early.
+
+**Measured cost of the rewrite.** Across the 30 conversational records in runs 20 to 25,
+the `contextualize` stage takes a median of 1.14 s (mean 1.32 s, range 0.92 s to 3.42 s)
+and one cheap-tier call. The projection above was "roughly 2 s and one cheap call", so
+the call count was right and the latency was pessimistic by about a second. The dollar
+increment is *not* isolable from these artifacts: a conversational case records the cost
+of both its turns together (median $0.0256 against a median $0.0129 for a single-turn
+answerable case), and separating the rewrite from the second turn's own three calls would
+need an instrument the harness does not have. Stated rather than estimated.
+
+**One deviation, recorded.** This ADR says the `max_question_chars` bound applies to the
+rewritten output "exactly as it applies to a typed question". The bound is enforced, but
+the action on breaching it differs: an over-long rewrite is discarded and the typed
+question runs, rather than the turn being refused. A typed question over the limit is a
+user pasting a document; an over-long rewrite is this node malfunctioning, and refusing a
+legitimate follow-up on that basis would turn an internal fault into a user-visible
+failure. Pinned by
+`tests/test_multi_turn.py::test_an_oversized_rewrite_is_discarded_rather_than_refused`.
+
+**What the evaluation showed.** All five conversational cases pass. The one worth naming
+is q77: "How many containers has it moved in total?" resolves a pronoun pointing at a
+value the *previous turn returned*, and the rewrite node never sees result rows. It
+resolved it by description instead, producing "How many containers has the vessel that
+made the most port calls moved in total?", which the next query re-derives. That is the
+history-carries-questions-not-answers rule working rather than being worked around.

@@ -68,7 +68,7 @@ The three properties it is actually built around, each answering a problem above
 
 | Property                                        | How it is achieved                                                               | Where it is proven                                               |
 | ----------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| **Correctness is measured**               | Gold set of 103 questions with hand-verified reference SQL; result-set comparison | [§12](#12-evaluation), `eval/`                                 |
+| **Correctness is measured**               | Gold set of 108 questions with hand-verified reference SQL; result-set comparison | [§12](#12-evaluation), `eval/`                                 |
 | **Safety is structural**                  | Read-only role beneath a code validator beneath prompt hardening                 | [§8](#8-the-security-model), `tests/test_security_boundary.py` |
 | **Ambiguity is answered with a question** | `classify` routes under-specified questions to a clarification exit            | [§6](#6-the-agent-pipeline), scored in the gold set              |
 
@@ -152,7 +152,7 @@ flowchart TB
     end
 
     subgraph Offline["Offline"]
-        EVAL["eval/run_eval.py<br/>103 gold questions"]
+        EVAL["eval/run_eval.py<br/>108 gold questions"]
     end
 
     UI --> GRAPH
@@ -261,22 +261,39 @@ Implemented in `src/agent.py` as a **fixed-topology state graph**
 
 ```mermaid
 flowchart TD
-    START([question]) --> C{classify}
+    START([question]) --> CX{history?}
+    CX -- "yes (ADR-011)" --> CTX[contextualize]
+    CX -- "no, first turn" --> C
+    CTX --> C{classify}
     C -- ambiguous --> CL[clarify]
     C -- out_of_scope --> RF[refuse]
     C -- answerable --> G[generate_sql]
     G --> V{validate}
     V -- fail --> RJ[reject]
     V -- pass --> E{execute}
-    E -- "db error, attempts <= 1" --> G
+    V -- "pass, if enabled (ADR-012)" --> VF[verify]
+    VF --> DV([verdict left in state])
+    E -- "db error, db_retries <= 1" --> G
+    E -- "bad result shape, once" --> G
     E -- "db error, exhausted" --> ERR([error])
     E -- rows --> S[summarize]
-    S --> P[pick_chart]
+    S -- "verification off" --> P[pick_chart]
+    S -- "verification on" --> GC[ground_check]
+    GC --> RV{review}
+    RV -- "objection, once" --> G
+    RV -- "ungrounded, once" --> S
+    RV -- ok --> P
     P --> D1([answered])
     CL --> D2([clarify])
     RF --> D3([refused])
     RJ --> D4([rejected])
 ```
+
+`contextualize` runs only when the caller passes history, so a first turn does not pay for
+it. `verify` is a sibling of `execute`, never a step before it: it can object and it can
+attach a caveat, and that is the whole of its authority. With `RUNTIME_VERIFICATION` off,
+`verify`, `ground_check` and `review` are absent from the topology rather than present as
+no-ops, which is what makes the comparison in the README a comparison.
 
 ### Node responsibilities
 
@@ -291,9 +308,14 @@ flowchart TD
 | `execute`      | **code** | n/a              | Run as`analyst_ro`, with limits                     |
 | `summarize`    | LLM            | cheap            | State the answer, grounded strictly in returned rows  |
 | `pick_chart`   | **code** | n/a              | Choose the visualisation ([§10](#10-chart-selection)) |
+| `contextualize` | LLM           | cheap            | Rewrite a follow-up into a standalone question (ADR-011); skipped on first turns |
+| `verify`       | LLM            | cheap            | Advisory: does the SQL measure what was asked (ADR-012)? Never sees results |
+| `ground_check` | **code** | n/a              | Advisory: every figure in the answer appears in the rows, question or SQL |
+| `review`       | **code** | n/a              | Applies the advisory verdicts and decides the next hop |
 
-**Three LLM calls per question; four if the retry fires.** Everything else is code. The
-division is deliberate: *the model decides content, the graph decides flow.*
+**Three LLM calls per question; four if the retry fires.** A follow-up turn adds one for
+the rewrite, and runtime verification adds one more when enabled. Everything else is code.
+The division is deliberate: *the model decides content, the graph decides flow.*
 
 ### Two edges that carry the security argument
 
@@ -704,7 +726,7 @@ brief assesses.
 ([ADR-006](ADR/ADR-006-eval-execution-accuracy.md)). It calls `src/agent.py` directly, with
 no Streamlit in the path, so it can run in CI.
 
-### The gold set: 103 items in three categories
+### The gold set: 108 items in three categories
 
 Expanded from 36 on 2026-08-10 (ADR-010). Every case carries two tags: the SQL syllabus
 topics its reference answer exercises, and a behaviour label for how the question is
@@ -713,9 +735,13 @@ on). The harness prints coverage on both dimensions each run.
 
 | Category              | Items | What it asserts                                                |
 | --------------------- | ----- | -------------------------------------------------------------- |
-| **answerable**  | 73    | Agent SQL returns the same rows as hand-verified reference SQL |
+| **answerable**  | 77    | Agent SQL returns the same rows as hand-verified reference SQL |
 | **ambiguous**   | 12    | Agent asks a clarifying question instead of guessing           |
-| **adversarial** | 18    | Injection / destructive / out-of-scope / write requests are refused |
+| **adversarial** | 19    | Injection / destructive / out-of-scope / write requests are refused |
+
+Five of the answerable and adversarial cases are two-turn conversational cases added with
+[ADR-011](ADR/ADR-011-bounded-multi-turn.md); the setup turn is replayed through the agent
+and only the final turn is scored.
 
 **Groundedness is scored separately, on every answered case**, because an answer can carry the
 right rows and still describe them with an invented figure. `_check_groundedness()` requires every
@@ -889,11 +915,11 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── models.py               Typed state and results (pydantic)
 │   └── config.py               Settings; separates admin and read-only identities
 ├── eval/
-│   ├── gold_questions.yaml     103 scored cases, topic- and behaviour-tagged
+│   ├── gold_questions.yaml     108 scored cases, topic- and behaviour-tagged
 │   ├── gold.py                 Gold-set schema; validated at load
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers
-├── tests/                      558 tests
+├── tests/                      681 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Eight decision records
@@ -913,23 +939,27 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 558 tests
+### Test suite: 681 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
-| `test_gold_set.py`               | 302   | Gold-set schema and tag guards, parametrized over all 103 cases          |
-| `test_validator.py`              | 93    | The security gate: the write-blocking rules, evasions, fail-closed parse |
-| `test_eval_scoring.py`           | 35    | Comparison and scoring logic, the definition of "correct"                |
-| `test_security_boundary.py`      | 17    | Integration: GRANTs hold with the read-only guard disabled               |
-| `test_llm_extraction.py`         | 15    | Parsing model output; total functions that raise rather than half-parse  |
-| `test_agent_routing.py`          | 22    | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
-| `test_charts.py`                 | 30    | Every chart rule, at its boundaries                                      |
-| `test_executor.py`               | 13    | Row cap and its boundary, timeout, verbatim execution, errors            |
-| `test_schema.py`                 | 11    | Catalog introspection; composed identifiers are quoted                   |
-| `test_seed_characterization.py`  | 7     | Data digests, planted patterns, the crane/terminal invariant             |
-| `test_second_order_injection.py` | 5     | Stored-payload injection arriving through query results                  |
-| `test_forecast_grounding.py`     | 5     | That a historical figure is never reported as a forecast                 |
-| `test_data_coverage.py`          | 3     | That the sidebar's date range is derived, not written down               |
+| `test_gold_set.py`              | 337   | Gold-set schema and tag guards, parametrized over all 108 cases |
+| `test_validator.py`             | 93    | The security gate: write-blocking rules, evasions, fail-closed parsing |
+| `test_eval_scoring.py`          | 35    | The comparison logic, i.e. the definition of "correct" |
+| `test_charts.py`                | 30    | Every chart rule, at its boundaries |
+| `test_quality_triggers.py`      | 28    | Code-detected result-shape triggers (ADR-012) |
+| `test_agent_routing.py`         | 25    | Graph topology with a stubbed LLM |
+| `test_runtime_verification.py`  | 23    | That runtime verification stays advisory (ADR-012) |
+| `test_config_defaults.py`       | 19    | That RUNTIME_VERIFICATION parses to the measured-better default |
+| `test_security_boundary.py`     | 17    | That GRANTs hold with the read-only guard disabled |
+| `test_llm_extraction.py`        | 15    | Parsing model output; raise rather than half-parse |
+| `test_multi_turn.py`            | 15    | Bounded multi-turn behaviour (ADR-011) |
+| `test_executor.py`              | 13    | Row cap, statement timeout, verbatim execution, errors |
+| `test_schema.py`                | 11    | Catalog introspection; composed identifiers are quoted |
+| `test_seed_characterization.py` | 7     | Data digests, planted patterns, crane/terminal invariant |
+| `test_second_order_injection.py`| 5     | Injection arriving through query results |
+| `test_forecast_grounding.py`    | 5     | A historical figure is never reported as a forecast |
+| `test_data_coverage.py`         | 3     | The sidebar date range is derived from the data |
 
 Integration tests are marked, so unit tests run without a database:
 
@@ -937,7 +967,7 @@ Integration tests are marked, so unit tests run without a database:
 pytest -m "not integration"   # no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
-python eval/run_eval.py       # 10 to 18 min across observed runs, ~$0.88 (103 cases)
+python eval/run_eval.py       # 10 to 15 min across observed runs, ~$1.34 (108 cases)
 ```
 
 ### Testing philosophy
@@ -1024,7 +1054,9 @@ deployments stall.
 | **Streamlit, not React + API**                                | The UI is the least interesting component here, and its implementation should say so                                                               | Would not scale to concurrent users; not a production serving model                                |
 | **Reporting a range, not the best run**                       | Same code scored 86.4% and 95.5%; quoting only the maximum on a "measured, not claimed" system would be self-defeating                             | A less impressive headline number                                                                  |
 | **Withheld capabilities recorded as decisions** (ADR-009)     | Fourteen runs show zero dialect failures, so docs retrieval, web search, MCP and LLM validation are absences with evidence and revisit conditions | The record must be re-examined as models, dialects and scope change                                |
-| **Syllabus- and behaviour-tagged gold set, 103 cases** (ADR-010) | A saturated 36-case suite confirmed rather than measured; two orthogonal tags locate a failure in both the SQL plane and the phrasing plane     | Runs cost ~$0.88 and 10 to 18 minutes; question wording itself becomes part of the measured surface |
+| **Syllabus- and behaviour-tagged gold set, 108 cases** (ADR-010) | A saturated 36-case suite confirmed rather than measured; two orthogonal tags locate a failure in both the SQL plane and the phrasing plane     | Runs cost ~$1.03 to ~$1.34 and 10 to 15 minutes; question wording itself becomes part of the measured surface |
+| **Bounded multi-turn: one rewrite node at the edge** (ADR-011)   | A follow-up resolves against prior questions and SQL only, and everything downstream stays byte-identical to the single-turn pipeline; the resolution is shown to the user as "Interpreted as:" so a misreading is correctable | A follow-up turn costs one extra cheap call; a chain of clarification turns carries no answer text, so "by containers" resolves from the earlier question rather than from the clarifying reply |
+| **Runtime verification, measured then defaulted off** (ADR-012)  | Groundedness rose to 98.7% to 100% against 96.0% to 97.4%, and every mechanism is bounded, advisory and fail-open, so none of it can withhold an answer | Execution accuracy fell to 89.6% to 92.2% against 93.5% to 94.8%, all of it attributable to verifier objections by reason code; ships behind `RUNTIME_VERIFICATION` with the evidence in the repo |
 
 ---
 
