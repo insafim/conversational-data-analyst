@@ -32,7 +32,24 @@ litellm.drop_params = True  # silently drop params a given provider does not sup
 
 
 class LLMError(RuntimeError):
-    """A provider call failed after retries, or returned something unusable."""
+    """A provider call failed after retries, or returned something unusable.
+
+    `safe_detail` is the part of the failure a USER may be shown. It is opt-in: a message
+    only becomes user-visible if the code raising it decided the text is both useful and
+    free of provider internals. Everything else reaches the log through `str(self)` and
+    stops there.
+
+    The split exists because the two obvious policies are both wrong here. Showing every
+    provider message puts request and response internals on a screen a client analyst is
+    looking at. Showing none of them turns "your API key is the placeholder" into "an
+    error occurred", which is the single most common first-run failure and the one the
+    README's troubleshooting table sends people to. So the auth message is curated and
+    shown; a malformed request or an unrecognised fault is summarised and logged.
+    """
+
+    def __init__(self, message: str, safe_detail: str | None = None) -> None:
+        super().__init__(message)
+        self.safe_detail = safe_detail
 
 
 @dataclass
@@ -96,10 +113,16 @@ def _call(model: str, system: str, user: str, usage: Usage | None, temperature: 
             last = exc
             continue  # transient — one more attempt
         except litellm.AuthenticationError as exc:
-            raise LLMError(
+            # Curated and therefore safe to show: it names the model and the action, and
+            # carries no provider payload. This is the first-run failure, so hiding it
+            # would cost more than it protects.
+            message = (
                 f"Authentication failed for {model}. Check the API key for this provider."
-            ) from exc
+            )
+            raise LLMError(message, safe_detail=message) from exc
         except litellm.BadRequestError as exc:
+            # `exc` can quote the request, which means the schema, the prompt, and on a
+            # summarise call the returned ROWS. It goes to the log, never to the screen.
             raise LLMError(f"{model} rejected the request: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
             raise LLMError(f"Unexpected error calling {model}: {exc}") from exc

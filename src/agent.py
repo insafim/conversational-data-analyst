@@ -877,7 +877,16 @@ def ask(
         return AgentResult(
             question=question,
             outcome=Outcome.ERROR,
-            answer=f"The language model call failed: {exc}",
+            # Only a curated detail reaches the answer. `str(exc)` can quote the request
+            # that failed, which on a summarise call includes the returned rows, and this
+            # field is rendered as markdown on the user's screen. The full text is kept in
+            # `error`, which nothing renders and the server log carries.
+            answer=(
+                f"The language model call failed. {exc.safe_detail}"
+                if getattr(exc, "safe_detail", None)
+                else "The language model call failed. The provider or the API key is the "
+                "usual cause. The error is in the server log."
+            ),
             error=str(exc),
             elapsed_s=round(time.perf_counter() - started, 3),
             stage_timings=timings.as_dict(),

@@ -183,9 +183,47 @@ def get_schema_context() -> str:
     return "\n\n".join(sections)
 
 
-def get_schema_summary() -> list[tuple[str, int]]:
-    """(table, column count) pairs for the UI sidebar."""
+def split_table_comment(comment: str | None) -> tuple[str, str]:
+    """Split a table's COMMENT ON into (display name, remaining description).
+
+    The convention is the first sentence. Every table in `db/01_schema.sql` already opens
+    with a noun phrase naming what the rows are ("Vessel visits.", "Quay cranes.",
+    "Container handling activity."), so the sidebar can show a human name without a
+    mapping table in the UI layer. That matters for ADR-003: the portability claim rests
+    on this module holding no domain literals, and a hard-coded {table: label} dict would
+    have put five of them here.
+
+    Returns ("", "") for a table with no comment, which the caller renders by falling back
+    to the table name. Split out of `get_schema_summary` so it is unit-testable without a
+    database.
+    """
+    text = (comment or "").strip()
+    if not text:
+        return "", ""
+    head, separator, tail = text.partition(". ")
+    if not separator:
+        # A single sentence, with or without its full stop: it is the name, and there is
+        # no description left over.
+        return text.rstrip("."), ""
+    return head.strip().rstrip("."), tail.strip()
+
+
+def get_schema_summary() -> list[tuple[str, int, str, str]]:
+    """(table, column count, display name, description) for the UI sidebar.
+
+    The display name and description come from the database's own `COMMENT ON TABLE`
+    text, read through `split_table_comment`. A reader who does not know the schema needs
+    "Vessel visits" far more than it needs "port_calls (9 cols)", and the same comments
+    are already injected into the SQL prompt, so the two surfaces cannot drift apart.
+    """
     counts: dict[str, int] = {}
     for row in _fetch(_COLUMNS_SQL):
         counts[row["table_name"]] = counts.get(row["table_name"], 0) + 1
-    return sorted(counts.items())
+
+    comments = {r["table_name"]: r["table_comment"] for r in _fetch(_TABLE_COMMENTS_SQL)}
+
+    summary = []
+    for table, column_count in sorted(counts.items()):
+        name, description = split_table_comment(comments.get(table))
+        summary.append((table, column_count, name, description))
+    return summary

@@ -18,9 +18,10 @@ import streamlit as st
 
 from src.charts import metric_fields, to_dataframe
 from src.models import AgentResult, ChartKind, Outcome
+from src.notices import Level, answer_notices
 from src.schema import get_schema_summary
 
-st.set_page_config(page_title="Conversational Data Analyst", page_icon="🛳️", layout="wide")
+st.set_page_config(page_title="Conversational Data Analyst", layout="wide")
 
 EXAMPLE_QUESTIONS = [
     "Which terminal has the longest average berth wait?",
@@ -165,20 +166,16 @@ def render_answer(entry: dict) -> None:
 
     st.markdown(result.answer)
 
-    # For the non-technical reader ADR-008 designs for, this line and not the SQL
-    # expander is the verification surface: it says what was measured, in words.
-    if result.reading:
-        st.caption(f"What was measured: {result.reading}")
-
-    # Advisory findings that survived their retry. Both are shown rather than
-    # suppressed, and neither withheld the answer. That is the ADR-012 contract.
-    if result.caveat:
-        st.warning(f"Possible mismatch with your question: {result.caveat}")
-    if result.grounding_flag:
-        st.warning(
-            "A figure in this answer could not be matched to the returned rows. "
-            "Check it against the table before relying on it."
-        )
+    # What is said, and in what order, is decided in src/notices.py so that it can be
+    # asserted without a browser. This loop renders and chooses nothing: the reading that
+    # is the verification surface for a non-technical reader (ADR-013), the two advisory
+    # findings that survived their retry (ADR-012), and the truncation warning all arrive
+    # already ordered, and all before the chart they qualify.
+    for notice in answer_notices(result):
+        if notice.level is Level.WARNING:
+            st.warning(notice.text)
+        else:
+            st.caption(notice.text)
 
     if result.result is not None and result.chart is not None:
         render_chart(result.result, result.chart)
@@ -188,8 +185,6 @@ def render_answer(entry: dict) -> None:
     if result.sql:
         with st.expander("View SQL"):
             st.code(result.sql, language="sql")
-            if result.result and result.result.truncated:
-                st.warning(f"Showing the first {result.result.row_count} rows only.")
 
     bits = [f"{result.elapsed_s:.2f}s", f"{result.llm_calls} LLM calls"]
     if result.result is not None:
@@ -238,8 +233,13 @@ with st.sidebar:
         )
 
     try:
-        for table, column_count in get_schema_summary():
-            st.text(f"{table} ({column_count} cols)")
+        # Named in the reader's language, with the database's own name in brackets for
+        # anyone who wants to check the SQL. Both come from `COMMENT ON TABLE`, so the
+        # sidebar and the model are reading the same description (ADR-003).
+        for table, column_count, name, description in get_schema_summary():
+            st.markdown(f"**{name or table}**  \n`{table}` · {column_count} columns")
+            if description:
+                st.caption(description)
     except Exception as exc:  # noqa: BLE001
         st.error(f"Cannot reach the database: {exc}")
         st.caption("Run `docker compose up -d --wait` then `python db/seed.py`.")
@@ -260,7 +260,7 @@ with st.sidebar:
 if "history" not in st.session_state:
     st.session_state.history = []
 
-st.title("🛳️ Conversational Data Analyst")
+st.title("Conversational Data Analyst")
 
 for entry in st.session_state.history:
     with st.chat_message("user"):

@@ -79,9 +79,24 @@ def test_schema_context_reports_real_tables_and_date_coverage() -> None:
 
 
 def test_schema_summary_covers_every_table() -> None:
-    summary = dict(get_schema_summary())
-    assert set(summary) == {"terminals", "vessels", "cranes", "port_calls", "cargo_moves"}
-    assert all(count > 0 for count in summary.values())
+    rows = get_schema_summary()
+    counts = {table: count for table, count, _name, _description in rows}
+    assert set(counts) == {"terminals", "vessels", "cranes", "port_calls", "cargo_moves"}
+    assert all(count > 0 for count in counts.values())
+
+
+def test_every_table_offers_the_sidebar_a_human_name() -> None:
+    """The sidebar shows a readable name per table, and it is READ, never written here.
+
+    The names come from `COMMENT ON TABLE` in db/01_schema.sql, which is also what the
+    SQL prompt is built from, so the label a user reads and the description the model
+    reads cannot drift apart. This test is what stops a future comment being rewritten
+    into a form that leaves the sidebar showing raw table names.
+    """
+    for table, _count, name, _description in get_schema_summary():
+        assert name, f"{table} has no comment, so the sidebar would fall back to its name"
+        assert name != table, f"{table}'s display name is just the table name"
+        assert not name.endswith("."), f"{table}'s display name kept its full stop"
 
 
 # ---------------------------------------------------------------------------------

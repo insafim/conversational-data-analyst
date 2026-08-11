@@ -514,6 +514,21 @@ happened. It now distinguishes *adopting* the demanded reply from *quoting* it.
 *answer*. It cannot corrupt *data*, because compliance happens after execution under a role
 with no write privilege. That containment is the entire point of layering.
 
+### Disclosure through the error path
+
+The controls above govern what the agent may *read*. A separate question is what leaves the
+process when a call fails, and it is not the same question: a provider's `BadRequest` quotes
+the request that failed, and on a summarise call that request carries the returned rows. An
+unfiltered error message is therefore a channel by which result data reaches the screen
+without passing the summariser's grounding rules at all.
+
+`LLMError` splits the two audiences. `str(exc)` is the log and may hold anything the provider
+said; `safe_detail` is opt-in and is the only part `ask()` renders. The default is silence, so
+a future `raise LLMError` that does not think about disclosure fails closed. One message is
+curated and marked safe: the authentication failure, because it is the most common first-run
+problem and hiding it behind "an error occurred" would cost more than it protects. Both
+directions are pinned in `tests/test_security_boundary.py`.
+
 ### Residual risk
 
 - Full read access to all business data: no row-level security, no column masking.
@@ -870,11 +885,33 @@ visible, each mapping to an assessed behaviour:
 | ----------------------------------------------------------------------------------- | --------------------------------------------- |
 | Chat input + history (`st.chat_message`, `st.chat_input`)                       | The conversational requirement                |
 | Natural-language answer                                                             | Groundedness: phrased only from returned rows |
-| Chart rendered from a typed`ChartSpec`, plus the rule that fired                  | Chart-type selection                          |
-| Collapsed "View SQL" expander +`1.8s · 3 LLM calls · 6 rows · $0.0099` caption | Auditability, latency, cost                   |
+| Chart rendered from a typed `ChartSpec`, plus the rule that fired                  | Chart-type selection                          |
+| A "What was measured" line in plain language (ADR-013)                              | Groundedness, for a reader who cannot audit SQL |
+| Collapsed "View SQL" expander + `1.8s · 3 LLM calls · 6 rows · $0.0099` caption | Auditability, latency, cost                   |
 
 Outcomes that are not a normal answer carry a visible badge, so a refusal or clarification is
 never mistaken for an answer.
+
+**The sidebar names tables in the reader's language.** `port_calls` is listed as "Vessel
+visits", with the database name shown in code formatting beneath it, alongside the column
+count and the description. Both are read from
+the table's `COMMENT ON`, never from a mapping in the UI, so the label a user reads and the
+description the model reads cannot drift apart, and ADR-003's claim that the schema layer
+holds no domain literals stays true.
+
+**A truncated result is announced with the other trust signals, before the chart.** It sits
+beside the caveat and grounding warnings rather than beside the SQL, because it is the same
+kind of signal: a reason to trust the answer less. It precedes the chart deliberately, since
+the chart is drawn from the truncated rows too, and a caveat read after the picture has
+already been believed arrived too late.
+
+**Which notices appear, and in what order, is decided in `src/notices.py` rather than in the
+view.** `app.py` renders the list it is given and chooses nothing. The ordering carries
+meaning, so leaving it inline made it an eyeballed property: the only way to check it was to
+read the render function or run the app. As a pure function over `AgentResult` it is asserted
+in `tests/test_notices.py` without a database, a model or a browser, and reversing the order
+fails two tests. It also keeps [ADR-008](ADR/ADR-008-ui-and-scope-boundary.md)'s "the UI is
+thin" claim true as the UI grows, rather than slowly aspirational.
 
 **The SQL expander is the load-bearing UI decision.** It converts the system from something a
 user must trust into something a user can check, and it is the human-in-the-loop story in this
@@ -950,6 +987,9 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── executor.py             Read-only execution, timeout, row cap
 │   ├── schema.py               Introspection to cached prompt context
 │   ├── charts.py               Rule-based chart selection
+│   ├── notices.py              Which captions and warnings sit beside an answer, and in what order
+│   ├── grounding.py            Whether every figure in an answer appears in the rows
+│   ├── quality.py              Code-detected result-shape triggers (ADR-012)
 │   ├── prompts.py              Prompt templates
 │   ├── llm.py                  Two-tier LiteLLM wrapper, output extraction
 │   ├── models.py               Typed state and results (pydantic)
@@ -959,7 +999,7 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── gold.py                 Gold-set schema; validated at load
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers
-├── tests/                      707 tests
+├── tests/                      734 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Thirteen decision records
@@ -979,7 +1019,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 707 tests
+### Test suite: 734 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
@@ -991,11 +1031,13 @@ streamlit run app.py
 | `test_agent_routing.py`         | 25    | Graph topology with a stubbed LLM |
 | `test_runtime_verification.py`  | 32    | That runtime verification stays advisory (ADR-012), and that reading-only adds a description and nothing else (ADR-013) |
 | `test_config_defaults.py`       | 36    | That RUNTIME_VERIFICATION and SQL_READING parse to their intended defaults |
-| `test_security_boundary.py`     | 17    | That GRANTs hold with the read-only guard disabled |
-| `test_llm_extraction.py`        | 15    | Parsing model output; raise rather than half-parse |
+| `test_security_boundary.py`     | 19    | That GRANTs hold with the read-only guard disabled |
+| `test_llm_extraction.py`        | 18    | Parsing model output; raise rather than half-parse |
 | `test_multi_turn.py`            | 15    | Bounded multi-turn behaviour (ADR-011) |
 | `test_executor.py`              | 13    | Row cap, statement timeout, verbatim execution, errors |
-| `test_schema.py`                | 11    | Catalog introspection; composed identifiers are quoted |
+| `test_schema.py`                | 12    | Catalog introspection; composed identifiers are quoted |
+| `test_schema_labels.py`         | 12    | Turning a table's COMMENT ON into a sidebar label, including the split it gets wrong |
+| `test_notices.py`               | 9     | Which captions and warnings sit beside an answer, and their order |
 | `test_seed_characterization.py` | 7     | Data digests, planted patterns, crane/terminal invariant |
 | `test_second_order_injection.py`| 5     | Injection arriving through query results |
 | `test_forecast_grounding.py`    | 5     | A historical figure is never reported as a forecast |
@@ -1004,7 +1046,7 @@ streamlit run app.py
 Integration tests are marked, so unit tests run without a database:
 
 ```bash
-pytest -m "not integration"   # 574 unit tests, no database, no network
+pytest -m "not integration"   # 598 unit tests, no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
 python eval/run_eval.py                                # shipped config, 10 to 15 min

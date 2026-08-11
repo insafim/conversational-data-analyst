@@ -232,3 +232,49 @@ def test_no_business_table_is_hidden_by_the_system_catalog_prefix_rule() -> None
         assert validate_sql(f"SELECT * FROM {table}").ok, (
             f"the validator blocks a real business table: {table}"
         )
+
+
+# ---------------------------------------------------------------------------------
+# Disclosure through the error path.
+#
+# The database boundary above stops writes. This one is about what LEAVES the process
+# when a call fails. A provider's BadRequest quotes the request that failed, and on a
+# summarise call the request carries the returned rows, so an unfiltered error message
+# is a channel for result data to reach a screen by a route that never passes the
+# summariser's grounding rules. `LLMError.safe_detail` is opt-in for exactly that reason.
+# ---------------------------------------------------------------------------------
+def test_a_provider_error_does_not_put_result_rows_on_the_screen() -> None:
+    from unittest.mock import patch
+
+    from src import agent as agent_module
+    from src.llm import LLMError
+
+    leaky = LLMError(
+        "provider rejected the request: messages=[{'rows': [['Jebel Ali', 17.46]]}] "
+        "api_key=sk-ant-not-a-real-key"
+    )
+    with patch.object(agent_module.llm, "cheap", side_effect=leaky):
+        result = agent_module.ask("How many berths does each terminal have?")
+
+    assert "Jebel Ali" not in result.answer, "result rows reached the user through an error"
+    assert "sk-ant" not in result.answer, "a credential-shaped string reached the user"
+    assert "17.46" not in result.answer
+    # Scrubbing the screen must not scrub the diagnosis.
+    assert "Jebel Ali" in (result.error or ""), "the log channel lost the detail too"
+
+
+def test_a_curated_auth_message_still_reaches_the_user() -> None:
+    """The opposite failure. A blanket "an error occurred" would hide the single most
+    common first-run problem, which the README's troubleshooting table sends people to."""
+    from unittest.mock import patch
+
+    from src import agent as agent_module
+    from src.llm import LLMError
+
+    curated = "Authentication failed for anthropic/claude-haiku-4-5. Check the API key."
+    with patch.object(
+        agent_module.llm, "cheap", side_effect=LLMError(curated, safe_detail=curated)
+    ):
+        result = agent_module.ask("How many berths does each terminal have?")
+
+    assert "Check the API key" in result.answer

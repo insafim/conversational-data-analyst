@@ -70,3 +70,30 @@ class TestExtractJSON:
         """A caller must never receive a dict that quietly lost fields."""
         with pytest.raises(LLMError):
             extract_json(text)
+
+
+class TestErrorDisclosure:
+    """What a provider failure is allowed to put on the user's screen.
+
+    `LLMError` carries two channels. `str(exc)` is for the log and may hold anything the
+    provider said. `safe_detail` is opt-in and is the only part `ask()` renders, because
+    a BadRequest can quote the request that failed, and on a summarise call the request
+    contains the result ROWS. The rendered field is markdown on a screen a client analyst
+    is looking at, so the default has to be silence.
+    """
+
+    def test_an_error_discloses_nothing_by_default(self) -> None:
+        """The default matters more than any single call site: a future `raise LLMError`
+        that forgets to think about disclosure fails closed."""
+        assert LLMError("provider said something verbose").safe_detail is None
+
+    def test_a_curated_message_can_be_marked_safe(self) -> None:
+        error = LLMError("Authentication failed for x.", safe_detail="Authentication failed for x.")
+        assert error.safe_detail == "Authentication failed for x."
+
+    def test_the_log_channel_keeps_the_full_text_either_way(self) -> None:
+        """Scrubbing the screen must not scrub the diagnosis. Whoever is debugging needs
+        the provider's own words, and `error` on the result is where they live."""
+        error = LLMError("model rejected the request: rows=[['Jebel Ali', 17.46]]")
+        assert "Jebel Ali" in str(error)
+        assert error.safe_detail is None
