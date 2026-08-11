@@ -761,20 +761,43 @@ so `numeric` vs `double precision`, and `date` vs midnight `timestamp`, compare 
 
 ### Measured results
 
-Fourteen full runs. The item set grew twice, so the row is comparable and the column is not:
-runs 1 to 3 scored a 30-item set (22 answerable), run 4 scored 33 items (25 answerable), and
-runs 5 to 10 score 36 items (28 answerable) after three window-function questions were added.
-Run 4 is the first with groundedness measured. Only the six comparable runs are tabulated here;
-runs 1 to 4 are cited in the prose below and their raw output is in `eval/results/`.
+Twenty-five full runs. **The item set grew four times, so a column is comparable only with
+another column from the same set.** Runs 1 to 3 scored a 30-item set (22 answerable), run 4
+scored 33 items, runs 5 to 14 scored 36 items (28 answerable), runs 15 to 17 scored a frozen
+100-item set, run 19 scored 103, and runs 20 onward score 108 (77 answerable) after the
+conversational tranche. Run 18 is invalid and kept deliberately: a local DNS outage killed name
+resolution 22 items in. Raw output for every run is in `eval/results/`.
 
-| Metric              | Run 5  | Run 6  | Run 7  | Run 8  | Run 9  | Run 10     |
-| ------------------- | ------ | ------ | ------ | ------ | ------ | ---------- |
-| Execution accuracy  | 92.9%  | 96.4%  | 96.4%  | 100%   | 100%   | **100%**  |
-| Answer groundedness | 89.3%  | 92.9%  | 96.4%  | 96.4%  | 92.9%  | **96.4%** |
-| Ambiguity handling  | 100%   | 100%   | 100%   | 100%   | 100%   | **100%**  |
-| Safety / refusals   | 100%   | 100%   | 100%   | 100%   | 100%   | **100%**  |
-| Mean latency        | 6.1s   | 5.9s   | 6.1s   | 7.7s   | 5.6s   | 6.7s       |
-| Cost per run        | $0.325 | $0.315 | $0.328 | $0.341 | $0.339 | $0.335     |
+The six runs below are the current code. They alternate ADR-012's runtime verification off and
+on, so that provider drift across the hour could not land on one configuration and be read as
+an effect of the feature. The three "off" runs are the shipped default.
+
+| Metric              | Run 21 | Run 23 | Run 25 | Run 20 | Run 22 | Run 24 |
+| ------------------- | ------ | ------ | ------ | ------ | ------ | ------ |
+| Runtime verification | off   | off    | off    | on     | on     | on     |
+| Overall             | 103/108 | 103/108 | 102/108 | 100/108 | 100/108 | 101/108 |
+| Execution accuracy  | **93.5%** | **94.8%** | **93.5%** | 89.6% | 90.9% | 92.2% |
+| Answer groundedness | 96.0%  | 97.4%  | 97.4%  | **100%** | **98.7%** | **98.7%** |
+| Ambiguity handling  | 12/12  | 11/12  | 11/12  | 12/12  | 11/12  | 11/12  |
+| Safety / refusals   | 19/19  | 19/19  | 19/19  | 19/19  | 19/19  | 19/19  |
+| Median latency      | 6.03s  | 6.65s  | 6.09s  | 6.74s  | 6.96s  | 7.11s  |
+| Cost per run        | $1.014 | $1.036 | $1.028 | $1.355 | $1.330 | $1.339 |
+
+**Accuracy fell when the set grew, and that is the expansion working.** The 36-item suite had
+saturated at 28/28 across seven consecutive runs, which means it had stopped discriminating.
+At 108 items the number is 93.5% to 94.8% and the residual failures are known and named: two
+clarify-boundary misplacements and three answers whose column shape does not match the
+question's.
+
+**Safety is the one figure that has never moved: 19 of 19 in every one of these runs, 114 of
+114 across the six.** That stability is a property of the permission model rather than of the
+model's cooperation.
+
+**Runtime verification is measured and disabled.** It raised groundedness and cost more
+execution accuracy than it bought, and every regression carried a `verifier_objection` reason
+code. [ADR-012](ADR/ADR-012-runtime-verification.md)'s addendum records the decision and what
+remains unexplained. The historical narrative below predates the expansion and is retained
+because the failures it describes are what motivated each change.
 
 **Runs 8 to 10 follow two column-comment fixes, and that is what moved the number.** The eval kept
 catching SQL that ran clean and answered a slightly different question: one query filtered on
@@ -802,19 +825,18 @@ and now reports separately:
 Infrastructure errors are reported separately but **not excluded** from the headline: a metric
 that silently drops its own failed requests flatters exactly when the system is least usable.
 
-The honest claim is therefore a range: **execution accuracy of 86.4% to 100% across fourteen runs**,
-and 92.9% to 100% across the six that score the same 28 answerable items. At 28 items one case is
-worth 3.6 points, so a single run cannot distinguish 93 from 96, and the three consecutive 28/28
-runs are 84 of 84 question-runs rather than a claim of general correctness. Runs 5 and 6 make the
-variance point without needing the infrastructure caveat: they differ by one item, and it is not
-the same item. Run 5 failed `q09` and passed `q19`; run 6 passed `q09` and failed `q19`, where the
-agent filtered on the wrong column and returned zero rows. Groundedness has not converged the same
-way: it has ranged from 89.3% to 96.4% over runs 5 to 14 and moves between runs, so the accuracy
-result should not be read as the system being finished.
+The honest claim is therefore a range: **execution accuracy of 93.5% to 94.8% across the three
+runs of the shipped configuration on the 108-item set.** At 77 answerable items one case is worth
+1.3 points, so a single run still cannot distinguish 93 from 95, and no run should be quoted
+alone. Runs 5 and 6 made the variance point on the older set without needing the infrastructure
+caveat: they differ by one item, and it is not the same item. Run 5 failed `q09` and passed
+`q19`; run 6 passed `q09` and failed `q19`, where the agent filtered on the wrong column and
+returned zero rows. Groundedness moves between runs in the same way, ranging from 96.0% to 97.4%
+here, so the accuracy result should not be read as the system being finished.
 
-**The one number that did not move: safety, 5/5 in every run, 70 attempts across fourteen runs
-without a miss.** That stability is not a property of the model; it comes from enforcing the guarantee where
-the model cannot reach.
+**The one number that did not move: safety, 19/19 in every run, 114 attempts across these six
+runs without a miss.** That stability is not a property of the model; it comes from enforcing the
+guarantee where the model cannot reach.
 
 ### What the harness found, about the system and about itself
 
@@ -872,12 +894,15 @@ Two model tiers behind one wrapper ([ADR-007](ADR/ADR-007-llm-provider-and-tieri
 
 Two of three calls go to the cheap tier. Provider is chosen by the model-string prefix
 (`anthropic/…`, `openai/…`, `gemini/…`), so switching provider is an environment change, not a
-code change. Measured cost is **~$0.009 per question**, or about $0.34 for a 36-question run.
+code change. Measured cost is **~$0.0095 per question**, or about $1.03 for a 108-question run
+in the shipped configuration, rising to ~$0.0124 and ~$1.34 with runtime verification on
+(runs 20 to 25). A follow-up turn adds one cheap call for the rewrite node.
 
 ### Latency
 
-**5.6 to 7.7s mean across runs 5 to 10**, and this is the weakest number in the system. It is a
-direct consequence
+**Median 6.03 to 6.65s across runs 21, 23 and 25**, the shipped configuration, and this is the
+weakest number in the system. Mean is 5.6 to 6.3s and p95 is 10.7 to 13.9s; the median is the
+figure to quote, because cold-start outliers pull the mean around. It is a direct consequence
 of three sequential LLM calls, not a defect. The honest fixes are caching and a smaller
 classifier, not a rewrite. What the architecture *does* guarantee is that latency is a
 **ceiling** (3 calls, 4 with a retry) rather than a distribution with a long tail, which is

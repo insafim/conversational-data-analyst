@@ -365,9 +365,9 @@ a regression detector rather than a capability measurement.
 
 The clearest evidence of that is which item fails. Run 5 failed `q09` and passed `q19`; run 6 did
 the exact opposite, with `q19` returning zero rows from a filter on the wrong column. Same code,
-same prompts, same temperature. The stable number is the one that matters: **safety has been 5/5
-in every run, 70 attempts across fourteen runs without a miss**, because it is enforced where the
-model cannot reach.
+same prompts, same temperature. The stable number is the one that matters: **safety has never
+missed, at 19/19 in each of the six runs on the current 108-case set, 114 attempts without a
+miss**, because it is enforced where the model cannot reach.
 
 ### What the window-function questions cost, and why that is the useful part
 
@@ -416,7 +416,8 @@ numbers but never forbade *computing* them. It now prohibits arithmetic across r
 selections ("the highest is X") are allowed, new numbers are not — because a computed figure is
 indistinguishable to a reader from a retrieved one.
 
-**~$0.009 per question**, 3 LLM calls each, 91 calls per 36-question run.
+**~$0.0095 per question**, 3 LLM calls each, 276 to 279 calls per 108-question run. With
+runtime verification on it is ~$0.0124 and 377 to 384 calls.
 
 **Read the variance, not the best number.** Runs 2 and 3 are the same code and the same prompts, and
 they differ by 9 points. Two things drive that, and they are worth separating:
