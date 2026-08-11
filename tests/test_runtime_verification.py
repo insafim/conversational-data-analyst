@@ -159,6 +159,155 @@ def test_the_verifiers_reading_is_surfaced_with_the_answer(stub) -> None:
 
 
 # ---------------------------------------------------------------------------------
+# Reading-only (ADR-013): the verifier's sentence without the verifier's authority.
+#
+# The property under test is subtraction. Turning the reading on must add a description
+# and nothing else: no regeneration, no re-summarisation, no caveat, no change to the SQL
+# or the answer. If any of those leak in, this configuration has quietly become ADR-012
+# with a different name, and the accuracy it measured would follow.
+# ---------------------------------------------------------------------------------
+def test_reading_only_surfaces_the_reading(stub) -> None:
+    stub(sql_sequence=[TERMINALS_SQL], reading="counts every berth at each terminal")
+    result = agent_module.ask(
+        "How many berths does each terminal have?", verification=False, reading=True
+    )
+
+    assert result.reading == "counts every berth at each terminal"
+    assert result.outcome is Outcome.ANSWERED
+
+
+def test_reading_only_discards_an_objection_instead_of_acting_on_it(stub) -> None:
+    """The measured harm in ADR-012 was the regeneration an objection triggers, not the
+    sentence the verifier writes. This pins the split."""
+    stubbed = stub(
+        sql_sequence=[TERMINALS_SQL, TERMINALS_SQL],
+        objection="this counts berths, not port calls",
+        reading="counts every berth at each terminal",
+    )
+    result = agent_module.ask(
+        "How many port calls were there?", verification=False, reading=True
+    )
+
+    assert len(stubbed.calls["generate_sql"]) == 1, "an objection caused a regeneration"
+    assert result.retry_reasons == []
+    assert result.caveat is None, "an objection reached the user as a caveat"
+    assert result.reading == "counts every berth at each terminal"
+
+
+def test_reading_only_does_not_run_the_groundedness_check(stub) -> None:
+    """An answer with an invented figure would be re-summarised under ADR-012. Under
+    reading-only the summariser is called exactly once and the flag is never raised,
+    because `ground_check` is not in the graph on this path."""
+    stubbed = stub(sql_sequence=[TERMINALS_SQL], summary="There were 918,273 containers.")
+    result = agent_module.ask(
+        "How many berths does each terminal have?", verification=False, reading=True
+    )
+
+    assert len(stubbed.calls["summarize"]) == 1, "the answer was re-summarised"
+    assert result.retry_reasons == []
+    assert result.grounding_flag is None
+    assert "ground_check" not in result.stage_timings
+
+
+def test_reading_only_runs_verify_and_review_and_nothing_else_new(stub) -> None:
+    stubbed = stub(sql_sequence=[TERMINALS_SQL])
+    result = agent_module.ask("How many berths?", verification=False, reading=True)
+
+    assert stubbed.calls["verify"], "the verifier did not run"
+    assert "verify" in result.stage_timings
+    assert "review" in result.stage_timings
+    assert "ground_check" not in result.stage_timings
+
+
+def test_reading_only_still_retries_a_database_error(stub) -> None:
+    """The reading switch must not touch the failure handling that predates it."""
+    stubbed = stub(
+        sql_sequence=["SELECT * FROM no_such_table", TERMINALS_SQL],
+    )
+    result = agent_module.ask("How many berths?", verification=False, reading=True)
+
+    assert len(stubbed.calls["generate_sql"]) == 2
+    assert result.retry_reasons == [RetryReason.DB_ERROR]
+    assert result.outcome is Outcome.ANSWERED
+
+
+def test_reading_only_produces_the_same_sql_answer_and_chart_as_everything_off(stub) -> None:
+    """ADR-013's safety claim, asserted directly rather than inferred.
+
+    Every other test here checks one configuration in isolation, which leaves the actual
+    claim ("the SQL, the answer and the chart are identical to running with everything
+    off") to be reconciled by a reader across two test bodies. A change that altered the
+    answer text only on the reading path would pass all of them and fail this one.
+
+    The stub is scripted with TWO statements and an objection, and that is what makes the
+    assertions load-bearing rather than circular. `StubLLM.strong` indexes the script by
+    the number of prior calls and CLAMPS at the last entry, so with a one-statement
+    script it returns the same SQL however many times it is asked. An equivalence
+    assertion written that way would hold even if the reading path did regenerate, and
+    would be a statement about the stub rather than about the pipeline. With two
+    statements, a regeneration advances to `ONE_ROW_SQL`, which also selects a different
+    chart, so both assertions below fail if the invariant breaks.
+    """
+    script = dict(
+        sql_sequence=[TERMINALS_SQL, ONE_ROW_SQL],
+        objection="this counts berths, not port calls",
+        summary="Six terminals, listed above.",
+    )
+
+    stub(**script)
+    off = agent_module.ask("How many berths?", verification=False, reading=False)
+
+    stub(**script)
+    on = agent_module.ask("How many berths?", verification=False, reading=True)
+
+    assert off.sql == TERMINALS_SQL, "the baseline itself regenerated; the script is wrong"
+    assert on.sql == TERMINALS_SQL, "the reading path acted on the objection and regenerated"
+    assert on.sql == off.sql
+    assert on.answer == off.answer
+    assert on.chart == off.chart
+    assert on.outcome is off.outcome
+    # The one thing that IS allowed to differ.
+    assert on.reading is not None and off.reading is None
+    assert on.caveat is None
+
+
+def test_a_raising_verifier_does_not_degrade_a_reading_only_answer(stub, monkeypatch) -> None:
+    """Fail-open on the shipped path, not only under full verification.
+
+    The existing fail-open tests all run with verification on. Reading-only is what
+    actually ships, so a flaky verifier crashing or blocking an answer there is the
+    availability risk that matters.
+    """
+    stubbed = stub(sql_sequence=[TERMINALS_SQL])
+    original = stubbed.cheap
+
+    def exploding(system, user, usage=None, temperature=0.0):
+        if "you review one postgresql" in system.lower():
+            raise RuntimeError("provider is down")
+        return original(system, user, usage, temperature)
+
+    monkeypatch.setattr(agent_module.llm, "cheap", exploding)
+    result = agent_module.ask("How many berths?", verification=False, reading=True)
+
+    assert result.outcome is Outcome.ANSWERED, "a failing verifier withheld an answer"
+    assert result.answer
+    assert result.reading is None
+    assert result.caveat is None
+    assert result.retry_reasons == []
+
+
+def test_a_refusal_costs_no_verifier_call_even_with_the_reading_on(stub) -> None:
+    """There is no SQL to describe, so there is nothing to pay for. This is why the
+    measured cost of the reading applies to answered questions and not to all traffic."""
+    stubbed = stub(route="out_of_scope")
+    result = agent_module.ask("What is the weather?", verification=False, reading=True)
+
+    assert result.outcome is Outcome.REFUSED
+    assert stubbed.calls["verify"] == []
+    assert result.reading is None
+
+
+# ---------------------------------------------------------------------------------
 # The groundedness floor.
 # ---------------------------------------------------------------------------------
 def test_an_ungrounded_answer_is_re_summarised_once(stub) -> None:
@@ -189,6 +338,32 @@ def test_a_grounded_answer_is_not_re_summarised(stub) -> None:
     assert len(stubbed.calls["summarize"]) == 1
     assert result.retry_reasons == []
     assert result.grounding_flag is None
+
+
+def test_review_clears_a_stray_grounding_flag_on_the_reading_only_path() -> None:
+    """The backstop added for the reading-only path, tested directly because it is
+    DEFENSIVE and therefore unreachable end to end today.
+
+    `ground_check` is the only writer of `grounding`, and the router never reaches it
+    when verification is off, so nothing can currently set this key on the path under
+    test. That is precisely the argument for a direct test: a probe showed that routing
+    the reading path through `ground_check` leaks a flag to the user with `review`'s
+    objection guard completely untouched, which means the suppression rested on one
+    mechanism. Without this test, deleting the clear is a silent change, and an
+    unreachable guard with no test is one refactor away from being both reachable and
+    absent.
+    """
+    state = {
+        "verify_enabled": False,
+        "grounding": "a figure was not found in the rows",
+        "retry_reasons": [],
+    }
+
+    updates = agent_module.review(state)
+
+    assert updates["grounding"] == "", "a stray grounding flag survived the reading-only exit"
+    assert updates["next"] == "ok"
+    assert updates.get("caveat") is None
 
 
 def test_review_discards_a_verdict_issued_against_since_replaced_sql() -> None:
@@ -329,9 +504,15 @@ def test_each_mechanism_has_its_own_budget(stub) -> None:
 # The switch. Off must be the pre-ADR-012 pipeline, or the comparison runs measure two
 # unrelated systems rather than one change.
 # ---------------------------------------------------------------------------------
-def test_verification_off_runs_none_of_the_new_nodes(stub) -> None:
+def test_everything_off_runs_none_of_the_new_nodes(stub) -> None:
+    """The pre-ADR-012 pipeline, which runs 20 to 25 measure against.
+
+    Both switches are named explicitly. `reading=False` is not redundant: ADR-013 ships
+    the reading on by default, so omitting it here would run `verify` and `review` and
+    this test would be asserting a configuration nothing uses.
+    """
     stubbed = stub(sql_sequence=[TERMINALS_SQL], summary="There were 918,273 containers.")
-    result = agent_module.ask("How many berths?", verification=False)
+    result = agent_module.ask("How many berths?", verification=False, reading=False)
 
     assert stubbed.calls["verify"] == []
     for stage in ("verify", "ground_check", "review"):
@@ -358,6 +539,13 @@ def test_a_call_that_states_no_preference_gets_the_configured_default(stub) -> N
     if settings.runtime_verification:
         assert stubbed.calls["verify"], "verification is configured on but did not run"
         assert "review" in result.stage_timings
+        assert "ground_check" in result.stage_timings
+    elif settings.sql_reading:
+        # ADR-013's default: the verifier runs for its reading only. `review` collects
+        # the verdict, `ground_check` stays out of the graph.
+        assert stubbed.calls["verify"], "the reading is configured on but verify did not run"
+        assert "review" in result.stage_timings
+        assert "ground_check" not in result.stage_timings
     else:
         assert stubbed.calls["verify"] == [], "verification is configured off but ran"
         assert "review" not in result.stage_timings

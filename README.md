@@ -21,7 +21,7 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 > method, and a consolidated table of design decisions with their trade-offs.
 > [docs/DATA.md](docs/DATA.md) is the dataset reference: what is in it, how it was built,
 > and **what you can ask it**, with a value inventory and a question catalogue.
-> [docs/ADR/](docs/ADR/) holds the twelve decision records behind them.
+> [docs/ADR/](docs/ADR/) holds the thirteen decision records behind them.
 
 ---
 
@@ -57,17 +57,19 @@ Then:
 #    before the schema exists and the seed below fails on a connection or a missing relation.
 docker compose up -d --wait
 
-# 2. Install and seed
-uv venv --python 3.12
+# 2. Install and seed. `uv sync` creates .venv and installs the exact versions pinned in
+#    uv.lock, so this resolves identically today and in six months. pyproject.toml carries
+#    ranges, which is the right contract for a library and the wrong one for a repository
+#    whose README quotes measured numbers.
+uv sync --extra dev
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-uv pip install -e ".[dev]"
 python db/seed.py
 
 # 3. Run
 streamlit run app.py
 ```
 
-Every command after step 2 assumes that activated environment. `uv venv` creates it but does
+Every command after step 2 assumes that activated environment. `uv sync` creates `.venv` but does
 not enter it, so skipping the `activate` line is the one way to have each following step fail
 with `command not found`.
 
@@ -78,12 +80,27 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 557 unit tests, no database or network needed
-pytest                        # all 681; needs the seeded database, and 10 of them
+pytest -m "not integration"   # 574 unit tests, no database or network needed
+pytest                        # all 707; needs the seeded database, and 10 of them
                               # call the live model, so they also need a funded API key
-python eval/run_eval.py       # 10 to 15 min across observed runs, ~$1.03 of tokens (108 cases)
-python eval/run_eval.py --verification      # the same set with ADR-012 checks on, ~$1.34
+# The two configurations the published figures were measured on, named explicitly.
+# --no-reading is needed for the BASELINE only: ADR-013's reading defaults on and also
+# calls the verifier, so --no-verification alone no longer reproduces runs 21/23/25.
+# Under --verification the reading is inert, because verification already runs the
+# verifier; measured identical node set, call count and cost either way.
+python eval/run_eval.py --no-verification --no-reading   # baseline, ~$1.03 (108 cases)
+python eval/run_eval.py --verification                   # ADR-012 checks on, ~$1.34
+
+# What the app actually ships: verification off, reading on. Costs more than the
+# baseline above by the reading's one extra cheap call per ANSWERED question.
+python eval/run_eval.py                                  # 10 to 15 min across observed runs
 ```
+
+One caveat on reproduction, stated rather than buried: `uv.lock` was refreshed on 2026-08-11 and
+moves ten packages relative to the environment the runs in `eval/results/` were recorded on,
+including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 707 tests pass on the
+pinned set, which is what establishes that the SQL validator behaves identically. The eval scores
+are model-driven and are quoted as ranges across repeated runs for that reason.
 
 ### Configuration
 
@@ -105,6 +122,7 @@ as-is except for the API key.
 | `MAX_QUESTION_CHARS` | No | `2000` | Rejects an oversized question before any model call |
 | `HISTORY_TURNS` | No | `3` | Prior exchanges the follow-up rewrite may read (ADR-011). Questions and SQL only |
 | `RUNTIME_VERIFICATION` | No | `false` | ADR-012's three runtime checks. Off by default because the [comparison](#runtime-verification-what-it-bought-and-what-it-cost) measured it costing more accuracy than it bought |
+| `SQL_READING` | No | `true` | The "What was measured" line beside each answer (ADR-013). Runs the verifier for its description and discards its objection, so no SQL, answer or chart changes. Costs one cheap-tier call on answered questions only |
 
 ¹ Whichever provider your `MODEL_*` prefixes name. Switching provider is an env change, not a code
 change, e.g. `MODEL_CHEAP=openai/gpt-5-mini`, `MODEL_STRONG=openai/gpt-5.4-mini`.
@@ -634,6 +652,7 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 | [010](docs/ADR/ADR-010-syllabus-mapped-eval-expansion.md) | Syllabus-mapped eval expansion, 36 to 103 cases on two tag dimensions |
 | [011](docs/ADR/ADR-011-bounded-multi-turn.md) | Bounded multi-turn at the edge, single-turn core |
 | [012](docs/ADR/ADR-012-runtime-verification.md) | Runtime verification, each property gets its instrument (measured; shipped off by default) |
+| [013](docs/ADR/ADR-013-the-reading-without-the-verdict.md) | The verifier's reading without its verdict, so an answer says what was measured (shipped on) |
 
 ---
 
@@ -662,14 +681,14 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── gold.py               Gold-set schema; validated at load
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output, evidence for the numbers above
-└── tests/                  681 tests
+└── tests/                  707 tests
 ```
 
 ---
 
 ## Testing
 
-681 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+707 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
@@ -680,8 +699,8 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_charts.py` | 30 | Every chart rule, at its boundaries |
 | `test_quality_triggers.py` | 28 | The code-detected result-shape triggers (ADR-012), weighted toward the cases that must NOT fire |
 | `test_agent_routing.py` | 25 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
-| `test_runtime_verification.py` | 23 | That runtime verification stays advisory: it cannot block, exceed one retry, or approve (ADR-012) |
-| `test_config_defaults.py` | 19 | That `RUNTIME_VERIFICATION` parses to the measured-better default, since a sign error there ships the rejected configuration silently |
+| `test_runtime_verification.py` | 32 | That runtime verification stays advisory: it cannot block, exceed one retry, or approve (ADR-012), and that the reading-only default adds a description and nothing else (ADR-013) |
+| `test_config_defaults.py` | 36 | That `RUNTIME_VERIFICATION` and `SQL_READING` parse to their intended defaults, since a sign error in either ships a configuration nobody chose |
 | `test_security_boundary.py` | 17 | That `GRANT`s hold with the read-only guard disabled |
 | `test_llm_extraction.py` | 15 | Parsing model output; functions that raise rather than half-parse |
 | `test_multi_turn.py` | 15 | That a first turn pays nothing, history carries no answer text, and a rewrite is still untrusted (ADR-011) |

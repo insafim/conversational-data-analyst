@@ -44,6 +44,40 @@ def test_runtime_verification_is_off_when_the_variable_is_unset(monkeypatch):
     assert Settings.load().runtime_verification is False
 
 
+@pytest.mark.parametrize("value", ["true", "TRUE", "True", "1", "yes", "on", "ON"])
+def test_the_reading_is_enabled_by_any_affirmative_value(monkeypatch, value):
+    """Pins the allow-list itself, not just the default.
+
+    Without this, narrowing the accepted set from ("1", "true", "yes", "on") to
+    ("1", "true") leaves every other test in this file green, so a user who wrote
+    SQL_READING=yes would silently get the feature turned off.
+    """
+    monkeypatch.setenv("SQL_READING", value)
+    assert Settings.load().sql_reading is True
+
+
+@pytest.mark.parametrize(
+    "value", ["false", "FALSE", "0", "no", "off", "", "nope", "maybe", "2"]
+)
+def test_anything_but_an_affirmative_value_disables_the_reading(monkeypatch, value):
+    """A positive allow-list, like `runtime_verification`'s parser. An unrecognised
+    value disables the reading rather than being treated as a negative, so the name says
+    "anything but an affirmative" rather than "an explicit negative"."""
+    monkeypatch.setenv("SQL_READING", value)
+    assert Settings.load().sql_reading is False
+
+
+def test_the_reading_is_on_when_the_variable_is_unset(monkeypatch):
+    """The shipped default, and the opposite of `runtime_verification`'s.
+
+    The two defaults disagree on purpose. What ADR-012 measured as harmful was the
+    regeneration an objection triggers; the reading is the same call's other output and
+    changes no SQL, so it defaults on while the objection loop defaults off.
+    """
+    monkeypatch.delenv("SQL_READING", raising=False)
+    assert Settings.load().sql_reading is True
+
+
 def test_the_history_window_is_read_from_the_environment(monkeypatch):
     monkeypatch.setenv("HISTORY_TURNS", "5")
     assert Settings.load().history_turns == 5

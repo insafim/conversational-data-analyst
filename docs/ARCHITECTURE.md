@@ -5,7 +5,7 @@
 > considered and the specific failure each rejected alternative would have introduced.
 >
 > Companion documents: [README.md](../README.md) (setup, quickstart, measured results)
-> and [docs/ADR/](ADR/) (twelve decision records, each with alternatives and trade-offs).
+> and [docs/ADR/](ADR/) (thirteen decision records, each with alternatives and trade-offs).
 >
 > Every claim below was verified against the running system rather than written from intent.
 > This document is maintained with the code: a divergence between the two is a defect in one
@@ -92,8 +92,8 @@ these definitions are load-bearing rather than background.
 | Concept              | Meaning                                                                      | Why it matters analytically                                                             |
 | -------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | **Terminal**   | A container-handling facility within a port                                  | The primary grouping dimension                                                          |
-| **Vessel**     | A ship calling at terminals; belongs to an**operator** (shipping line) | Carries capacity (TEU), type, and the operator dimension                                |
-| **Crane**      | A quay crane belonging to exactly one terminal                               | Equipment productivity;*a crane can only service vessels berthed at its own terminal* |
+| **Vessel**     | A ship calling at terminals; belongs to an **operator** (shipping line) | Carries capacity (TEU), type, and the operator dimension                                |
+| **Crane**      | A quay crane belonging to exactly one terminal                               | Equipment productivity; *a crane can only service vessels berthed at its own terminal* |
 | **Port call**  | One visit of one vessel to one terminal                                      | The grain for congestion and visit-count questions                                      |
 | **Cargo move** | One batch of container moves by one crane during one port call               | Finer grain than a port call; the throughput measure                                    |
 
@@ -135,7 +135,7 @@ flowchart TB
     end
 
     subgraph App["Application (single process)"]
-        GRAPH["LangGraph pipeline<br/>classify to generate to validate to execute to summarize"]
+        GRAPH["LangGraph pipeline<br/>contextualize to classify to generate to validate to execute to summarize<br/>(verify, ground_check and review only when RUNTIME_VERIFICATION is on)"]
         VAL["validator.py<br/>sqlglot AST gate"]
         EXEC["executor.py<br/>read-only, timeout, row cap"]
         CHART["charts.py<br/>rule-based, no LLM"]
@@ -403,8 +403,8 @@ artefact of synthetic data: production systems hit the same problem the moment a
 
 | Approach                                                                 | Verdict                                                                                                                                                                                               |
 | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Hard-coded schema string                                                 | Rejected. Rots silently on the first schema change, and makes this a demo of*this* database rather than a system that works against *a* database                                                  |
-| Per-query agentic discovery (`list_tables` / `describe_table` tools) | Rejected. 2 to 4 extra sequential round trips**per question** to rediscover something unchanged since startup, on a system where latency is assessed, and it reintroduces model-controlled flow |
+| Hard-coded schema string                                                 | Rejected. Rots silently on the first schema change, and makes this a demo of *this* database rather than a system that works against *a* database                                                  |
+| Per-query agentic discovery (`list_tables` / `describe_table` tools) | Rejected. 2 to 4 extra sequential round trips **per question** to rediscover something unchanged since startup, on a system where latency is assessed, and it reintroduces model-controlled flow |
 | **Startup introspection + full injection**                         | **Chosen.** The entire schema is 6,180 characters (roughly 1,500 tokens)                                                                                                                              |
 
 The generalisable principle: **retrieval earns its place when the schema stops fitting in
@@ -535,7 +535,7 @@ safety: the connection authenticates as `analyst_ro` regardless.
 | Limit                 | Value | Bounds what                                                          |
 | --------------------- | ----- | -------------------------------------------------------------------- |
 | `statement_timeout` | 5s    | A valid but ruinously expensive query                                |
-| Row cap               | 500   | A cheap query returning millions of rows (memory in*this* process) |
+| Row cap               | 500   | A cheap query returning millions of rows (memory in *this* process) |
 | `connect_timeout`   | 10s   | A hung connection attempt                                            |
 | Read-only transaction | on    | Accidental writes, with a clear error                                |
 
@@ -825,8 +825,12 @@ and now reports separately:
 Infrastructure errors are reported separately but **not excluded** from the headline: a metric
 that silently drops its own failed requests flatters exactly when the system is least usable.
 
-The honest claim is therefore a range: **execution accuracy of 93.5% to 94.8% across the three
-runs of the shipped configuration on the 108-item set.** At 77 answerable items one case is worth
+The honest claim is therefore a range: **execution accuracy of 93.5% to 94.8% across runs 21, 23
+and 25 on the 108-item set.** Those runs predate [ADR-013](ADR/ADR-013-the-reading-without-the-verdict.md)
+and so ran without the reading, but the figure still describes what ships: the reading-only path
+performs no regeneration and no re-summarisation, so it cannot change the SQL or the answer, and
+therefore cannot move accuracy. Cost and latency are a different matter and are qualified
+below. At 77 answerable items one case is worth
 1.3 points, so a single run still cannot distinguish 93 from 95, and no run should be quoted
 alone. Runs 5 and 6 made the variance point on the older set without needing the infrastructure
 caveat: they differ by one item, and it is not the same item. Run 5 failed `q09` and passed
@@ -895,13 +899,22 @@ Two model tiers behind one wrapper ([ADR-007](ADR/ADR-007-llm-provider-and-tieri
 Two of three calls go to the cheap tier. Provider is chosen by the model-string prefix
 (`anthropic/…`, `openai/…`, `gemini/…`), so switching provider is an environment change, not a
 code change. Measured cost is **~$0.0095 per question**, or about $1.03 for a 108-question run
-in the shipped configuration, rising to ~$0.0124 and ~$1.34 with runtime verification on
-(runs 20 to 25). A follow-up turn adds one cheap call for the rewrite node.
+with both switches off (runs 21, 23, 25), rising to ~$0.0124 and ~$1.34 with runtime
+verification on (runs 20, 22, 24). A follow-up turn adds one cheap call for the rewrite node.
+
+The **shipped** default sits between the two. ADR-013's reading adds one cheap-tier call to every
+ANSWERED question, measured at 18% to 27% more per answered question across five questions in
+both orderings; a refusal or a clarification has no SQL to describe and costs nothing extra. The
+figure for a full 108-case run in the shipped configuration is not quoted here because it has not
+been measured across the whole set yet.
 
 ### Latency
 
-**Median 6.03 to 6.65s across runs 21, 23 and 25**, the shipped configuration, and this is the
-weakest number in the system. Mean is 5.6 to 6.3s and p95 is 10.7 to 13.9s; the median is the
+**Median 6.03 to 6.65s across runs 21, 23 and 25**, both switches off, and this is the
+weakest number in the system. The shipped default adds ADR-013's reading, which runs on a worker
+thread beside `execute` and so costs only what that overlap does not absorb; the amount was not
+resolvable at small sample size, because single-run deltas were swamped by provider variance of
+up to 17s. It is stated as unmeasured rather than estimated. Mean is 5.6 to 6.3s and p95 is 10.7 to 13.9s; the median is the
 figure to quote, because cold-start outliers pull the mean around. It is a direct consequence
 of three sequential LLM calls, not a defect. The honest fixes are caching and a smaller
 classifier, not a rewrite. What the architecture *does* guarantee is that latency is a
@@ -920,9 +933,11 @@ per-user attribution and no alerting. Named on the path to production rather tha
 ## 15. Repository Structure
 
 ```
+├── README.md                   Setup, run instructions and the measured results
 ├── app.py                      Streamlit chat UI
 ├── docker-compose.yml          PostgreSQL 18 (host port 55432)
 ├── pyproject.toml              Dependencies, pytest markers, ruff config
+├── uv.lock                     Exact pinned resolution, so an install is reproducible
 ├── .env.example                Config template (the real .env is gitignored)
 ├── db/
 │   ├── 01_schema.sql           Tables, constraints, indexes, COMMENT ON (prompt context)
@@ -944,10 +959,10 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── gold.py                 Gold-set schema; validated at load
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers
-├── tests/                      681 tests
+├── tests/                      707 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
-    └── ADR/                    Eight decision records
+    └── ADR/                    Thirteen decision records
 ```
 
 ---
@@ -959,12 +974,12 @@ per-user attribution and no alerting. Named on the path to production rather tha
 ```bash
 cp .env.example .env                              # add an API key
 docker compose up -d                              # PostgreSQL 18 on 55432
-uv venv --python 3.12 && uv pip install -e ".[dev]"
+uv sync --extra dev                               # creates .venv from the pinned uv.lock
 python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 681 tests
+### Test suite: 707 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
@@ -974,8 +989,8 @@ streamlit run app.py
 | `test_charts.py`                | 30    | Every chart rule, at its boundaries |
 | `test_quality_triggers.py`      | 28    | Code-detected result-shape triggers (ADR-012) |
 | `test_agent_routing.py`         | 25    | Graph topology with a stubbed LLM |
-| `test_runtime_verification.py`  | 23    | That runtime verification stays advisory (ADR-012) |
-| `test_config_defaults.py`       | 19    | That RUNTIME_VERIFICATION parses to the measured-better default |
+| `test_runtime_verification.py`  | 32    | That runtime verification stays advisory (ADR-012), and that reading-only adds a description and nothing else (ADR-013) |
+| `test_config_defaults.py`       | 36    | That RUNTIME_VERIFICATION and SQL_READING parse to their intended defaults |
 | `test_security_boundary.py`     | 17    | That GRANTs hold with the read-only guard disabled |
 | `test_llm_extraction.py`        | 15    | Parsing model output; raise rather than half-parse |
 | `test_multi_turn.py`            | 15    | Bounded multi-turn behaviour (ADR-011) |
@@ -989,10 +1004,12 @@ streamlit run app.py
 Integration tests are marked, so unit tests run without a database:
 
 ```bash
-pytest -m "not integration"   # no database, no network
+pytest -m "not integration"   # 574 unit tests, no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
-python eval/run_eval.py       # 10 to 15 min across observed runs, ~$1.34 (108 cases)
+python eval/run_eval.py                                # shipped config, 10 to 15 min
+python eval/run_eval.py --no-verification --no-reading # the ~$1.03 baseline (108 cases)
+python eval/run_eval.py --verification                 # ADR-012 on, ~$1.34
 ```
 
 ### Testing philosophy
@@ -1019,12 +1036,18 @@ consequences visible in the suite:
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Authentication**      | One implicit user. Identity is a precondition for row-level security, which is why it heads the production path rather than being a UI feature                                               |
 | **Caching**             | Would cut cost and latency, but optimises a system whose correctness is not yet established. Correctness first                                                                               |
-| **Multi-turn memory**   | Single-turn by design. "And what about last year?" turns SQL generation into a coreference problem where ambiguity compounds across turns. LangGraph checkpointing is the intended mechanism |
 | **Streaming**           | Perceived latency, not latency. With three calls the honest fix is fewer or faster calls                                                                                                     |
 | **Deployment**          | Runs locally. Containerising demonstrates a skill this brief does not assess                                                                                                                 |
 | **Async / concurrency** | Single-user by design; Streamlit's rerun model would not scale to concurrent users anyway                                                                                                    |
 | **Tracing persistence** | Cost and latency are measured per request but not stored                                                                                                                                     |
 | **Semantic layer**      | The most consequential omission; see below                                                                                                                                                   |
+
+**Multi-turn memory used to be on this list and no longer is.** It was omitted by
+[ADR-008](ADR/ADR-008-ui-and-scope-boundary.md) and built by
+[ADR-011](ADR/ADR-011-bounded-multi-turn.md) on 2026-08-10, as a bounded rewrite at the edge of
+the graph rather than as graph memory. Section 6 describes the node and section 19 records the
+decision. The row is removed rather than edited because a list of omissions that contains
+something the app does is worse than no list.
 
 **On the semantic layer.** Without governed metric definitions, "utilisation" resolves to
 whatever the model infers that day, and the same question yields different SQL and different
@@ -1082,9 +1105,10 @@ deployments stall.
 | **Syllabus- and behaviour-tagged gold set, 108 cases** (ADR-010) | A saturated 36-case suite confirmed rather than measured; two orthogonal tags locate a failure in both the SQL plane and the phrasing plane     | Runs cost ~$1.03 to ~$1.34 and 10 to 15 minutes; question wording itself becomes part of the measured surface |
 | **Bounded multi-turn: one rewrite node at the edge** (ADR-011)   | A follow-up resolves against prior questions and SQL only, and everything downstream stays byte-identical to the single-turn pipeline; the resolution is shown to the user as "Interpreted as:" so a misreading is correctable | A follow-up turn costs one extra cheap call; a chain of clarification turns carries no answer text, so "by containers" resolves from the earlier question rather than from the clarifying reply |
 | **Runtime verification, measured then defaulted off** (ADR-012)  | Groundedness rose to 98.7% to 100% against 96.0% to 97.4%, and every mechanism is bounded, advisory and fail-open, so none of it can withhold an answer | Execution accuracy fell to 89.6% to 92.2% against 93.5% to 94.8%, all of it attributable to verifier objections by reason code; ships behind `RUNTIME_VERIFICATION` with the evidence in the repo |
+| **The reading without the verdict** (ADR-013)                    | Every answered question regains a plain-language "What was measured" line, which disappeared for all 108 cases when ADR-012 was defaulted off; no SQL, answer or chart can change, because no path regenerates | One extra cheap call per answered question, 18% to 27% more cost; the verifier's objection is discarded rather than shown, because its `q66` probe objected to a correct query in 4 of 4 trials |
 
 ---
 
 *This document describes the architecture as implemented and is updated in the same change as
-the code it describes. The twelve ADRs in [docs/ADR/](ADR/) carry the full reasoning, the
+the code it describes. The thirteen ADRs in [docs/ADR/](ADR/) carry the full reasoning, the
 alternatives considered, and the trade-off accepted for each decision summarised here.*

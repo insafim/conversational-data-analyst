@@ -56,6 +56,9 @@ class Settings:
     # --- runtime verification (ADR-012) ---
     runtime_verification: bool
 
+    # --- the plain-language reading shown beside an answer (ADR-013) ---
+    sql_reading: bool
+
     @staticmethod
     def load() -> Settings:
         return Settings(
@@ -101,6 +104,23 @@ class Settings:
             # machinery, the switch and the evidence all stay; the default follows the
             # measurement. See ADR-012's addendum.
             runtime_verification=os.getenv("RUNTIME_VERIFICATION", "false").lower()
+            in ("1", "true", "yes", "on"),
+            # The verifier's READING, without the verifier's authority (ADR-013).
+            #
+            # Turning RUNTIME_VERIFICATION off took the "What was measured" line off the
+            # screen with it, because the reading is produced by the same node as the
+            # objection. Measured across runs 20 to 25: with verification on, all 75
+            # answered cases carried a reading; with it off, none of 108 did. That left
+            # the non-technical reader ADR-008 designs for with no verification surface
+            # except the SQL, which is the artefact they came here to avoid.
+            #
+            # This switch runs `verify` for its reading and discards its objection. What
+            # measured badly in ADR-012 was the REGENERATION an objection triggers, not
+            # the sentence it writes, and the two known defects in VERIFY_SYSTEM are
+            # defects of judgement rather than of description. So the SQL, the answer and
+            # the chart are identical to running with everything off; the only costs are
+            # one cheap-tier call and the latency it does not overlap.
+            sql_reading=os.getenv("SQL_READING", "true").lower()
             in ("1", "true", "yes", "on"),
         )
 

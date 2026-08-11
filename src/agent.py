@@ -210,6 +210,10 @@ class State(TypedDict, total=False):
     ungrounded: list[float]
     caveat: str
     verify_enabled: bool
+    # Runs `verify` for its reading and ignores its objection (ADR-013). Independent of
+    # `verify_enabled` rather than a weaker setting of it, so that the ADR-012 comparison
+    # keeps a configuration in which no verifier call is made at all.
+    reading_enabled: bool
     next: str               # `review`'s decision, read by the router that follows it
 
     # Retries are counted per mechanism rather than in one budget, because each is
@@ -559,6 +563,22 @@ def review(state: State) -> dict[str, Any]:
             updates["verification"] = verdict
         updates["verification_future"] = None
 
+    # Reading-only (ADR-013): the verdict has been collected, so `reading` will reach the
+    # user, and nothing below this line runs. The objection is discarded deliberately
+    # rather than shown as a caveat, because ADR-012's probe found the verifier objecting
+    # to a CORRECT zero-row query in 4 of 4 trials; a warning printed beside a right
+    # answer is worse than no warning, and the two VERIFY_SYSTEM defects behind that are
+    # still unapplied.
+    if not state.get("verify_enabled"):
+        # `grounding` is cleared rather than merely ignored. Today it cannot be set on
+        # this path, because `ground_check` is the only writer and the router never
+        # reaches it. That makes the suppression depend on ONE mechanism, the routing,
+        # while the objection suppression has this guard as well. A probe confirmed the
+        # asymmetry: routing `reading_enabled` through `ground_check` leaks a flag to the
+        # user even with this guard untouched. Clearing here is the second mechanism, and
+        # it is defensive in the same way as the stale-verdict check above.
+        return {**updates, "grounding": "", "next": "ok"}
+
     # Budgets are spent here, where the decision is made; the reason codes are recorded
     # by `generate_sql` and `summarize`, where the retry is actually performed.
     if verification is not None and verification.objection:
@@ -613,7 +633,9 @@ def _route_after_validate(state: State) -> list[str] | str:
     validation = state.get("validation")
     if not (validation and validation.ok):
         return "fail"
-    return ["execute", "verify"] if state.get("verify_enabled") else ["execute"]
+    if state.get("verify_enabled") or state.get("reading_enabled"):
+        return ["execute", "verify"]
+    return ["execute"]
 
 
 def _route_after_execute(state: State) -> str:
@@ -632,14 +654,26 @@ def _route_after_execute(state: State) -> str:
 
 
 def _route_after_summarize(state: State) -> str:
-    """With verification off, the answer goes straight to the chart.
+    """Three exits, one per configuration.
 
-    `ground_check` and `review` are skipped rather than made no-ops, so that
-    `RUNTIME_VERIFICATION=false` reproduces the pre-ADR-012 pipeline exactly: same nodes,
-    same calls, same stage breakdown. A comparison against a baseline that quietly ran
-    two extra nodes would not be a comparison.
+    With everything off, the answer goes straight to the chart. `ground_check` and
+    `review` are skipped rather than made no-ops, so that configuration reproduces the
+    pre-ADR-012 pipeline exactly: same nodes, same calls, same stage breakdown. A
+    comparison against a baseline that quietly ran two extra nodes would not be a
+    comparison, and runs 20 to 25 rest on that.
+
+    Reading-only (ADR-013) goes to `review` but not through `ground_check`, because
+    `review` is where the verifier's future is collected and there is nothing else that
+    collects it. It arrives with no `grounding` key set, so the re-summarise branch there
+    cannot fire, and the objection branch is guarded on `verify_enabled`. What reaches
+    `pick_chart` is therefore the same answer, from the same SQL, that the all-off path
+    would have produced.
     """
-    return "ground_check" if state.get("verify_enabled") else "pick_chart"
+    if state.get("verify_enabled"):
+        return "ground_check"
+    if state.get("reading_enabled"):
+        return "review"
+    return "pick_chart"
 
 
 def _route_after_review(state: State) -> str:
@@ -720,7 +754,7 @@ def build_graph():
     graph.add_conditional_edges(
         "summarize",
         _route_after_summarize,
-        {"ground_check": "ground_check", "pick_chart": "pick_chart"},
+        {"ground_check": "ground_check", "review": "review", "pick_chart": "pick_chart"},
     )
     graph.add_edge("ground_check", "review")
     graph.add_conditional_edges(
@@ -747,6 +781,7 @@ def ask(
     question: str,
     history: list[Turn] | None = None,
     verification: bool | None = None,
+    reading: bool | None = None,
 ) -> AgentResult:
     """Answer one question. This is the entry point for both the UI and the eval harness.
 
@@ -763,6 +798,10 @@ def ask(
         verification: Override for ADR-012's runtime verification. None uses
             `settings.runtime_verification`; False reproduces the pre-ADR-012 pipeline,
             which is what the comparison runs measure against.
+        reading: Override for ADR-013's plain-language reading. None uses
+            `settings.sql_reading`. Ignored when `verification` is on, which already
+            produces a reading. Setting BOTH to False is what reproduces runs 20 to 25's
+            off configuration exactly, including its call count and cost.
 
     Returns:
         An AgentResult. `question` is always what the user typed;
@@ -828,6 +867,9 @@ def ask(
                 "attempts": 0,
                 "verify_enabled": (
                     settings.runtime_verification if verification is None else verification
+                ),
+                "reading_enabled": (
+                    settings.sql_reading if reading is None else reading
                 ),
             }
         )

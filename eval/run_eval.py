@@ -210,8 +210,9 @@ def main() -> int:
     parser.add_argument(
         "--no-verification",
         action="store_true",
-        help="force ADR-012's runtime verification off, reproducing the pre-ADR-012 "
-        "pipeline. This is the baseline half of the with/without comparison.",
+        help="force ADR-012's runtime verification off. Note that this alone is NOT the "
+        "pre-ADR-012 baseline any more: pass --no-reading as well, because ADR-013's "
+        "reading defaults on and also calls the verifier.",
     )
     parser.add_argument(
         "--verification",
@@ -219,9 +220,23 @@ def main() -> int:
         help="force ADR-012's runtime verification on. Neither flag means follow "
         "RUNTIME_VERIFICATION, so a default run measures what the app actually does.",
     )
+    parser.add_argument(
+        "--no-reading",
+        action="store_true",
+        help="force ADR-013's plain-language reading off. With --no-verification this "
+        "reproduces runs 20 to 25's off configuration exactly, call count and cost "
+        "included.",
+    )
+    parser.add_argument(
+        "--reading",
+        action="store_true",
+        help="force ADR-013's reading on. Neither flag means follow SQL_READING.",
+    )
     args = parser.parse_args()
     if args.verification and args.no_verification:
         parser.error("--verification and --no-verification are mutually exclusive")
+    if args.reading and args.no_reading:
+        parser.error("--reading and --no-reading are mutually exclusive")
     # Defaults to the CONFIGURED value rather than to on. A harness whose no-flag default
     # differs from the app's would report the accuracy of a pipeline nobody runs, and it
     # would do so silently, which is the worst version of that bug.
@@ -231,6 +246,16 @@ def main() -> int:
         verification = False
     else:
         verification = settings.runtime_verification
+
+    # A second switch, resolved the same way and for the same reason. It is deliberately
+    # NOT implied by --no-verification: the two are independent in the app, so a harness
+    # that coupled them could not measure the configuration the app actually ships.
+    if args.reading:
+        reading = True
+    elif args.no_reading:
+        reading = False
+    else:
+        reading = settings.sql_reading
 
     # Validated up front, so a malformed case fails here rather than after the run has
     # already spent LLM calls on the cases preceding it.
@@ -261,7 +286,8 @@ def main() -> int:
     print(
         f"Running {len(items)} gold questions "
         f"({conversational} conversational, runtime verification "
-        f"{'ON' if verification else 'OFF'})...\n"
+        f"{'ON' if verification else 'OFF'}, reading "
+        f"{'ON' if reading else 'OFF'})...\n"
     )
     for item in items:
         # Conversational cases (ADR-011) replay their setup turns first. The setup turns
@@ -272,7 +298,7 @@ def main() -> int:
         history: list[Turn] = []
         setup_cost, setup_calls, setup_elapsed = 0.0, 0, 0.0
         for prior in item.prior_turns:
-            prior_result = ask(prior, history=history, verification=verification)
+            prior_result = ask(prior, history=history, verification=verification, reading=reading)
             history.append(
                 Turn(
                     question=prior_result.interpreted_question or prior,
@@ -283,7 +309,7 @@ def main() -> int:
             setup_calls += prior_result.llm_calls
             setup_elapsed += prior_result.elapsed_s
 
-        result = ask(item.question, history=history, verification=verification)
+        result = ask(item.question, history=history, verification=verification, reading=reading)
         passed, detail = scorers[item.category](item, result)
 
         # Groundedness is scored independently of category correctness: an answer can
@@ -316,7 +342,10 @@ def main() -> int:
             "reading": result.reading,
             "caveat": result.caveat,
             "grounding_flag": result.grounding_flag,
+            # BOTH switches, because a record that names one of two configuration
+            # dimensions cannot be compared against a record made under the other.
             "verification": verification,
+            "reading_enabled": reading,
         })
         print(f"  [{'PASS' if passed else 'FAIL'}] {item.id:<4} "
               f"{item.question[:58]:<58} {result.elapsed_s:>5.2f}s")

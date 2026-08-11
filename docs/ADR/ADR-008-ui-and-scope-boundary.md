@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-04
 - **Decision owner:** Insaf Ismath
-- **Related:** [ADR-002](ADR-002-fixed-path-graph-over-agent-loop.md), [ADR-005](ADR-005-deterministic-chart-selection.md)
+- **Related:** [ADR-002](ADR-002-fixed-path-graph-over-agent-loop.md), [ADR-005](ADR-005-deterministic-chart-selection.md), [ADR-011](ADR-011-bounded-multi-turn.md), [ADR-013](ADR-013-the-reading-without-the-verdict.md)
 
 ## Context
 
@@ -56,7 +56,9 @@ which is why it is the first item on the path to production rather than a UI fea
 both cost and latency, and it is genuinely useful, but it optimises a system whose correctness has
 not yet been established. Correctness first, then make it fast.
 
-**Multi-turn memory.** Every question is answered independently; "and what about last year?" is not
+**Multi-turn memory.** *Superseded on 2026-08-11 by [ADR-011](ADR-011-bounded-multi-turn.md), which
+built it. The paragraph below is the original deferral, kept as the record; see the addendum.*
+Every question is answered independently; "and what about last year?" is not
 resolved against the previous turn. This is the most defensible omission to *want* and the most
 expensive to do properly, because it turns SQL generation into a coreference problem and every
 ambiguity compounds across turns. LangGraph's checkpointing is the intended mechanism when this is
@@ -106,7 +108,33 @@ which is the opposite of the stated user — a non-technical operations manager.
 
 - Streamlit re-runs the script on interaction, which constrains how state is handled and would not
   scale to concurrent users. Correct for a single-reviewer demo; not a production serving model.
-- Single-turn only, which is the omission a live demo is most likely to expose — a reviewer's
+- Single-turn only, which is the omission a live demo is most likely to expose: a reviewer's
   natural second question is usually a follow-up. Better to state the boundary in advance than to
-  demonstrate it accidentally.
+  demonstrate it accidentally. *This prediction is the reason the omission was later closed;
+  [ADR-011](ADR-011-bounded-multi-turn.md) quotes this line as its own starting point. Superseded
+  2026-08-11, see the addendum.*
 - No accessibility, mobile, or internationalisation consideration whatsoever.
+
+## Addendum, 2026-08-11: the multi-turn omission was closed
+
+Two clauses above are no longer true of the shipped app, and both are marked in place rather
+than deleted, because the deferral was a correct decision at the time and the record of it is
+worth more than a tidy document.
+
+[ADR-011](ADR-011-bounded-multi-turn.md) added one rewrite node at the edge of the graph. A
+follow-up such as "and Rotterdam?" is now resolved against the previous turns, bounded to the
+last `HISTORY_TURNS` exchanges (default 3), carrying the earlier question and SQL and never the
+answer text or the returned rows. `app.py` prints the resolved form above the answer as
+"Interpreted as: ...", so a misreading is visible to the only person who can correct it. Five
+conversational cases sit in the gold set and are scored on every run.
+
+What did not change is the reason the deferral was defensible. The coreference problem is real,
+and ADR-011's answer to it is to bound the window and to keep everything downstream of the
+rewrite single-turn, rather than to give the graph a memory. The core is still stateless: the
+caller owns the conversation and the agent holds nothing between calls.
+
+Why it was built at all, given this ADR argued for leaving it out: the consequence clause above
+predicted that a live demo would expose the omission, and the remaining deliverable is a demo
+video. ADR-011 quotes that prediction as its starting point. A stated risk that then materialises
+in the one scenario it was stated about is a reason to act, not a reason to cite the original
+decision.
