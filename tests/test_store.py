@@ -13,55 +13,12 @@ from __future__ import annotations
 import threading
 import uuid
 
-import psycopg
 import pytest
-from psycopg import sql as pgsql
 
-from src.config import settings
 from src.models import AgentResult, ChartKind, ChartSpec, Outcome, QueryResult, RetryReason
 from src.store import Store, StoreError
 
 pytestmark = pytest.mark.integration
-
-
-def _dsn_for(database: str) -> str:
-    """The store DSN, pointed at a different database.
-
-    Rewriting one token is the whole reason a separate database is the right shape: in
-    production the same substitution points at a different host.
-    """
-    parts = [p for p in settings.store_dsn.split() if not p.startswith("dbname=")]
-    return " ".join([*parts, f"dbname={database}"])
-
-
-@pytest.fixture
-def store() -> Store:
-    """A Store on a throwaway database.
-
-    Created by the bootstrap superuser, because `app_rw` deliberately lacks CREATEDB and
-    therefore cannot make databases: the same privilege boundary the application relies on
-    applies to its own tests, which is the point.
-    """
-    name = f"ports_app_test_{uuid.uuid4().hex[:12]}"
-    with psycopg.connect(settings.admin_dsn, autocommit=True) as admin:
-        admin.execute(
-            pgsql.SQL("CREATE DATABASE {} OWNER app_rw").format(pgsql.Identifier(name))
-        )
-    try:
-        made = Store(dsn=_dsn_for(name))
-        yield made
-        made.close()
-    finally:
-        with psycopg.connect(settings.admin_dsn, autocommit=True) as admin:
-            # A lingering session would block the DROP, so any connection left behind by a
-            # failing test is terminated rather than waited on. Without this a single bad
-            # test hangs the suite instead of failing it.
-            admin.execute(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
-                " WHERE datname = %s AND pid <> pg_backend_pid()",
-                (name,),
-            )
-            admin.execute(pgsql.SQL("DROP DATABASE {}").format(pgsql.Identifier(name)))
 
 
 def _answer(**overrides) -> AgentResult:
@@ -271,12 +228,12 @@ def test_appending_to_a_conversation_that_does_not_exist_is_reported_clearly(sto
 
 
 # --- failure modes -----------------------------------------------------------------
-def test_a_missing_database_is_reported_with_the_remedy() -> None:
+def test_a_missing_database_is_reported_with_the_remedy(store_dsn_for) -> None:
     """`db/03_app_store.sql` runs only on the container's first boot, so an older data
     volume has no store database at all. That is an operator problem, and the error has to
     name the remedy rather than surfacing a bare connection failure."""
     with pytest.raises(StoreError) as raised:
-        Store(dsn=_dsn_for(f"definitely_absent_{uuid.uuid4().hex[:8]}"))
+        Store(dsn=store_dsn_for(f"definitely_absent_{uuid.uuid4().hex[:8]}"))
 
     message = str(raised.value)
     assert "03_app_store.sql" in message, "the error does not name the remedy"

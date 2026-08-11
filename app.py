@@ -2,14 +2,19 @@
 
 Deliberately thin. The UI exists to serve three things the brief actually assesses:
 
-* **auditability** — the SQL is one click away on every answer, because a client analyst
+* **auditability**: the SQL is one click away on every answer, because a client analyst
   must be able to check the agent's work rather than trust it;
-* **chart-type selection** — the rule-based choice is rendered, and the rule that fired
+* **chart-type selection**: the rule-based choice is rendered, and the rule that fired
   is shown, so the behaviour is inspectable rather than magic;
-* **latency** — measured and displayed per answer, not hidden.
+* **latency**: measured and displayed per answer, not hidden.
 
 Everything else is default Streamlit. Time spent on theming is time not spent on the
 eval harness.
+
+This file renders and decides nothing. What is said beside an answer lives in
+`src/notices.py`; which conversation is open, and the order in which a turn is saved and
+shown, live in `src/conversations.py`. Both are there so they can be asserted without a
+browser, because this file has no test of its own.
 """
 
 from __future__ import annotations
@@ -17,9 +22,11 @@ from __future__ import annotations
 import streamlit as st
 
 from src.charts import metric_fields, to_dataframe
-from src.models import AgentResult, ChartKind, Outcome
+from src.conversations import STORE_FAILURES, ChatSession, ChatTurn
+from src.models import ChartKind, Outcome
 from src.notices import Level, answer_notices
 from src.schema import get_schema_summary
+from src.store import Store
 
 st.set_page_config(page_title="Conversational Data Analyst", layout="wide")
 
@@ -63,6 +70,10 @@ _OUTCOME_BADGE = {
     Outcome.ERROR: ("⚠️", "Error"),
 }
 
+# How many saved chats the sidebar lists. The store will hold more; this is a demo sidebar
+# and a list longer than the screen is a scroll bar, not a feature.
+_SIDEBAR_CHATS = 20
+
 
 @st.cache_data(show_spinner=False)
 def data_coverage() -> str | None:
@@ -105,6 +116,30 @@ def _agent():
     return ask
 
 
+@st.cache_resource
+def _store() -> tuple[Store | None, str | None]:
+    """The conversation store, or the reason there is none (ADR-014).
+
+    cache_resource because `Store` holds one live connection guarded by a lock, and is
+    built to be shared: opening a connection per browser session would spend the
+    `CONNECTION LIMIT 10` that `app_rw` carries.
+
+    A failure here is returned rather than raised. `db/03_app_store.sql` runs only on the
+    container's first boot, so anyone with an older data volume has no store database, and
+    the chat itself does not depend on it. The message already names the remedy.
+
+    `STORE_FAILURES` rather than `StoreError` alone because construction applies the table
+    DDL: `Store._live` turns an unreachable server into a `StoreError`, but a privilege or
+    schema failure inside `_ensure_tables` arrives as itself. The tuple is imported rather
+    than repeated so this and `src/conversations.py` cannot disagree about what a store
+    failure is.
+    """
+    try:
+        return Store(), None
+    except STORE_FAILURES as exc:
+        return None, str(exc)
+
+
 def render_chart(result, chart) -> None:
     """Render the chart the rules chose (ADR-005). This function makes no decisions."""
     if chart is None or chart.kind == ChartKind.NONE:
@@ -129,30 +164,9 @@ def render_chart(result, chart) -> None:
         st.dataframe(frame, use_container_width=True, hide_index=True)
 
 
-def conversation_history() -> list:
-    """The prior turns the rewrite node is allowed to see (ADR-011).
-
-    Question and SQL only, never the answer text or the rows. The interpreted form of an
-    earlier follow-up is preferred over what was typed, so that a chain resolves: after
-    "and Rotterdam?" has become "how many port calls at Rotterdam in 2025?", the turn
-    after it can refer back to something that stands on its own.
-
-    Trimming to the window happens in the agent; this passes what the session holds.
-    """
-    from src.models import Turn
-
-    return [
-        Turn(
-            question=entry["result"].interpreted_question or entry["question"],
-            sql=entry["result"].sql or "",
-        )
-        for entry in st.session_state.history
-    ]
-
-
-def render_answer(entry: dict) -> None:
+def render_answer(turn: ChatTurn) -> None:
     """Render one assistant turn: answer, chart, SQL, then the metadata caption."""
-    result = entry["result"]
+    result = turn.result
 
     badge = _OUTCOME_BADGE.get(result.outcome)
     if badge:
@@ -198,6 +212,12 @@ def render_answer(entry: dict) -> None:
         bits.append(f"retried: {named}")
     st.caption(" · ".join(bits))
 
+    # Said rather than hidden. The answer above is real and was paid for; what failed is
+    # the bookkeeping, and a user who reloads expecting to find this turn should be told
+    # now instead of discovering the gap later.
+    if not turn.saved:
+        st.caption("Not saved to history: the conversation store could not be written.")
+
     # Latency attributed to the stage that spent it. Shown behind an expander because a
     # user wants the total; whoever is deciding what to optimise wants the split, and
     # otherwise has to guess which of the three model calls dominates.
@@ -213,6 +233,85 @@ def render_answer(entry: dict) -> None:
             )
 
 
+# --- session ----------------------------------------------------------------------
+# The store is shared across browser sessions; the ChatSession is not. Which conversation
+# is open is one user's state, so it belongs in st.session_state rather than in the cache.
+_store_handle, _store_error = _store()
+if "session" not in st.session_state:
+    st.session_state.session = ChatSession(store=_store_handle)
+session: ChatSession = st.session_state.session
+
+# Re-pointed on every rerun rather than only at construction. The handle is a process-wide
+# cached resource and the session outlives any single rerun, so a session built while the
+# store was unreachable would otherwise hold `None` for as long as the browser tab stays
+# open, and would render as "no saved chats" rather than as a store that is down.
+session.store = _store_handle
+
+
+def render_conversation_list() -> None:
+    """The saved chats, newest activity first, with rename and delete on each.
+
+    Every action ends in `st.rerun()`. The sidebar is drawn before the chat pane, so a
+    click handled here would otherwise leave the list and the pane disagreeing for one
+    frame: the deleted conversation would still be listed, or the reopened one would show
+    its old title. Re-running is cheaper to reason about than ordering the redraws.
+    """
+    if st.button("New chat", use_container_width=True, type="primary"):
+        session.start_new()
+        st.rerun()
+
+    # A click that did nothing says so. The store can fall over between drawing this list
+    # and acting on it, and a button that silently fails is read as a broken button.
+    if session.last_error:
+        st.warning(session.last_error)
+
+    if _store_error:
+        st.caption("History is unavailable, so this chat will not be saved.")
+        with st.expander("Why"):
+            st.caption(_store_error)
+        return
+
+    conversations = session.list_conversations(limit=_SIDEBAR_CHATS)
+    if not conversations:
+        st.caption("Saved chats appear here once you ask something.")
+        return
+
+    for summary in conversations:
+        open_column, edit_column = st.columns([5, 1], vertical_alignment="center")
+        active = summary.id == session.conversation_id
+        if open_column.button(
+            summary.title,
+            key=f"open{summary.id}",
+            use_container_width=True,
+            # The open conversation is marked rather than hidden, so the list still shows
+            # where you are after a reopen.
+            type="secondary" if not active else "tertiary",
+            disabled=active,
+        ):
+            session.open(summary.id)
+            st.rerun()
+
+        with edit_column.popover("Edit", use_container_width=True):
+            # A form, so the rename is submitted once rather than on every keystroke.
+            with st.form(key=f"rename{summary.id}", border=False):
+                new_title = st.text_input("Title", value=summary.title)
+                if st.form_submit_button("Rename", use_container_width=True):
+                    if session.rename(summary.id, new_title):
+                        st.rerun()
+                    elif session.last_error:
+                        # The store failed. Re-running surfaces it beside the list, where
+                        # the other navigation failures are reported.
+                        st.rerun()
+                    else:
+                        st.caption("A chat needs a title.")
+            # No confirmation step: opening this popover is already the deliberate act,
+            # and a modal for one row of a demo sidebar is more interface than the
+            # decision deserves.
+            if st.button("Delete", key=f"del{summary.id}", use_container_width=True):
+                session.delete(summary.id)
+                st.rerun()
+
+
 # --- sidebar ----------------------------------------------------------------------
 with st.sidebar:
     st.header("Conversational Data Analyst")
@@ -220,6 +319,9 @@ with st.sidebar:
         "Ask questions in plain English about port and terminal operations. "
         "The agent writes SQL, checks it, runs it read-only, and explains the result."
     )
+
+    st.subheader("Chats")
+    render_conversation_list()
 
     st.subheader("What's in here")
     st.write(DATA_DESCRIPTION)
@@ -257,16 +359,13 @@ with st.sidebar:
     )
 
 # --- chat -------------------------------------------------------------------------
-if "history" not in st.session_state:
-    st.session_state.history = []
-
 st.title("Conversational Data Analyst")
 
-for entry in st.session_state.history:
+for past in session.turns:
     with st.chat_message("user"):
-        st.markdown(entry["question"])
+        st.markdown(past.question)
     with st.chat_message("assistant"):
-        render_answer(entry)
+        render_answer(past)
 
 question = st.chat_input("Ask about vessels, terminals, cranes or container moves...")
 if not question and st.session_state.get("pending"):
@@ -277,29 +376,9 @@ if question:
         st.markdown(question)
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            try:
-                # History is read BEFORE this turn is appended, and it is owned by the
-                # session rather than by the agent: the graph holds no state between
-                # calls, which is what keeps the eval harness and the UI on one path.
-                result = _agent()(question, history=conversation_history())
-            except Exception as exc:  # noqa: BLE001
-                # ask() converts the failures it anticipates into an ERROR outcome, so
-                # reaching here means an unanticipated one: a dropped database connection,
-                # an import-time fault in a lazily loaded dependency, a bug. Streamlit's
-                # default for an uncaught exception is to print the traceback into the
-                # page, which shows a non-technical user a stack trace and shows anyone
-                # else the internal structure of the app. Converting it to the same
-                # AgentResult shape the rest of the UI already renders keeps one failure
-                # presentation instead of two.
-                result = AgentResult(
-                    question=question,
-                    outcome=Outcome.ERROR,
-                    answer=(
-                        "Something failed while answering that. The database or the model "
-                        "provider is the usual cause. The error is in the server log."
-                    ),
-                    error=f"{type(exc).__name__}: {exc}",
-                )
-        entry = {"question": question, "result": result}
-        render_answer(entry)
-    st.session_state.history.append(entry)
+            # One call, and it returns a turn that is already saved and already in the
+            # pane. The order matters and is asserted in tests/test_conversations.py: this
+            # file used to render first and record afterwards, so a click landing during
+            # rendering preempted the rerun and lost a turn the user had paid for.
+            turn = session.answer(question, _agent())
+        render_answer(turn)

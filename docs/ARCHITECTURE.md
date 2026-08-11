@@ -888,6 +888,7 @@ visible, each mapping to an assessed behaviour:
 | Chart rendered from a typed `ChartSpec`, plus the rule that fired                  | Chart-type selection                          |
 | A "What was measured" line in plain language (ADR-013)                              | Groundedness, for a reader who cannot audit SQL |
 | Collapsed "View SQL" expander + `1.8s · 3 LLM calls · 6 rows · $0.0099` caption | Auditability, latency, cost                   |
+| Sidebar chat list, with New chat, reopen, rename and delete                          | Conversations that survive a reload (ADR-014) |
 
 Outcomes that are not a normal answer carry a visible badge, so a refusal or clarification is
 never mistaken for an answer.
@@ -912,6 +913,27 @@ read the render function or run the app. As a pure function over `AgentResult` i
 in `tests/test_notices.py` without a database, a model or a browser, and reversing the order
 fails two tests. It also keeps [ADR-008](ADR/ADR-008-ui-and-scope-boundary.md)'s "the UI is
 thin" claim true as the UI grows, rather than slowly aspirational.
+
+**Which conversation is open, and when a turn is saved, is decided in `src/conversations.py`
+for the same reason.** The ordering there was a real defect rather than a hypothetical one:
+`app.py` rendered the answer and appended it to history afterwards, so a click landing during
+rendering preempted the rerun and discarded a turn the user had already paid for. The view now
+makes one call, `session.answer(question, ask)`, which asks, persists, then returns the turn to
+render, so there is no order left for the view to get wrong. `tests/test_conversations.py`
+asserts durability at the moment the turn is returned, which is the only point before the
+caller could render it.
+
+A save failure never costs an answer. `StoreError` is swallowed into a `saved` flag on the
+turn, and the interface says the turn was not saved rather than replacing an answer with an
+error about bookkeeping. The same reasoning makes the store optional: `db/03_app_store.sql`
+runs only on the container's first boot, so an older data volume has no store database, and
+that degrades to a caption in the sidebar instead of a page that will not load.
+
+**`app.py` now has a test.** `tests/test_app_smoke.py` runs the page under Streamlit's own
+`AppTest` harness against a throwaway store, which is what covers the part that only breaks
+when the page actually executes: that a saved chat reopens carrying its table and chart, and
+that New chat clears the pane without deleting anything. No question is submitted, so no model
+is called.
 
 **The SQL expander is the load-bearing UI decision.** It converts the system from something a
 user must trust into something a user can check, and it is the human-in-the-loop story in this
@@ -989,6 +1011,7 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── schema.py               Introspection to cached prompt context
 │   ├── charts.py               Rule-based chart selection
 │   ├── notices.py              Which captions and warnings sit beside an answer, and in what order
+│   ├── conversations.py        Which chat is open, and the order a turn is saved and shown
 │   ├── store.py                Conversations and telemetry, in their own database (ADR-014)
 │   ├── grounding.py            Whether every figure in an answer appears in the rows
 │   ├── quality.py              Code-detected result-shape triggers (ADR-012)
@@ -1001,7 +1024,7 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── gold.py                 Gold-set schema; validated at load
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers
-├── tests/                      762 tests
+├── tests/                      798 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Fourteen decision records
@@ -1021,7 +1044,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 762 tests
+### Test suite: 798 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
@@ -1040,6 +1063,8 @@ streamlit run app.py
 | `test_schema.py`                | 12    | Catalog introspection; composed identifiers are quoted |
 | `test_schema_labels.py`         | 12    | Turning a table's COMMENT ON into a sidebar label, including the split it gets wrong |
 | `test_notices.py`               | 9     | Which captions and warnings sit beside an answer, and their order |
+| `test_conversations.py`         | 31    | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one |
+| `test_app_smoke.py`             | 5     | `app.py` under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption |
 | `test_store.py`                 | 17    | Conversation persistence: round trip, ordering, cascade delete, concurrency |
 | `test_store_isolation.py`       | 6     | That the agent's role cannot connect to the store (ADR-014) |
 | `test_store_titles.py`          | 5     | Deriving a chat title from its first question |
@@ -1051,7 +1076,7 @@ streamlit run app.py
 Integration tests are marked, so unit tests run without a database:
 
 ```bash
-pytest -m "not integration"   # 603 unit tests, no database, no network
+pytest -m "not integration"   # 609 unit tests, no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
 python eval/run_eval.py                                # shipped config, 10 to 15 min

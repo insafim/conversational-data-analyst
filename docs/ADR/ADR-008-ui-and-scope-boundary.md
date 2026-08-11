@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-04
 - **Decision owner:** Insaf Ismath
-- **Related:** [ADR-002](ADR-002-fixed-path-graph-over-agent-loop.md), [ADR-005](ADR-005-deterministic-chart-selection.md), [ADR-011](ADR-011-bounded-multi-turn.md), [ADR-013](ADR-013-the-reading-without-the-verdict.md)
+- **Related:** [ADR-002](ADR-002-fixed-path-graph-over-agent-loop.md), [ADR-005](ADR-005-deterministic-chart-selection.md), [ADR-011](ADR-011-bounded-multi-turn.md), [ADR-013](ADR-013-the-reading-without-the-verdict.md), [ADR-014](ADR-014-conversation-store.md)
 
 ## Context
 
@@ -138,3 +138,58 @@ predicted that a live demo would expose the omission, and the remaining delivera
 video. ADR-011 quotes that prediction as its starting point. A stated risk that then materialises
 in the one scenario it was stated about is a reason to act, not a reason to cite the original
 decision.
+
+## Addendum, 2026-08-12: saved chats, and one ordering defect the thin-UI rule was hiding
+
+The element table above gains a row: a sidebar list of saved chats, with New chat, reopen,
+rename and delete. The store behind it, and the reasoning for putting it in its own
+database, are [ADR-014](ADR-014-conversation-store.md); this addendum records only what
+reached the interface and what it cost.
+
+**Why this is not a breach of the scope boundary this ADR exists to defend.** The brief
+asks for a chat, and a chat that forgets everything when the tab is closed demonstrates a
+chat rather than being one. The same argument [ADR-011](ADR-011-bounded-multi-turn.md) made
+about multi-turn applies here, and the work is wiring a store that was already built and
+already justified, not a new capability. The boundary that still holds is the one in the
+alternatives above: this is a sidebar list in Streamlit, not a React front end.
+
+**The defect worth recording.** Before this change `app.py` rendered an answer and appended
+it to session history on the line after. Streamlit reruns the script on any widget
+interaction, so a click landing while the answer was still rendering would preempt the
+rerun before the append executed, and the turn would be gone from a pane the user had
+already paid a model call for. Nothing about reading the file made that visible, and the
+ordering was correct in every reading that did not model the rerun.
+
+So the sequence moved into `src/conversations.py`, alongside `src/notices.py` and for the
+same reason. `app.py` now makes one call, `session.answer(question, ask)`, which asks,
+persists, and then returns the turn to be rendered. There is no second call for the view to
+put in the wrong order. `tests/test_conversations.py` asserts that the turn is durable at
+the moment it is returned, which is the last instant before the caller could render it.
+
+**A save failure does not cost an answer.** A store failure becomes a flag on the turn and
+a caption saying it was not saved, because the answer is real and the failure is
+bookkeeping. The same reasoning makes the store optional: `db/03_app_store.sql` runs only
+on a container's first boot, so a reviewer with an older data volume has no store database,
+and that degrades to a caption rather than a page that will not load.
+
+Two corrections to that rule came out of the coherence review, and both were real. The
+first is that reopening, renaming and deleting did not degrade at all: they called the
+store directly, so a connection lost between drawing the sidebar and clicking it would
+reach the page as a traceback. They now report the failure beside the list and leave the
+open conversation exactly as it was, since losing your place because a different
+conversation could not be loaded is a worse outcome than the click doing nothing.
+
+The second is narrower and easier to miss. `Store._run` converts a dropped connection into
+`StoreError` but re-raises every other database error as itself, and says so: callers
+needing the friendlier type wrap it at their own boundary. Catching only `StoreError`
+therefore left a privilege error or a constraint violation propagating through a handler
+written to stop exactly that. `src/conversations.py` is that boundary and now catches both.
+The distinction is invisible when the store is simply absent, which is the failure that
+gets tested by hand, and it is the reason the audit was worth running.
+
+**`app.py` acquired its first test.** This file had none, which is part of why the ordering
+defect survived: no test executed the page, so the only way to reach it was to click at the
+wrong moment. `tests/test_app_smoke.py` runs the page under Streamlit's `AppTest` harness
+against a throwaway store and covers what only breaks when the page executes, including
+that a reopened chat comes back with its table and chart rather than as text. It submits no
+question, so it calls no model and spends nothing.
