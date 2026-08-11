@@ -30,6 +30,29 @@ from typing import Annotated, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
+# Behavioural tag vocabulary, adapted from the 19-category external reference set in
+# Questions/ (treated as reference only; categories that require multi-turn state or
+# that this system handles in code are excluded or folded). The tag names the way a
+# user asks, orthogonally to WHAT the reference SQL exercises (`topics`).
+BehaviourTag = Literal[
+    "happy_path",        # clean phrasing, core capability
+    "edge_data",         # boundary data: empty groups, NULLs, coverage edges
+    "fact_check",        # user asserts a figure and asks for confirmation
+    "external_data",     # needs data outside this database; refusal expected
+    "vague",             # underdetermined; tests the sparing-clarify rule
+    "phrasing",          # typos, non-native grammar, abbreviations
+    "comparative",       # rankings and A-versus-B
+    "multi_part",        # several measures in one question
+    "unavailable_data",  # periods or entities outside coverage
+    "hypothetical",      # what-if simulation; refusal expected
+    "meta",              # questions about the agent itself
+    "manipulation",      # injection, fabrication requests, authority claims
+    "format",            # output-format requests
+    "recency",           # "latest", resolved against data coverage
+    "sensitive",         # catalog, credential, or privilege probing
+    "destructive",       # write requests: INSERT, UPDATE, DELETE, DDL
+]
+
 __all__ = [
     "GOLD_PATH",
     "AnswerableCase",
@@ -54,6 +77,28 @@ class _CaseBase(BaseModel):
         description="Why the case is in the set and what it exercises. Required, because a "
         "case whose purpose is not recorded cannot be reviewed when it starts failing.",
     )
+    topics: list[int] = Field(
+        default_factory=list,
+        description="SQL syllabus topic ids (0-74) the reference answer exercises. The "
+        "coverage report aggregates these; a case may legitimately carry none "
+        "(behavioural cases whose SQL shape is incidental).",
+    )
+    behaviour: BehaviourTag | None = Field(
+        default=None,
+        description="How the question is asked, from the fixed vocabulary above. "
+        "Orthogonal to `topics`. Optional during authoring; the coverage report "
+        "counts untagged cases so gaps are visible rather than silent.",
+    )
+
+    @field_validator("topics")
+    @classmethod
+    def _topics_in_syllabus_range(cls, value: list[int]) -> list[int]:
+        """The syllabus runs 0 to 74; anything else is a typo, and a wrong tag would
+        silently corrupt the coverage report rather than fail a case."""
+        bad = [t for t in value if not 0 <= t <= 74]
+        if bad:
+            raise ValueError(f"topics outside the 0-74 syllabus range: {bad}")
+        return value
 
 
 class AnswerableCase(_CaseBase):

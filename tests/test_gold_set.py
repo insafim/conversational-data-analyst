@@ -32,8 +32,11 @@ CASES = load_gold_set()
 
 # Counts quoted in README.md and docs/ARCHITECTURE.md. Pinned so that adding a case
 # without updating those documents fails here instead of leaving them stale.
-EXPECTED_TOTAL = 36
-EXPECTED_BY_CATEGORY = {"answerable": 28, "ambiguous": 3, "adversarial": 5}
+# Expanded 2026-08-10 (ADR-010): 36 to 100, syllabus- and behaviour-tagged; then to 103
+# with the beyond-catalog tranche (INTERSECT, COALESCE, EXTRACT) after baseline runs
+# 15-17 were recorded against the frozen 100-case set.
+EXPECTED_TOTAL = 103
+EXPECTED_BY_CATEGORY = {"answerable": 73, "ambiguous": 12, "adversarial": 18}
 
 
 def test_gold_set_loads_and_validates():
@@ -133,6 +136,52 @@ def test_unknown_category_is_rejected(tmp_path):
   category: speculative
   question: Anything?
   note: Not a real category.
+""")
+    with pytest.raises(ValidationError):
+        load_gold_set(path)
+
+
+def test_topic_outside_syllabus_range_is_rejected(tmp_path):
+    """The syllabus runs 0-74. An out-of-range tag would not fail a run; it would
+    silently corrupt the coverage report, which is why the loader must refuse it."""
+    path = _write(tmp_path, """
+- id: x01
+  category: answerable
+  question: How many port calls are there?
+  ordered: false
+  note: Topic 75 does not exist.
+  topics: [75]
+  gold_sql: SELECT 1
+""")
+    with pytest.raises(ValidationError):
+        load_gold_set(path)
+
+
+def test_negative_topic_is_rejected(tmp_path):
+    path = _write(tmp_path, """
+- id: x01
+  category: answerable
+  question: How many port calls are there?
+  ordered: false
+  note: Negative topic id.
+  topics: [-1]
+  gold_sql: SELECT 1
+""")
+    with pytest.raises(ValidationError):
+        load_gold_set(path)
+
+
+def test_unknown_behaviour_tag_is_rejected(tmp_path):
+    """`behaviour` is a Literal; a typo like `happypath` must fail at load, not
+    silently become an unreported category in the coverage summary."""
+    path = _write(tmp_path, """
+- id: x01
+  category: answerable
+  question: How many port calls are there?
+  ordered: false
+  note: Behaviour tag not in the vocabulary.
+  behaviour: happypath
+  gold_sql: SELECT 1
 """)
     with pytest.raises(ValidationError):
         load_gold_set(path)
