@@ -93,8 +93,15 @@ class Settings:
             # pipeline with and without them and attribute the difference. "off"
             # reproduces the pre-ADR-012 baseline (runs 15 to 19) exactly, which is what
             # makes the comparison a comparison rather than two unrelated numbers.
-            runtime_verification=os.getenv("RUNTIME_VERIFICATION", "true").lower()
-            not in ("0", "false", "no", "off"),
+            # Defaults OFF, and the default is a measured decision rather than a
+            # preference. Runs 20 to 25 alternated the feature on and off across the
+            # 108-case set: groundedness rose (98.7% to 100% against 96.0% to 97.4%) and
+            # execution accuracy fell by more (89.6% to 92.2% against 93.5% to 94.8%),
+            # with every regression carrying a verifier_objection reason code. The
+            # machinery, the switch and the evidence all stay; the default follows the
+            # measurement. See ADR-012's addendum.
+            runtime_verification=os.getenv("RUNTIME_VERIFICATION", "false").lower()
+            in ("1", "true", "yes", "on"),
         )
 
 

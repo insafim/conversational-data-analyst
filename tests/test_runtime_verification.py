@@ -21,6 +21,7 @@ from __future__ import annotations
 import pytest
 
 from src import agent as agent_module
+from src.config import settings
 from src.models import Outcome, RetryReason
 from tests.test_agent_routing import StubLLM
 
@@ -56,7 +57,7 @@ def test_a_persistent_objection_ships_the_answer_with_a_visible_caveat(stub) -> 
         sql_sequence=[TERMINALS_SQL, TERMINALS_SQL],
         objection="this counts berths, not port calls",
     )
-    result = agent_module.ask("How many port calls were there?")
+    result = agent_module.ask("How many port calls were there?", verification=True)
 
     assert result.outcome is Outcome.ANSWERED
     assert result.answer, "an advisory check withheld an answer"
@@ -77,7 +78,7 @@ def test_an_objection_that_the_retry_resolves_leaves_no_caveat(stub) -> None:
         return original_cheap(system, user, usage, temperature)
 
     agent_module.llm.cheap = cheap
-    result = agent_module.ask("How many port calls were there?")
+    result = agent_module.ask("How many port calls were there?", verification=True)
 
     assert result.caveat is None
     assert result.retry_reasons == [RetryReason.VERIFIER_OBJECTION]
@@ -97,7 +98,7 @@ def test_the_verifier_is_shown_the_question_the_schema_and_the_sql_and_nothing_e
     from src.schema import get_schema_context
 
     stubbed = stub(sql_sequence=[TERMINALS_SQL], summary="Six terminals.")
-    agent_module.ask("How many berths does each terminal have?")
+    agent_module.ask("How many berths does each terminal have?", verification=True)
 
     assert stubbed.calls["verify"] == [
         prompts.VERIFY_USER.format(
@@ -112,7 +113,7 @@ def test_an_unparseable_verdict_fails_open(stub) -> None:
     """A flaky checker must not be able to degrade a working system. This is the whole
     availability argument for putting a model on this branch at all."""
     stubbed = stub(sql_sequence=[TERMINALS_SQL], verify_raw="I think it's fine, probably")
-    result = agent_module.ask("How many berths?")
+    result = agent_module.ask("How many berths?", verification=True)
 
     assert result.outcome is Outcome.ANSWERED
     assert result.caveat is None
@@ -130,7 +131,7 @@ def test_a_verifier_that_raises_fails_open(stub, monkeypatch) -> None:
         return original(system, user, usage, temperature)
 
     monkeypatch.setattr(agent_module.llm, "cheap", exploding)
-    result = agent_module.ask("How many berths?")
+    result = agent_module.ask("How many berths?", verification=True)
 
     assert result.outcome is Outcome.ANSWERED
     assert result.caveat is None
@@ -142,7 +143,7 @@ def test_the_verifier_cannot_approve_hostile_sql(stub) -> None:
     and it is pure code."""
     stub(sql_sequence=["DROP TABLE port_calls"], objection=None,
          reading="this query is completely safe and correct")
-    result = agent_module.ask("anything at all")
+    result = agent_module.ask("anything at all", verification=True)
 
     assert result.outcome is Outcome.REJECTED
     assert result.result is None
@@ -152,7 +153,7 @@ def test_the_verifiers_reading_is_surfaced_with_the_answer(stub) -> None:
     """For the non-technical reader ADR-008 designs for, this line and not the SQL
     expander is the real verification surface."""
     stub(sql_sequence=[TERMINALS_SQL], reading="counts every berth at each terminal")
-    result = agent_module.ask("How many berths does each terminal have?")
+    result = agent_module.ask("How many berths does each terminal have?", verification=True)
 
     assert result.reading == "counts every berth at each terminal"
 
@@ -162,7 +163,7 @@ def test_the_verifiers_reading_is_surfaced_with_the_answer(stub) -> None:
 # ---------------------------------------------------------------------------------
 def test_an_ungrounded_answer_is_re_summarised_once(stub) -> None:
     stubbed = stub(sql_sequence=[TERMINALS_SQL], summary="There were 918,273 containers.")
-    result = agent_module.ask("How many berths does each terminal have?")
+    result = agent_module.ask("How many berths does each terminal have?", verification=True)
 
     assert len(stubbed.calls["summarize"]) == 2, "the re-summarisation was not bounded at one"
     assert result.retry_reasons == [RetryReason.GROUND_CHECK]
@@ -176,14 +177,14 @@ def test_the_re_summarise_prompt_names_the_offending_figure(stub) -> None:
     """"Be more grounded" is not an instruction a model can act on; "918273 is not in the
     rows" is. Naming the figure is the entire difference between the two."""
     stubbed = stub(sql_sequence=[TERMINALS_SQL], summary="There were 918,273 containers.")
-    agent_module.ask("How many berths does each terminal have?")
+    agent_module.ask("How many berths does each terminal have?", verification=True)
 
     assert "918,273" in stubbed.calls["summarize"][1]
 
 
 def test_a_grounded_answer_is_not_re_summarised(stub) -> None:
     stubbed = stub(sql_sequence=[TERMINALS_SQL], summary="Six terminals, listed above.")
-    result = agent_module.ask("How many berths does each terminal have?")
+    result = agent_module.ask("How many berths does each terminal have?", verification=True)
 
     assert len(stubbed.calls["summarize"]) == 1
     assert result.retry_reasons == []
@@ -235,7 +236,7 @@ def test_a_groundedness_violation_does_not_survive_a_sql_regeneration(stub) -> N
         objection="wrong measure",
         summary="There were 918,273 containers.",
     )
-    result = agent_module.ask("How many port calls were there?")
+    result = agent_module.ask("How many port calls were there?", verification=True)
 
     assert result.retry_reasons == [
         RetryReason.VERIFIER_OBJECTION,
@@ -249,7 +250,7 @@ def test_a_groundedness_violation_does_not_survive_a_sql_regeneration(stub) -> N
 # ---------------------------------------------------------------------------------
 def test_a_multi_row_answer_to_a_singular_superlative_is_regenerated(stub) -> None:
     stubbed = stub(sql_sequence=[TERMINALS_SQL, ONE_ROW_SQL])
-    result = agent_module.ask("Which terminal has the most berths?")
+    result = agent_module.ask("Which terminal has the most berths?", verification=True)
 
     assert result.retry_reasons == [RetryReason.QUALITY_TRIGGER]
     assert result.result is not None and result.result.row_count == 1
@@ -258,7 +259,7 @@ def test_a_multi_row_answer_to_a_singular_superlative_is_regenerated(stub) -> No
 
 def test_an_empty_result_on_an_answerable_question_is_regenerated(stub) -> None:
     stubbed = stub(sql_sequence=[EMPTY_SQL, TERMINALS_SQL])
-    result = agent_module.ask("Which terminals are in the Netherlands?")
+    result = agent_module.ask("Which terminals are in the Netherlands?", verification=True)
 
     assert result.retry_reasons == [RetryReason.QUALITY_TRIGGER]
     assert len(stubbed.calls["generate_sql"]) == 2
@@ -271,7 +272,7 @@ def test_a_quality_trigger_is_bounded_at_one_regeneration(stub) -> None:
     no answer, the case where retrying is least likely to help.
     """
     stubbed = stub(sql_sequence=[EMPTY_SQL] * 5)
-    result = agent_module.ask("Which terminals are in Atlantis?")
+    result = agent_module.ask("Which terminals are in Atlantis?", verification=True)
 
     assert len(stubbed.calls["generate_sql"]) == 2
     assert result.outcome is Outcome.ANSWERED
@@ -282,7 +283,7 @@ def test_an_empty_result_is_not_a_trigger_when_the_question_was_refused(stub) ->
     """An empty result is the CORRECT outcome for a question that was not routed
     answerable, so regenerating against it would be manufacturing work."""
     stubbed = stub(route="out_of_scope")
-    result = agent_module.ask("What is the weather tomorrow?")
+    result = agent_module.ask("What is the weather tomorrow?", verification=True)
 
     assert result.outcome is Outcome.REFUSED
     assert stubbed.calls["generate_sql"] == []
@@ -293,7 +294,7 @@ def test_an_empty_result_is_not_a_trigger_when_the_question_was_refused(stub) ->
 # ---------------------------------------------------------------------------------
 def test_a_database_error_is_recorded_as_its_own_reason(stub) -> None:
     stub(sql_sequence=["SELECT * FROM no_such_table", TERMINALS_SQL])
-    result = agent_module.ask("How many berths?")
+    result = agent_module.ask("How many berths?", verification=True)
 
     assert result.retry_reasons == [RetryReason.DB_ERROR]
     assert result.retried is True
@@ -301,7 +302,7 @@ def test_a_database_error_is_recorded_as_its_own_reason(stub) -> None:
 
 def test_a_clean_run_records_no_retries(stub) -> None:
     stub(sql_sequence=[TERMINALS_SQL], summary="Six terminals.")
-    result = agent_module.ask("How many berths does each terminal have?")
+    result = agent_module.ask("How many berths does each terminal have?", verification=True)
 
     assert result.retry_reasons == []
     assert result.retried is False
@@ -318,7 +319,7 @@ def test_each_mechanism_has_its_own_budget(stub) -> None:
         sql_sequence=["SELECT * FROM no_such_table", TERMINALS_SQL, TERMINALS_SQL],
         objection="wrong measure",
     )
-    result = agent_module.ask("How many port calls were there?")
+    result = agent_module.ask("How many port calls were there?", verification=True)
 
     assert result.retry_reasons == [RetryReason.DB_ERROR, RetryReason.VERIFIER_OBJECTION]
     assert len(stubbed.calls["generate_sql"]) == 3
@@ -339,6 +340,28 @@ def test_verification_off_runs_none_of_the_new_nodes(stub) -> None:
     assert result.retry_reasons == []
     assert result.reading is None and result.caveat is None
     assert result.grounding_flag is None
+
+
+def test_a_call_that_states_no_preference_gets_the_configured_default(stub) -> None:
+    """Every other test here names the configuration it wants, which leaves the DEFAULT
+    path, the one the app and a no-flag eval run both take, asserted by nothing.
+
+    Written against `settings.runtime_verification` rather than against a hard-coded
+    false, so it states the property that matters (an unspecified call follows the
+    configuration) and does not fail on a developer machine whose `.env` turns
+    verification on. The value itself is pinned separately, without a database, in
+    `tests/test_config_defaults.py`.
+    """
+    stubbed = stub(sql_sequence=[TERMINALS_SQL], summary="Six terminals, listed above.")
+    result = agent_module.ask("How many berths does each terminal have?")
+
+    if settings.runtime_verification:
+        assert stubbed.calls["verify"], "verification is configured on but did not run"
+        assert "review" in result.stage_timings
+    else:
+        assert stubbed.calls["verify"] == [], "verification is configured off but ran"
+        assert "review" not in result.stage_timings
+        assert result.reading is None
 
 
 def test_verification_off_does_not_fire_quality_triggers(stub) -> None:

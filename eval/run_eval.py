@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from eval.gold import AmbiguousCase, AnswerableCase, GoldCase, load_gold_set  # noqa: E402
 from src.agent import ask  # noqa: E402
+from src.config import settings  # noqa: E402
 from src.executor import ExecutionError, run_query  # noqa: E402
 from src.grounding import check_groundedness  # noqa: E402
 from src.models import Outcome, Turn  # noqa: E402
@@ -209,11 +210,27 @@ def main() -> int:
     parser.add_argument(
         "--no-verification",
         action="store_true",
-        help="run with ADR-012's runtime verification off, reproducing the pre-ADR-012 "
+        help="force ADR-012's runtime verification off, reproducing the pre-ADR-012 "
         "pipeline. This is the baseline half of the with/without comparison.",
     )
+    parser.add_argument(
+        "--verification",
+        action="store_true",
+        help="force ADR-012's runtime verification on. Neither flag means follow "
+        "RUNTIME_VERIFICATION, so a default run measures what the app actually does.",
+    )
     args = parser.parse_args()
-    verification = not args.no_verification
+    if args.verification and args.no_verification:
+        parser.error("--verification and --no-verification are mutually exclusive")
+    # Defaults to the CONFIGURED value rather than to on. A harness whose no-flag default
+    # differs from the app's would report the accuracy of a pipeline nobody runs, and it
+    # would do so silently, which is the worst version of that bug.
+    if args.verification:
+        verification = True
+    elif args.no_verification:
+        verification = False
+    else:
+        verification = settings.runtime_verification
 
     # Validated up front, so a malformed case fails here rather than after the run has
     # already spent LLM calls on the cases preceding it.
