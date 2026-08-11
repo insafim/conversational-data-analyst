@@ -147,23 +147,49 @@ regression carries a `verifier_objection` (q66 in all three runs; q14, q18, q65 
 each). The groundedness check and the code triggers cost nothing measurable. The LLM
 verifier is the part that does not pay for itself.
 
+### q66, diagnosed
+
 q66 ("How many port calls were there in 2020?", correct answer: none, the data begins in
-2025) fails identically in all three ON runs. The objection is *correct* and precise: "the
-question asks for port calls in 2020, but the query filters for arrivals in 2025". The
-single bounded regeneration does not fix it, and the answer ships with that caveat beside
-the wrong number. Two things follow, and the second is unresolved:
+2025) fails in all three ON runs. The first version of this addendum recorded the cause as
+unresolved, because the artifacts could not show why the first attempt appeared to differ by
+configuration. **A probe on 2026-08-11 settled it, and that earlier reading was wrong.**
 
-1. A correct objection is not sufficient. Regenerating with the objection attached
-   recovered four of four *database* errors historically, and it does not transfer to
-   semantic ones: the model that wrote the query is being asked to disagree with itself.
-2. Why the first attempt differs by configuration at all is **not explained by these
-   artifacts**, since the first `generate_sql` prompt is identical either way. A probe to
-   settle it was cut short when the API credit ran out. Recorded as open rather than
-   given a plausible-sounding cause.
+Instrumenting every `generate_sql` call across six runs of the question, three with
+verification off and three on, shows the first attempt is **identical in both configurations
+and correct**: `WHERE arrival_ts >= '2020-01-01' AND arrival_ts < '2021-01-01'`, six times
+out of six. There is no first-attempt divergence to explain.
 
-One concrete defect is identified and not yet fixed: `VERIFY_SYSTEM` instructs the
-verifier to object to "extra columns beyond the label and the measure(s) asked for", and
-that is what stripped the month column from q65's correct two-column answer.
+What actually happens is more useful. **The verifier objects to the correct query, in every
+trial run so far.** In four further trials the first verdict was `aligned=false` in 4 of 4,
+objecting:
+*"The data coverage shows port_calls.arrival_ts ranges from 2025-01-01 to 2026-06-30, so
+there are no port calls in 2020 in this database."* That is a true statement about the data
+and a **false objection about the query**: returning zero rows is the correct answer here.
+The verifier treats "this will return nothing" as a defect.
+
+The regeneration is then a coin flip. In 3 of 4 trials the model "corrected" the query to
+2025 and produced a confidently wrong 1,044; in 1 of 4 it held its ground and answered zero.
+The second verdict objects again, correctly this time, and the answer ships with an accurate
+caveat beside the wrong number.
+
+So the failure is not in the architecture or the retry mechanism. It is a **defect in
+`VERIFY_SYSTEM`**, and it is the second of exactly the same kind:
+
+| Defect in the verifier prompt | What it broke | Fix |
+| --- | --- | --- |
+| Nothing tells the verifier that an empty result can be a correct answer | q66: objects to a correct zero-row query, and the retry then invents data | State it, as `QUALITY_SUFFIX` already does: *"an honest empty result is a correct answer"* |
+| It is told to object to "extra columns beyond the label and the measure(s) asked for" | q65: stripped the month column from a correct two-column answer | Narrow the rule, or drop the column-shape clause |
+
+Both are one-line prompt changes and **neither is applied**, because applying them would
+invalidate the six runs above: the comparison would have to be re-measured before the
+conclusion could be restated. That is the honest position. The measured result stands for
+the verifier as built, and there is now a named, evidenced reason to expect a corrected
+verifier to do better. Revisiting it is bounded work rather than a rewrite.
+
+The other finding survives unchanged: a correct objection is not sufficient. Regenerating
+with the objection attached recovered four of four *database* errors historically, and it
+does not transfer to semantic ones, because the model that wrote the query is being asked to
+disagree with itself.
 
 **Decision: the feature ships behind `RUNTIME_VERIFICATION`, defaulting to false.** The
 machinery, the switch, the reason codes and all six runs stay in the repo. Turning it on

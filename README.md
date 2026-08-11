@@ -502,14 +502,23 @@ carries a `verifier_objection`**: `q66` in all three runs, `q14`, `q18` and `q65
 each. The groundedness check and the code triggers cost nothing measurable.
 
 `q66` ("How many port calls were there in 2020?", correct answer: none, the data starts in
-2025) is the clearest case, and it fails the same way in all three ON runs. The verifier's
-objection is *correct* and states the problem exactly: "the question asks for port calls in
-2020, but the query filters for arrivals in 2025". The single bounded regeneration does not
-fix it, and the answer ships with that caveat attached and the wrong number beside it. What
-the artifacts do **not** show is why the first attempt differs by configuration at all,
-since the first `generate_sql` prompt is identical in both. That is unresolved: a probe to
-settle it was cut short when the API credit ran out, and it is recorded as open rather than
-explained away.
+2025) is the clearest case, and it fails the same way in all three ON runs. An earlier
+version of this section said the cause was unresolved, and guessed that the first SQL
+attempt somehow differed by configuration. **A probe settled it, and that guess was
+wrong.** Instrumenting every SQL attempt shows the first attempt is **identical in both
+configurations and correct**, six times out of six. **The verifier then objects to that
+correct query, in 4 of 4 trials**, on the grounds that the data holds nothing for 2020.
+True about the data, false about the query, because returning zero rows is the right
+answer. The regeneration is a coin flip from there: in 3 of those 4 trials the model
+"corrects" to 2025 and reports a confidently wrong 1,044; in the fourth it held its ground
+and answered zero.
+
+So the cost is not the architecture and not the retry. It is a defect in the verifier's own
+prompt, which never tells it that an empty result can be correct, and it is the second
+defect of that kind alongside the column-shape rule that broke `q65`. Both are one-line
+fixes, and both are deliberately **not applied**, because applying them would invalidate the
+six runs above and the comparison would have to be re-measured before this section could be
+rewritten. See [ADR-012](docs/ADR/ADR-012-runtime-verification.md)'s addendum.
 
 So the feature ships **off by default** (`RUNTIME_VERIFICATION=false`), with the switch and
 the evidence both in the repo. Turning it on is defensible when an invented figure costs
