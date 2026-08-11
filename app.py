@@ -128,6 +128,27 @@ def render_chart(result, chart) -> None:
         st.dataframe(frame, use_container_width=True, hide_index=True)
 
 
+def conversation_history() -> list:
+    """The prior turns the rewrite node is allowed to see (ADR-011).
+
+    Question and SQL only, never the answer text or the rows. The interpreted form of an
+    earlier follow-up is preferred over what was typed, so that a chain resolves: after
+    "and Rotterdam?" has become "how many port calls at Rotterdam in 2025?", the turn
+    after it can refer back to something that stands on its own.
+
+    Trimming to the window happens in the agent; this passes what the session holds.
+    """
+    from src.models import Turn
+
+    return [
+        Turn(
+            question=entry["result"].interpreted_question or entry["question"],
+            sql=entry["result"].sql or "",
+        )
+        for entry in st.session_state.history
+    ]
+
+
 def render_answer(entry: dict) -> None:
     """Render one assistant turn: answer, chart, SQL, then the metadata caption."""
     result = entry["result"]
@@ -135,7 +156,29 @@ def render_answer(entry: dict) -> None:
     badge = _OUTCOME_BADGE.get(result.outcome)
     if badge:
         st.markdown(f"{badge[0]} **{badge[1]}**")
+
+    # What the follow-up was taken to mean (ADR-011). Shown ABOVE the answer, because a
+    # misread question makes the answer below it irrelevant, and the user is the only
+    # one who can say so.
+    if result.interpreted_question:
+        st.caption(f"Interpreted as: {result.interpreted_question}")
+
     st.markdown(result.answer)
+
+    # For the non-technical reader ADR-008 designs for, this line and not the SQL
+    # expander is the verification surface: it says what was measured, in words.
+    if result.reading:
+        st.caption(f"What was measured: {result.reading}")
+
+    # Advisory findings that survived their retry. Both are shown rather than
+    # suppressed, and neither withheld the answer. That is the ADR-012 contract.
+    if result.caveat:
+        st.warning(f"Possible mismatch with your question: {result.caveat}")
+    if result.grounding_flag:
+        st.warning(
+            "A figure in this answer could not be matched to the returned rows. "
+            "Check it against the table before relying on it."
+        )
 
     if result.result is not None and result.chart is not None:
         render_chart(result.result, result.chart)
@@ -153,8 +196,11 @@ def render_answer(entry: dict) -> None:
         bits.append(f"{result.result.row_count} rows")
     if result.cost_usd:
         bits.append(f"${result.cost_usd:.4f}")
-    if result.retried:
-        bits.append("retried once")
+    if result.retry_reasons:
+        # Named rather than counted (ADR-012): "retried once" left the reader unable to
+        # tell a database error from the verifier changing the query.
+        named = ", ".join(reason.value.replace("_", " ") for reason in result.retry_reasons)
+        bits.append(f"retried: {named}")
     st.caption(" · ".join(bits))
 
     # Latency attributed to the stage that spent it. Shown behind an expander because a
@@ -232,7 +278,10 @@ if question:
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                result = _agent()(question)
+                # History is read BEFORE this turn is appended, and it is owned by the
+                # session rather than by the agent: the graph holds no state between
+                # calls, which is what keeps the eval harness and the UI on one path.
+                result = _agent()(question, history=conversation_history())
             except Exception as exc:  # noqa: BLE001
                 # ask() converts the failures it anticipates into an ERROR outcome, so
                 # reaching here means an unanticipated one: a dropped database connection,

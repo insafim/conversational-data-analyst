@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,19 +37,29 @@ class LLMError(RuntimeError):
 
 @dataclass
 class Usage:
-    """Running totals for one question, surfaced in the UI and the eval harness."""
+    """Running totals for one question, surfaced in the UI and the eval harness.
+
+    Locked, because the semantic verifier (ADR-012) runs on a worker thread while
+    `summarize` is calling the same tier on the main one. `calls += 1` is a
+    read-modify-write, so two concurrent completions can both read the same value and
+    the count silently loses one, an undercount in exactly the number the cost figures
+    are built from.
+    """
 
     calls: int = 0
     cost_usd: float = 0.0
     by_model: dict[str, int] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def record(self, model: str, response: Any) -> None:
-        self.calls += 1
-        self.by_model[model] = self.by_model.get(model, 0) + 1
         try:
-            self.cost_usd += float(litellm.completion_cost(completion_response=response) or 0.0)
+            cost = float(litellm.completion_cost(completion_response=response) or 0.0)
         except Exception:  # noqa: BLE001 — an unpriced model must not break the request
-            pass
+            cost = 0.0
+        with self._lock:
+            self.calls += 1
+            self.by_model[model] = self.by_model.get(model, 0) + 1
+            self.cost_usd += cost
 
 
 def _call(model: str, system: str, user: str, usage: Usage | None, temperature: float) -> str:

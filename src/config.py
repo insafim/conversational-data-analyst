@@ -50,6 +50,12 @@ class Settings:
     max_sql_retries: int
     max_question_chars: int
 
+    # --- conversation (ADR-011) ---
+    history_turns: int
+
+    # --- runtime verification (ADR-012) ---
+    runtime_verification: bool
+
     @staticmethod
     def load() -> Settings:
         return Settings(
@@ -78,6 +84,17 @@ class Settings:
             # refuse than to send. 2000 characters is several times the longest question
             # in the gold set, so it does not constrain real use.
             max_question_chars=int(os.getenv("MAX_QUESTION_CHARS", "2000")),
+            # The rewrite window (ADR-011). Bounded for cost and for blast radius: a
+            # longer window is more prior text for a rewrite to drag into a question the
+            # user did not ask. Three exchanges covers the follow-up chains a demo
+            # produces; it is not a memory feature.
+            history_turns=int(os.getenv("HISTORY_TURNS", "3")),
+            # ADR-012's three additions as one switch, so the eval can measure the
+            # pipeline with and without them and attribute the difference. "off"
+            # reproduces the pre-ADR-012 baseline (runs 15 to 19) exactly, which is what
+            # makes the comparison a comparison rather than two unrelated numbers.
+            runtime_verification=os.getenv("RUNTIME_VERIFICATION", "true").lower()
+            not in ("0", "false", "no", "off"),
         )
 
 

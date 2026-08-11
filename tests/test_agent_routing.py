@@ -30,36 +30,95 @@ pytestmark = pytest.mark.integration
 class StubLLM:
     """Scripted replacements for llm.cheap / llm.strong.
 
-    Records every call so tests can assert *how many* times each tier was invoked —
-    which is how the retry bound is verified.
+    Dispatches on the SYSTEM PROMPT, so each of the five model-driven nodes can be
+    scripted and counted independently. That matters more than it did when there were
+    three: `contextualize` (ADR-011) and `verify` (ADR-012) both call the cheap tier, so
+    a stub that counted cheap calls in aggregate could no longer tell "the summariser
+    was skipped" from "the verifier ran".
+
+    Every call is recorded, which is how the retry bounds are verified.
     """
 
-    def __init__(self, route="answerable", clarification="", sql_sequence=None, summary="Answer."):
+    def __init__(
+        self,
+        route="answerable",
+        clarification="",
+        sql_sequence=None,
+        summary="Answer.",
+        rewrite=None,
+        rewrite_raw=None,
+        objection=None,
+        reading="reads the terminals table",
+        verify_raw=None,
+    ):
         self.route = route
         self.clarification = clarification
         self.sql_sequence = list(sql_sequence or ["SELECT 1 AS n"])
         self.summary = summary
-        self.cheap_calls: list[str] = []
-        self.strong_calls: list[str] = []
+        self.rewrite = rewrite
+        # Raw overrides exist to script UNPARSEABLE model output, which is the input
+        # both fail-open paths are built for and the one JSON-shaped scripting cannot
+        # produce.
+        self.rewrite_raw = rewrite_raw
+        self.objection = objection
+        self.reading = reading
+        self.verify_raw = verify_raw
+        self.calls: dict[str, list[str]] = {
+            "contextualize": [], "classify": [], "verify": [],
+            "summarize": [], "generate_sql": [],
+        }
+
+    # Aliases kept because the tier a node uses is itself an ADR-007 claim worth pinning.
+    @property
+    def cheap_calls(self) -> list[str]:
+        return (self.calls["contextualize"] + self.calls["classify"]
+                + self.calls["verify"] + self.calls["summarize"])
+
+    @property
+    def strong_calls(self) -> list[str]:
+        return self.calls["generate_sql"]
+
+    def _node_for(self, system: str) -> str:
+        lowered = system.lower()
+        if "rewrite a follow-up" in lowered:
+            return "contextualize"
+        if "triage" in lowered or "classify" in lowered:
+            return "classify"
+        if "you review one postgresql" in lowered:
+            return "verify"
+        return "summarize"
 
     def cheap(self, system, user, usage=None, temperature=0.0):
-        self.cheap_calls.append(user)
+        node = self._node_for(system)
+        self.calls[node].append(user)
         # Mirror the real wrapper's bookkeeping, so tests asserting on `llm_calls` are
         # checking that the graph threads `usage` through every node rather than
         # checking the stub itself.
         if usage is not None:
             usage.calls += 1
-        # The classify prompt asks for JSON; the summarize prompt does not.
-        if "classify" in system.lower() or "triage" in system.lower():
+
+        if node == "classify":
             return json.dumps({
                 "route": self.route,
                 "clarification": self.clarification,
                 "reason": "stubbed",
             })
+        if node == "contextualize":
+            if self.rewrite_raw is not None:
+                return self.rewrite_raw
+            return json.dumps({"question": self.rewrite or ""})
+        if node == "verify":
+            if self.verify_raw is not None:
+                return self.verify_raw
+            return json.dumps({
+                "aligned": self.objection is None,
+                "reading": self.reading,
+                "objection": self.objection,
+            })
         return self.summary
 
     def strong(self, system, user, usage=None, temperature=0.0):
-        self.strong_calls.append(user)
+        self.calls["generate_sql"].append(user)
         if usage is not None:
             usage.calls += 1
         index = min(len(self.strong_calls) - 1, len(self.sql_sequence) - 1)
@@ -231,13 +290,14 @@ def test_empty_results_are_reported_without_asking_the_model(stub) -> None:
         route="answerable",
         sql_sequence=["SELECT terminal_name FROM terminals WHERE country = 'Atlantis'"],
     )
-    cheap_before = len(stubbed.cheap_calls)
-    result = agent_module.ask("Which terminals are in Atlantis?")
+    # Verification off: an empty result on an answerable question is now a quality
+    # trigger (ADR-012), and this test is about the code-answered path rather than about
+    # the regeneration. The trigger has its own test below.
+    result = agent_module.ask("Which terminals are in Atlantis?", verification=False)
 
     assert result.outcome == Outcome.ANSWERED
     assert result.answer == "No data matched that question."
-    # Only the classify call, no summarize call.
-    assert len(stubbed.cheap_calls) == cheap_before + 1
+    assert stubbed.calls["summarize"] == [], "the model was asked to describe zero rows"
 
 
 # ---------------------------------------------------------------------------------
@@ -339,6 +399,67 @@ def test_a_question_at_the_limit_is_still_accepted(stub) -> None:
     result = agent_module.ask(at_limit)
 
     assert result.outcome is not Outcome.REFUSED
+
+
+@pytest.mark.parametrize("_run", range(3))
+def test_langgraph_barriers_between_supersteps_so_verify_must_not_block(_run) -> None:
+    """Pins the library behaviour that forced the verifier to submit a future (ADR-012).
+
+    ADR-012 claims the verifier's wall-clock cost is near zero because it runs in
+    parallel with `execute` and `summarize`. A plain parallel node does not deliver that:
+    the Pregel runtime overlaps nodes WITHIN a superstep but barriers BETWEEN them, so a
+    two-node branch running beside a one-node branch takes the sum of the maxima, not the
+    max of the sums. A blocking `verify` node would therefore overlap `execute` (0.025s)
+    and nothing else.
+
+    Measured here rather than asserted in a comment, because it is a claim about a third
+    party. If a future LangGraph version removes the barrier, this fails and the
+    future-submitting design in `verify` can be simplified instead of quietly becoming
+    folklore.
+
+    Thresholds are wide and the timings coarse, so this measures the SCHEDULING model
+    rather than the machine. Repeated, because a scheduling test that passes once may
+    have passed by luck.
+    """
+    import time
+    from typing import TypedDict
+
+    from langgraph.graph import END, START, StateGraph
+
+    class _S(TypedDict, total=False):
+        a: str
+        b: str
+        c: str
+
+    def _sleeper(key, seconds):
+        def node(_state):
+            time.sleep(seconds)
+            return {key: "ran"}
+
+        return node
+
+    graph = StateGraph(_S)
+    graph.add_node("long1", _sleeper("a", 0.3))
+    graph.add_node("long2", _sleeper("b", 0.3))
+    graph.add_node("short", _sleeper("c", 0.4))
+    graph.add_edge(START, "long1")
+    graph.add_edge(START, "short")
+    graph.add_edge("long1", "long2")
+    graph.add_edge("long2", END)
+    graph.add_edge("short", END)
+
+    started = time.perf_counter()
+    graph.compile().invoke({})
+    elapsed = time.perf_counter() - started
+
+    # Barriered: max(0.3, 0.4) + 0.3 = 0.7s. Freely overlapping would be 0.6s.
+    assert elapsed >= 0.65, (
+        f"parallel branches completed in {elapsed:.2f}s, faster than the superstep "
+        "barrier allows. LangGraph may no longer barrier between supersteps, in which "
+        "case `verify` could block instead of submitting a future."
+    )
+    # And they do overlap within the superstep: serial execution would be 1.0s.
+    assert elapsed < 0.95, f"parallel branches did not overlap at all ({elapsed:.2f}s)"
 
 
 def test_langgraph_replaces_dict_state_so_timings_must_accumulate() -> None:

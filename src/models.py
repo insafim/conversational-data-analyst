@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Route(StrEnum):
@@ -40,6 +40,39 @@ class ChartKind(StrEnum):
     TABLE = "table"
 
 
+class RetryReason(StrEnum):
+    """Why a regeneration or re-summarisation fired (ADR-012).
+
+    Replaces the single `retried` boolean. One bit could say that a retry happened but
+    not which mechanism caused it, so a run-to-run movement in accuracy could not be
+    attributed to the change that produced it.
+    """
+
+    DB_ERROR = "db_error"                    # PostgreSQL rejected the query
+    VERIFIER_OBJECTION = "verifier_objection"  # the semantic verifier objected
+    GROUND_CHECK = "ground_check"            # a figure in the answer was not in the rows
+    QUALITY_TRIGGER = "quality_trigger"      # a code-detected result-shape problem
+
+
+class Turn(BaseModel):
+    """One prior exchange, as the rewrite node is allowed to see it (ADR-011).
+
+    Question and SQL only. Answer text and result rows are deliberately absent: answer
+    text quotes row data, which is the second-order injection channel `src/prompts.py`
+    documents, and rows are that same risk plus token cost. A follow-up resolves from
+    what was ASKED, never from what was returned.
+
+    `sql` is empty for a turn that produced none, such as a clarification or a refusal. The
+    question is still carried, because "which is the busiest terminal?" is what makes the
+    user's next word ("by containers") resolvable.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    question: str
+    sql: str = ""
+
+
 class ValidationResult(BaseModel):
     """Outcome of the code-level SQL gate. `ok=False` is terminal — never retried,
     because a rejected query is a safety decision, not a transient failure."""
@@ -66,6 +99,33 @@ class QueryResult(BaseModel):
     elapsed_s: float
     truncated: bool = Field(
         default=False, description="True if the row cap trimmed the result set."
+    )
+
+
+class Verification(BaseModel):
+    """The semantic verifier's advisory reading of one SQL statement (ADR-012).
+
+    Advisory by construction. It carries no `ok=False` that anything treats as a veto:
+    `objection` routes to at most one regeneration and then becomes a caveat printed
+    beside the answer. Only `ValidationResult` can stop a query, and only code writes it.
+
+    `sql` records WHICH statement was judged. The verifier runs on a parallel branch, so
+    a database-error retry can replace the SQL while a verdict for the previous statement
+    is still in flight; without this field the graph could act on a stale objection.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    sql: str = Field(description="The exact statement this verdict was issued against.")
+    aligned: bool = Field(description="False only when the verifier stated an objection.")
+    objection: str | None = Field(
+        default=None, description="What the verifier says the SQL does not do."
+    )
+    reading: str | None = Field(
+        default=None,
+        description="Plain-language statement of what the SQL measures, shown to the "
+        "user. For a reader who cannot audit SQL this line, not the query, is the "
+        "verification surface.",
     )
 
 
@@ -106,5 +166,40 @@ class AgentResult(BaseModel):
     )
     llm_calls: int = 0
     cost_usd: float = 0.0
-    retried: bool = False
     error: str | None = None
+
+    # --- conversation (ADR-011) -----------------------------------------------------
+    interpreted_question: str | None = Field(
+        default=None,
+        description="The standalone rewrite of a follow-up, populated only when the "
+        "rewrite node changed the question. Displayed, because a resolution the user "
+        "cannot see is a resolution the user cannot correct.",
+    )
+
+    # --- runtime verification (ADR-012) ---------------------------------------------
+    retry_reasons: list[RetryReason] = Field(
+        default_factory=list,
+        description="Every regeneration or re-summarisation that fired, in order. A list "
+        "rather than a boolean so a run comparison can attribute movement to the "
+        "mechanism that caused it.",
+    )
+    reading: str | None = Field(
+        default=None, description="The verifier's plain-language reading of the SQL."
+    )
+    caveat: str | None = Field(
+        default=None,
+        description="Shown beside the answer when the verifier objected twice. The "
+        "answer still ships: an advisory check that could withhold answers would be a "
+        "gate, and the LLM is not permitted to be one.",
+    )
+    grounding_flag: str | None = Field(
+        default=None,
+        description="Set when a figure survived the groundedness check twice. Logged and "
+        "shown, never blocking, because the check has known false positives (ADR-006).",
+    )
+
+    @property
+    def retried(self) -> bool:
+        """Any retry at all. Kept because the UI and several tests ask exactly this
+        question; `retry_reasons` is the record that carries the detail."""
+        return bool(self.retry_reasons)
