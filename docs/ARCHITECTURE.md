@@ -5,7 +5,7 @@
 > considered and the specific failure each rejected alternative would have introduced.
 >
 > Companion documents: [README.md](../README.md) (setup, quickstart, measured results)
-> and [docs/ADR/](ADR/) (eight decision records, each with alternatives and trade-offs).
+> and [docs/ADR/](ADR/) (twelve decision records, each with alternatives and trade-offs).
 >
 > Every claim below was verified against the running system rather than written from intent.
 > This document is maintained with the code: a divergence between the two is a defect in one
@@ -68,7 +68,7 @@ The three properties it is actually built around, each answering a problem above
 
 | Property                                        | How it is achieved                                                               | Where it is proven                                               |
 | ----------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| **Correctness is measured**               | Gold set of 36 questions with hand-verified reference SQL; result-set comparison | [§12](#12-evaluation), `eval/`                                 |
+| **Correctness is measured**               | Gold set of 103 questions with hand-verified reference SQL; result-set comparison | [§12](#12-evaluation), `eval/`                                 |
 | **Safety is structural**                  | Read-only role beneath a code validator beneath prompt hardening                 | [§8](#8-the-security-model), `tests/test_security_boundary.py` |
 | **Ambiguity is answered with a question** | `classify` routes under-specified questions to a clarification exit            | [§6](#6-the-agent-pipeline), scored in the gold set              |
 
@@ -152,7 +152,7 @@ flowchart TB
     end
 
     subgraph Offline["Offline"]
-        EVAL["eval/run_eval.py<br/>36 gold questions"]
+        EVAL["eval/run_eval.py<br/>103 gold questions"]
     end
 
     UI --> GRAPH
@@ -704,13 +704,18 @@ brief assesses.
 ([ADR-006](ADR/ADR-006-eval-execution-accuracy.md)). It calls `src/agent.py` directly, with
 no Streamlit in the path, so it can run in CI.
 
-### The gold set: 36 items in three categories
+### The gold set: 103 items in three categories
+
+Expanded from 36 on 2026-08-10 (ADR-010). Every case carries two tags: the SQL syllabus
+topics its reference answer exercises, and a behaviour label for how the question is
+asked (typos, vague phrasing, fact-checks with false premises, write requests, and so
+on). The harness prints coverage on both dimensions each run.
 
 | Category              | Items | What it asserts                                                |
 | --------------------- | ----- | -------------------------------------------------------------- |
-| **answerable**  | 28    | Agent SQL returns the same rows as hand-verified reference SQL |
-| **ambiguous**   | 3     | Agent asks a clarifying question instead of guessing           |
-| **adversarial** | 5     | Injection / destructive / out-of-scope requests are refused    |
+| **answerable**  | 73    | Agent SQL returns the same rows as hand-verified reference SQL |
+| **ambiguous**   | 12    | Agent asks a clarifying question instead of guessing           |
+| **adversarial** | 18    | Injection / destructive / out-of-scope / write requests are refused |
 
 **Groundedness is scored separately, on every answered case**, because an answer can carry the
 right rows and still describe them with an invented figure. `_check_groundedness()` requires every
@@ -884,11 +889,11 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── models.py               Typed state and results (pydantic)
 │   └── config.py               Settings; separates admin and read-only identities
 ├── eval/
-│   ├── gold_questions.yaml     36 scored cases
+│   ├── gold_questions.yaml     103 scored cases, topic- and behaviour-tagged
 │   ├── gold.py                 Gold-set schema; validated at load
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers
-├── tests/                      376 tests
+├── tests/                      558 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Eight decision records
@@ -908,11 +913,11 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 376 tests
+### Test suite: 558 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
-| `test_gold_set.py`               | 120   | Gold-set schema, parametrized over all 36 cases                          |
+| `test_gold_set.py`               | 302   | Gold-set schema and tag guards, parametrized over all 103 cases          |
 | `test_validator.py`              | 93    | The security gate: the write-blocking rules, evasions, fail-closed parse |
 | `test_eval_scoring.py`           | 35    | Comparison and scoring logic, the definition of "correct"                |
 | `test_security_boundary.py`      | 17    | Integration: GRANTs hold with the read-only guard disabled               |
@@ -932,7 +937,7 @@ Integration tests are marked, so unit tests run without a database:
 pytest -m "not integration"   # no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
-python eval/run_eval.py       # ~4 min, ~$0.34
+python eval/run_eval.py       # 10 to 18 min across observed runs, ~$0.88 (103 cases)
 ```
 
 ### Testing philosophy
@@ -1018,9 +1023,11 @@ deployments stall.
 | **Two model tiers**                                           | Cost per task is a design input; two of three calls do not need capability                                                                         | Two behaviour profiles to reason about; a prompt tuned on one tier may not transfer                |
 | **Streamlit, not React + API**                                | The UI is the least interesting component here, and its implementation should say so                                                               | Would not scale to concurrent users; not a production serving model                                |
 | **Reporting a range, not the best run**                       | Same code scored 86.4% and 95.5%; quoting only the maximum on a "measured, not claimed" system would be self-defeating                             | A less impressive headline number                                                                  |
+| **Withheld capabilities recorded as decisions** (ADR-009)     | Fourteen runs show zero dialect failures, so docs retrieval, web search, MCP and LLM validation are absences with evidence and revisit conditions | The record must be re-examined as models, dialects and scope change                                |
+| **Syllabus- and behaviour-tagged gold set, 103 cases** (ADR-010) | A saturated 36-case suite confirmed rather than measured; two orthogonal tags locate a failure in both the SQL plane and the phrasing plane     | Runs cost ~$0.88 and 10 to 18 minutes; question wording itself becomes part of the measured surface |
 
 ---
 
 *This document describes the architecture as implemented and is updated in the same change as
-the code it describes. The eight ADRs in [docs/ADR/](ADR/) carry the full reasoning, the
+the code it describes. The twelve ADRs in [docs/ADR/](ADR/) carry the full reasoning, the
 alternatives considered, and the trade-off accepted for each decision summarised here.*

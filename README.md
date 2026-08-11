@@ -9,7 +9,7 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 - **Safety is structural, not prompted.** The agent connects as a PostgreSQL role holding `SELECT`
   and nothing else. A fully jailbroken model still cannot write — [verified, not
   asserted](#guardrails-verified-not-asserted).
-- **Correctness is measured, not claimed.** A gold set of 36 questions with hand-verified reference
+- **Correctness is measured, not claimed.** A gold set of 103 questions with hand-verified reference
   SQL produces a reproducible accuracy number, including for refusals and ambiguity.
 - **Scope is controlled on purpose.** [What was left out, and
   why](docs/ADR/ADR-008-ui-and-scope-boundary.md).
@@ -19,7 +19,7 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 > method, and a consolidated table of design decisions with their trade-offs.
 > [docs/DATA.md](docs/DATA.md) is the dataset reference — what is in it, how it was built,
 > and **what you can ask it**, with a value inventory and a question catalogue.
-> [docs/ADR/](docs/ADR/) holds the eight decision records behind them.
+> [docs/ADR/](docs/ADR/) holds the twelve decision records behind them.
 
 ---
 
@@ -76,9 +76,9 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 293 unit tests, no database or network needed
-pytest                        # all 376, needs the seeded database
-python eval/run_eval.py       # ~4 min, ~$0.34 of tokens
+pytest -m "not integration"   # 475 unit tests, no database or network needed
+pytest                        # all 558, needs the seeded database
+python eval/run_eval.py       # 10 to 18 min across observed runs, ~$0.88 of tokens (103 cases)
 ```
 
 ### Configuration
@@ -446,14 +446,32 @@ comparison was considered and **rejected** — loosening a metric after seeing w
 the metric to the result. See [ADR-006](docs/ADR/ADR-006-eval-execution-accuracy.md).
 <!-- EVAL_RESULTS_END -->
 
-The gold set has 36 items in three categories, because a system that answers well but cannot say no
-is not deployable:
+**Runs 15 to 17, the first against the expanded set (2026-08-10):** 94/100, 93/100 and
+94/100, at $0.88 per run, wall clock 9.7 to 18.5 minutes. The six repeat failures were
+the point of the expansion: two clarify-boundary misplacements in each direction (terse
+or non-native phrasing clarified when it should answer; an ambiguous duration question
+answered when it should clarify), two column-shape mismatches of the kind the runtime
+verifier (ADR-012) targets, and two gold-wording defects that admitted multiple
+defensible readings, which were fixed by rewriting the questions (recorded in ADR-010's
+addendum). A saturated 36/36 suite could not have shown any of this.
+
+**Run 19, the settled 103-case set:** 98/103, $0.91, 9.7 minutes, no transport errors.
+Both rewritten questions now pass, confirming the defects were in the wording. The five
+remaining failures are the measured headroom: two clarify-boundary misplacements, and
+three answers whose columns do not match the question's shape, the class the ADR-012
+verifier exists to catch. (Run 18 is on disk but invalid: a local DNS outage killed name
+resolution 22 items in, and the remaining 81 errored without reaching any model. It is
+kept because deleting evidence is worse than annotating it.)
+
+The gold set has 103 items in three categories (expanded from 36 on 2026-08-10, ADR-010:
+every case now carries a syllabus-topic tag and a behaviour tag), because a system that
+answers well but cannot say no is not deployable:
 
 | Category | Items | What it asserts |
 | --- | --- | --- |
-| **answerable** | 28 | Agent SQL returns the same rows as hand-verified reference SQL |
-| **ambiguous** | 3 | Agent asks a clarifying question instead of guessing |
-| **adversarial** | 5 | Injection / destructive / out-of-scope requests are refused |
+| **answerable** | 73 | Agent SQL returns the same rows as hand-verified reference SQL |
+| **ambiguous** | 12 | Agent asks a clarifying question instead of guessing |
+| **adversarial** | 18 | Injection / destructive / out-of-scope / write requests are refused |
 
 Correctness compares **result sets, not SQL text.** The same question has many correct SQL
 formulations — join order, CTE versus subquery, `COUNT(*)` versus `COUNT(1)` — so string comparison
@@ -531,6 +549,10 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 | [006](docs/ADR/ADR-006-eval-execution-accuracy.md) | Evaluation by execution accuracy on a gold set |
 | [007](docs/ADR/ADR-007-llm-provider-and-tiering.md) | Provider-agnostic access and two-tier model routing |
 | [008](docs/ADR/ADR-008-ui-and-scope-boundary.md) | A thin Streamlit UI, and the scope boundary |
+| [009](docs/ADR/ADR-009-withheld-runtime-capabilities.md) | Withheld runtime capabilities: docs retrieval, web search, MCP, LLM validation |
+| [010](docs/ADR/ADR-010-syllabus-mapped-eval-expansion.md) | Syllabus-mapped eval expansion, 36 to 103 cases on two tag dimensions |
+| [011](docs/ADR/ADR-011-bounded-multi-turn.md) | Bounded multi-turn at the edge, single-turn core (accepted; implementation pending) |
+| [012](docs/ADR/ADR-012-runtime-verification.md) | Runtime verification, each property gets its instrument (accepted; implementation pending) |
 
 ---
 
@@ -555,23 +577,23 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── models.py           Typed state and results
 │   └── config.py           Settings; separates admin and read-only identities
 ├── eval/
-│   ├── gold_questions.yaml   36 scored cases
+│   ├── gold_questions.yaml   103 scored cases, topic- and behaviour-tagged
 │   ├── gold.py               Gold-set schema; validated at load
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output — evidence for the numbers above
-└── tests/                  376 tests
+└── tests/                  558 tests
 ```
 
 ---
 
 ## Testing
 
-376 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+558 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
 | --- | --- | --- |
-| `test_gold_set.py` | 120 | The gold set's schema, parametrized over all 36 cases |
+| `test_gold_set.py` | 302 | The gold set's schema and tag guards, parametrized over all 103 cases |
 | `test_validator.py` | 93 | The security gate: the write-blocking rules, their evasions, and fail-closed parsing |
 | `test_eval_scoring.py` | 35 | The comparison logic, i.e. the definition of "correct" |
 | `test_security_boundary.py` | 17 | That `GRANT`s hold with the read-only guard disabled |
