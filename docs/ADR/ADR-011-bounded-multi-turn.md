@@ -113,3 +113,35 @@ value the *previous turn returned*, and the rewrite node never sees result rows.
 resolved it by description instead, producing "How many containers has the vessel that
 made the most port calls moved in total?", which the next query re-derives. That is the
 history-carries-questions-not-answers rule working rather than being worked around.
+
+## Addendum, 2026-08-12: what "three turns" bounds, and what it does not
+
+`HISTORY_TURNS=3` reads as though it caps the conversation. It does not, and the
+distinction matters enough to state plainly.
+
+**The conversation is unlimited.** A user may ask fifty questions; every turn is displayed,
+and with [ADR-014](ADR-014-conversation-store.md) every turn is persisted and can be
+reopened later.
+
+**The rewrite window is three.** `contextualize` reads `history[-settings.history_turns:]`
+(`src/agent.py`). So three bounds how far back a pronoun may reach, not how long the
+conversation may be.
+
+Three properties follow, and together they are the reason this is a bounded feature rather
+than a memory system:
+
+1. **One node sees history at all.** `contextualize` sits at the edge of the graph.
+   Everything after it — classify, generate_sql, validate, execute, summarize — is
+   byte-identical to the single-turn pipeline and cannot tell that a conversation exists.
+2. **Only questions and SQL cross that boundary.** Never answer text, never result rows.
+   Answer text quotes row data, which is the second-order injection channel.
+3. **The resolution is shown, not hidden.** The rewritten question is printed above the
+   answer as "Interpreted as: ...", so a misreading is visible to the only person who can
+   correct it.
+
+**On whether multi-turn was in scope at all.** `docs/problem.md` says "a simple chat
+interface is fine". It does not say single-turn and it does not say multi-turn: it leaves
+the interface open and asks for a chat. A chat that cannot take a follow-up is a question
+box, so implementing the interface properly is not scope creep. What would have been scope
+creep is an unbounded memory feature, which is precisely what the window, the
+questions-and-SQL rule and the visible rewrite exist to prevent.

@@ -6,10 +6,13 @@ implementation detail:
 * ``ADMIN_DSN``  — owns the schema. Used only by ``db/seed.py``.
 * ``ANALYST_DSN`` — the read-only ``analyst_ro`` role. Used by everything that runs
   model-generated SQL. See docs/ADR/ADR-004-defence-in-depth-sql.md.
+* ``STORE_DSN``   — the ``app_rw`` role on a SEPARATE database, ``ports_app``. Used only
+  by ``src/store.py``. The agent's role holds no CONNECT there. See ADR-014.
 
 Keeping them apart here, rather than passing a role name around, means there is no code
 path in the agent that can accidentally acquire write access: the agent never sees the
-admin credentials at all.
+admin or store credentials at all, and model-generated SQL only ever reaches the database
+through the analyst connection in ``src/executor.py``.
 """
 
 from __future__ import annotations
@@ -22,13 +25,25 @@ from dotenv import load_dotenv
 load_dotenv()  # local dev convenience; real deployments inject env vars directly
 
 
-def _dsn(user_env: str, pw_env: str, default_user: str, default_pw: str) -> str:
+def _dsn(
+    user_env: str,
+    pw_env: str,
+    default_user: str,
+    default_pw: str,
+    db: str | None = None,
+) -> str:
+    """One DSN. `db` overrides the analytics database, which the store needs (ADR-014).
+
+    The store lives in its OWN database, not a schema of this one, so the override is the
+    mechanism that keeps the agent's role out: `analyst_ro` holds CONNECT on the analytics
+    database only, and PostgreSQL has no cross-database queries without FDW.
+    """
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "55432")
-    db = os.getenv("POSTGRES_DB", "ports")
+    database = db if db is not None else os.getenv("POSTGRES_DB", "ports")
     user = os.getenv(user_env, default_user)
     pw = os.getenv(pw_env, default_pw)
-    return f"host={host} port={port} dbname={db} user={user} password={pw}"
+    return f"host={host} port={port} dbname={database} user={user} password={pw}"
 
 
 @dataclass(frozen=True)
@@ -58,6 +73,9 @@ class Settings:
 
     # --- the plain-language reading shown beside an answer (ADR-013) ---
     sql_reading: bool
+
+    # --- conversation and telemetry store (ADR-014) ---
+    store_dsn: str
 
     @staticmethod
     def load() -> Settings:
@@ -122,6 +140,24 @@ class Settings:
             # one cheap-tier call and the latency it does not overlap.
             sql_reading=os.getenv("SQL_READING", "true").lower()
             in ("1", "true", "yes", "on"),
+            # A THIRD identity, in a SEPARATE DATABASE, and both halves matter. `app_rw`
+            # owns `ports_app` and has no business in the analytics database; `analyst_ro`
+            # holds no CONNECT on `ports_app`, so the agent's role cannot open a session
+            # there at all. Chat history is therefore unreachable by model-generated SQL
+            # for the same structural reason writes are: a grant that was never made.
+            #
+            # A separate database rather than a schema because that is the shape of a real
+            # deployment. The data an analyst agent queries is usually someone else's, with
+            # its own owner, release cadence, workload and retention rules; application
+            # state is not. Modelling it this way makes the step to a separate server a
+            # connection string rather than a migration. See ADR-014.
+            store_dsn=_dsn(
+                "APP_STORE_USER",
+                "APP_STORE_PASSWORD",
+                "app_rw",
+                "app_rw_pw",
+                db=os.getenv("APP_STORE_DB", "ports_app"),
+            ),
         )
 
 

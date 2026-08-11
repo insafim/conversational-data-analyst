@@ -5,7 +5,7 @@
 > considered and the specific failure each rejected alternative would have introduced.
 >
 > Companion documents: [README.md](../README.md) (setup, quickstart, measured results)
-> and [docs/ADR/](ADR/) (thirteen decision records, each with alternatives and trade-offs).
+> and [docs/ADR/](ADR/) (fourteen decision records, each with alternatives and trade-offs).
 >
 > Every claim below was verified against the running system rather than written from intent.
 > This document is maintained with the code: a divergence between the two is a defect in one
@@ -979,6 +979,7 @@ per-user attribution and no alerting. Named on the path to production rather tha
 ├── db/
 │   ├── 01_schema.sql           Tables, constraints, indexes, COMMENT ON (prompt context)
 │   ├── 02_roles.sql            The analyst_ro read-only role
+│   ├── 03_app_store.sql        The separate database for saved chats (ADR-014)
 │   ├── seed.py                 Deterministic synthetic data generator (seed=42)
 │   └── verify_seed.sql         Proves the planted patterns are still detectable
 ├── src/
@@ -988,6 +989,7 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── schema.py               Introspection to cached prompt context
 │   ├── charts.py               Rule-based chart selection
 │   ├── notices.py              Which captions and warnings sit beside an answer, and in what order
+│   ├── store.py                Conversations and telemetry, in their own database (ADR-014)
 │   ├── grounding.py            Whether every figure in an answer appears in the rows
 │   ├── quality.py              Code-detected result-shape triggers (ADR-012)
 │   ├── prompts.py              Prompt templates
@@ -999,10 +1001,10 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── gold.py                 Gold-set schema; validated at load
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers
-├── tests/                      734 tests
+├── tests/                      762 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
-    └── ADR/                    Thirteen decision records
+    └── ADR/                    Fourteen decision records
 ```
 
 ---
@@ -1019,7 +1021,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 734 tests
+### Test suite: 762 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
@@ -1038,6 +1040,9 @@ streamlit run app.py
 | `test_schema.py`                | 12    | Catalog introspection; composed identifiers are quoted |
 | `test_schema_labels.py`         | 12    | Turning a table's COMMENT ON into a sidebar label, including the split it gets wrong |
 | `test_notices.py`               | 9     | Which captions and warnings sit beside an answer, and their order |
+| `test_store.py`                 | 17    | Conversation persistence: round trip, ordering, cascade delete, concurrency |
+| `test_store_isolation.py`       | 6     | That the agent's role cannot connect to the store (ADR-014) |
+| `test_store_titles.py`          | 5     | Deriving a chat title from its first question |
 | `test_seed_characterization.py` | 7     | Data digests, planted patterns, crane/terminal invariant |
 | `test_second_order_injection.py`| 5     | Injection arriving through query results |
 | `test_forecast_grounding.py`    | 5     | A historical figure is never reported as a forecast |
@@ -1046,7 +1051,7 @@ streamlit run app.py
 Integration tests are marked, so unit tests run without a database:
 
 ```bash
-pytest -m "not integration"   # 598 unit tests, no database, no network
+pytest -m "not integration"   # 603 unit tests, no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
 python eval/run_eval.py                                # shipped config, 10 to 15 min
@@ -1148,9 +1153,10 @@ deployments stall.
 | **Bounded multi-turn: one rewrite node at the edge** (ADR-011)   | A follow-up resolves against prior questions and SQL only, and everything downstream stays byte-identical to the single-turn pipeline; the resolution is shown to the user as "Interpreted as:" so a misreading is correctable | A follow-up turn costs one extra cheap call; a chain of clarification turns carries no answer text, so "by containers" resolves from the earlier question rather than from the clarifying reply |
 | **Runtime verification, measured then defaulted off** (ADR-012)  | Groundedness rose to 98.7% to 100% against 96.0% to 97.4%, and every mechanism is bounded, advisory and fail-open, so none of it can withhold an answer | Execution accuracy fell to 89.6% to 92.2% against 93.5% to 94.8%, all of it attributable to verifier objections by reason code; ships behind `RUNTIME_VERIFICATION` with the evidence in the repo |
 | **The reading without the verdict** (ADR-013)                    | Every answered question regains a plain-language "What was measured" line, which disappeared for all 108 cases when ADR-012 was defaulted off; no SQL, answer or chart can change, because no path regenerates | One extra cheap call per answered question, 18% to 27% more cost; the verifier's objection is discarded rather than shown, because its `q66` probe objected to a correct query in 4 of 4 trials |
+| **A separate database for conversations** (ADR-014)                | Chat history is unreachable by the agent's role, which holds no CONNECT there, and the analytics database keeps holding only synthetic data so the second-order injection surface is unchanged | The process gains a narrow write credential; the store's tests need a running database; production separation (ownership, lifecycle, workload, governance) is modelled rather than deferred |
 
 ---
 
 *This document describes the architecture as implemented and is updated in the same change as
-the code it describes. The thirteen ADRs in [docs/ADR/](ADR/) carry the full reasoning, the
+the code it describes. The fourteen ADRs in [docs/ADR/](ADR/) carry the full reasoning, the
 alternatives considered, and the trade-off accepted for each decision summarised here.*

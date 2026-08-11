@@ -7,6 +7,8 @@
 # order on FIRST BOOT ONLY (i.e. when the data volume is empty):
 #   01_schema.sql  — tables, constraints, indexes, column comments
 #   02_roles.sql   — the read-only analyst role that the agent connects as (ADR-004)
+#   03_app_store.sql — a SEPARATE database for saved chats, which analyst_ro cannot
+#                      connect to at all (ADR-014)
 # To re-run them after a schema change:  docker compose down -v && docker compose up -d
 
 services:
@@ -21,6 +23,17 @@ services:
       # Password for the read-only role created by 02_roles.sql. Passed through so the
       # role password is configurable rather than hard-coded in tracked SQL.
       ANALYST_RO_PASSWORD: ${ANALYST_RO_PASSWORD:-analyst_ro_pw}
+      # Password for the app_rw role created by 03_app_store.sql, which owns the
+      # conversation store. Kept separate from the analyst role's password so the two
+      # identities cannot be conflated by accident.
+      APP_STORE_PASSWORD: ${APP_STORE_PASSWORD:-app_rw_pw}
+      # Forwarded for the same reason as the password, and it is easy to miss: the
+      # application resolves APP_STORE_DB on the HOST when building its DSN, while
+      # db/03_app_store.sql resolves it INSIDE this container. Omitting it here means a
+      # custom value is honoured by one side and ignored by the other, so the app connects
+      # to a database the init script never created, and the connection error names the
+      # wrong remedy.
+      APP_STORE_DB: ${APP_STORE_DB:-ports_app}
     # Defaults to 55432 rather than 5432 so the demo never collides with a PostgreSQL
     # the reviewer already has running locally. Override with POSTGRES_PORT if needed.
     ports:
@@ -33,6 +46,7 @@ services:
       - pgdata:/var/lib/postgresql
       - ./db/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
       - ./db/02_roles.sql:/docker-entrypoint-initdb.d/02_roles.sql:ro
+      - ./db/03_app_store.sql:/docker-entrypoint-initdb.d/03_app_store.sql:ro
     healthcheck:
       # `pg_isready` alone returns success slightly before the init scripts finish, so the
       # check also confirms the last table created by 01_schema.sql is queryable.

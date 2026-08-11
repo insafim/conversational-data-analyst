@@ -21,7 +21,7 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 > method, and a consolidated table of design decisions with their trade-offs.
 > [docs/DATA.md](docs/DATA.md) is the dataset reference: what is in it, how it was built,
 > and **what you can ask it**, with a value inventory and a question catalogue.
-> [docs/ADR/](docs/ADR/) holds the thirteen decision records behind them.
+> [docs/ADR/](docs/ADR/) holds the fourteen decision records behind them.
 
 ---
 
@@ -80,8 +80,8 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 598 unit tests, no database or network needed
-pytest                        # all 734; needs the seeded database, and 10 of them
+pytest -m "not integration"   # 603 unit tests, no database or network needed
+pytest                        # all 762; needs the seeded database, and 10 of them
                               # call the live model, so they also need a funded API key
 # The two configurations the published figures were measured on, named explicitly.
 # --no-reading is needed for the BASELINE only: ADR-013's reading defaults on and also
@@ -98,7 +98,7 @@ python eval/run_eval.py                                  # 10 to 15 min across o
 
 One caveat on reproduction, stated rather than buried: `uv.lock` was refreshed on 2026-08-11 and
 moves ten packages relative to the environment the runs in `eval/results/` were recorded on,
-including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 734 tests pass on the
+including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 762 tests pass on the
 pinned set, which is what establishes that the SQL validator behaves identically. The eval scores
 are model-driven and are quoted as ranges across repeated runs for that reason.
 
@@ -114,6 +114,8 @@ as-is except for the API key.
 | `MODEL_STRONG` | No | `anthropic/claude-sonnet-5` | SQL generation only |
 | `POSTGRES_PORT` | No | `55432` | Deliberately not 5432 |
 | `POSTGRES_ANALYST_USER` | No | `analyst_ro` | The read-only role the agent uses |
+| `APP_STORE_USER` | No | `app_rw` | Owns `ports_app`, the separate database holding saved chats and telemetry. The agent's role has no `CONNECT` on it (ADR-014) |
+| `APP_STORE_DB` | No | `ports_app` | The conversation store's database. Separate from the analytics database by design |
 | `POSTGRES_ADMIN_USER` | No | `postgres` | Owner. Used **only** by `db/seed.py` |
 | `STATEMENT_TIMEOUT_MS` | No | `5000` | Bounds an expensive query |
 | `ROW_CAP` | No | `500` | Bounds result rows in-process. Rows, not bytes |
@@ -653,6 +655,7 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 | [011](docs/ADR/ADR-011-bounded-multi-turn.md) | Bounded multi-turn at the edge, single-turn core |
 | [012](docs/ADR/ADR-012-runtime-verification.md) | Runtime verification, each property gets its instrument (measured; shipped off by default) |
 | [013](docs/ADR/ADR-013-the-reading-without-the-verdict.md) | The verifier's reading without its verdict, so an answer says what was measured (shipped on) |
+| [014](docs/ADR/ADR-014-conversation-store.md) | Conversations and telemetry in a separate database the agent cannot connect to |
 
 ---
 
@@ -664,6 +667,7 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 ├── db/
 │   ├── 01_schema.sql       Tables, constraints, indexes, COMMENT ON (prompt context)
 │   ├── 02_roles.sql        The read-only analyst_ro role
+│   ├── 03_app_store.sql    The separate database for saved chats (ADR-014)
 │   ├── seed.py             Deterministic synthetic data generator
 │   └── verify_seed.sql     Sanity checks that the planted patterns are detectable
 ├── src/
@@ -673,6 +677,7 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── schema.py           Introspection and prompt context
 │   ├── charts.py           Rule-based chart selection
 │   ├── notices.py          Which captions and warnings sit beside an answer, and in what order
+│   ├── store.py            Conversations and telemetry, in their own database (ADR-014)
 │   ├── grounding.py        Whether every figure in an answer appears in the rows
 │   ├── quality.py          Code-detected result-shape triggers (ADR-012)
 │   ├── prompts.py          Prompt templates
@@ -684,14 +689,14 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── gold.py               Gold-set schema; validated at load
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output, evidence for the numbers above
-└── tests/                  734 tests
+└── tests/                  762 tests
 ```
 
 ---
 
 ## Testing
 
-734 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+762 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
@@ -711,6 +716,9 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_schema.py` | 12 | Catalog introspection, and that composed identifiers are quoted |
 | `test_schema_labels.py` | 12 | Turning a table's `COMMENT ON` into a sidebar label, including the split it gets wrong |
 | `test_notices.py` | 9 | Which captions and warnings sit beside an answer, and the order they arrive in |
+| `test_store.py` | 17 | Conversation persistence: round trip, ordering, cascade delete, concurrent appends |
+| `test_store_isolation.py` | 6 | That the agent's role cannot connect to the conversation store (ADR-014) |
+| `test_store_titles.py` | 5 | Deriving a chat title from its first question |
 | `test_seed_characterization.py` | 7 | Data digests, planted patterns, the crane/terminal invariant |
 | `test_second_order_injection.py` | 5 | Injection arriving through query results, not the chat box. Two of the five call a live model and skip without an API key |
 | `test_forecast_grounding.py` | 5 | That a historical figure is never reported as a forecast. Live model calls; skipped without an API key |
