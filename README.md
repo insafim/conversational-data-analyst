@@ -80,8 +80,8 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 619 unit tests, no database or network needed
-pytest                        # all 821; needs the seeded database, and 10 of them
+pytest -m "not integration"   # 651 unit tests, no database or network needed
+pytest                        # all 855; needs the seeded database, and 10 of them
                               # call the live model, so they also need a funded API key
 # The two configurations the published figures were measured on, named explicitly.
 # --no-reading is needed for the BASELINE only: ADR-013's reading defaults on and also
@@ -98,7 +98,7 @@ python eval/run_eval.py                                  # 10 to 15 min across o
 
 One caveat on reproduction, stated rather than buried: `uv.lock` was refreshed on 2026-08-11 and
 moves ten packages relative to the environment the runs in `eval/results/` were recorded on,
-including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 821 tests pass on the
+including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 855 tests pass on the
 pinned set, which is what establishes that the SQL validator behaves identically. The eval scores
 are model-driven and are quoted as ranges across repeated runs for that reason.
 
@@ -690,6 +690,7 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── grounding.py        Whether every figure in an answer appears in the rows
 │   ├── quality.py          Code-detected result-shape triggers (ADR-012)
 │   ├── prompts.py          Prompt templates
+│   ├── provenance.py       What produced an eval run: prompt hashes, models, commit
 │   ├── llm.py              Two-tier LiteLLM wrapper
 │   ├── models.py           Typed state and results
 │   └── config.py           Settings; separates admin and read-only identities
@@ -697,15 +698,16 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── gold_questions.yaml   108 scored cases, topic- and behaviour-tagged
 │   ├── gold.py               Gold-set schema; validated at load
 │   ├── run_eval.py           The harness
-│   └── results/              Committed raw output, evidence for the numbers above
-└── tests/                  821 tests
+│   └── results/              Committed raw output, evidence for the numbers above.
+│                             `runNN.json` is the records, `runNN.meta.json` what produced them
+└── tests/                  855 tests
 ```
 
 ---
 
 ## Testing
 
-821 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+855 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
@@ -714,6 +716,7 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_validator.py` | 93 | The security gate: the write-blocking rules, their evasions, and fail-closed parsing |
 | `test_eval_scoring.py` | 35 | The comparison logic, i.e. the definition of "correct" |
 | `test_charts.py` | 30 | Every chart rule, at its boundaries |
+| `test_provenance.py` | 34 | That a run records what produced it, and that no DSN password reaches the committed artefact |
 | `test_quality_triggers.py` | 28 | The code-detected result-shape triggers (ADR-012), weighted toward the cases that must NOT fire |
 | `test_agent_routing.py` | 25 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
 | `test_runtime_verification.py` | 32 | That runtime verification stays advisory: it cannot block, exceed one retry, or approve (ADR-012), and that the reading-only default adds a description and nothing else (ADR-013) |

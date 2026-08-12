@@ -211,3 +211,50 @@ Stated here rather than discovered by a reviewer:
   correct trade — mocked results would test the harness rather than the agent.
 - Adding gold cases has ongoing cost as the schema evolves. Named as a real maintenance obligation
   rather than waved away.
+
+## Addendum, 2026-08-12: the artefacts now record what produced them
+
+Runs 1 to 25 are lists of per-case records and nothing else. There is no run-level object
+in any of them: no model ids, no configuration, no prompt state, no commit.
+
+That gap undercuts two claims made above in this document.
+
+The variance section states that runs 2 and 3 "share identical code and prompts" and
+scored 95.5% against 86.4%. The nine-point spread is the evidence for treating a single
+run as unable to distinguish 86% from 95%, and it is load-bearing: it is why every figure
+in the README is quoted as a range. But the premise is unfalsifiable from the artefacts.
+Nothing on disk records what run 2's prompts were, so the claim rests on the author's
+recollection of a working tree. It is probably true and it is not checkable, and this
+document is not entitled to the difference.
+
+The consequences section then says the harness turns correctness into "a reproducible
+number". Reproducing a number requires knowing what produced it. Until now the harness
+did not write that down.
+
+**From run 26 onward, `eval/run_eval.py` writes `runNN.meta.json` beside `runNN.json`**,
+carrying a sha256 per prompt constant in `src/prompts.py` and one aggregate digest over
+the registry, a hash of the gold set, both model ids, the configuration that changes what
+a run measures, the effective `--verification` and `--reading` values, the case ids
+actually run, the invocation, the commit with a dirty flag, and the Python and litellm
+versions. The comparison the variance section wanted to make is a diff of two digests.
+
+Three choices inside that are worth stating, because each rejects an easier option:
+
+- **A sibling file rather than a field in the run file.** The 25 committed artefacts are
+  the evidence behind the figures in the README and in
+  [ADR-012](ADR-012-runtime-verification.md). Adding a key to them would edit committed
+  evidence so that it appeared to have recorded something it never did.
+  `src/telemetry.py` already anchors its filename pattern at both ends so the observability
+  page skips these siblings.
+- **No backfill.** Runs 1 to 25 get nothing. Their prompt state and commit are not
+  recoverable, and a metadata file containing reconstructions would look like a record
+  while being a guess. The absence is left visible, and the paragraph above stands as the
+  statement of what that costs.
+- **Provenance only, never results.** No score, total or latency is copied into the
+  metadata. The records say what happened; the sibling says what produced it. A figure
+  written in two places is two sources for one number, and they drift.
+
+This does not make a run reproducible. The models are external and non-deterministic at
+`temperature=0`, as this document has already measured. It makes a run **attributable**,
+which is the part that was missing: a future spread between two runs can now be assigned
+to sampling variance or to a changed prompt, instead of argued about.

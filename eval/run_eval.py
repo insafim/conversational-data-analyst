@@ -31,7 +31,7 @@ import math
 import statistics
 import sys
 import time
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from datetime import time as time_of_day
 from decimal import Decimal
 from pathlib import Path
@@ -45,6 +45,7 @@ from src.config import settings  # noqa: E402
 from src.executor import ExecutionError, run_query  # noqa: E402
 from src.grounding import check_groundedness  # noqa: E402
 from src.models import Outcome, Turn  # noqa: E402
+from src.provenance import capture, write_metadata  # noqa: E402
 
 # Aggregates computed by different-but-equivalent query plans can differ in the last
 # bits, so floats are compared to a tolerance rather than for exact equality.
@@ -282,6 +283,17 @@ def main() -> int:
     records: list[dict] = []
     started = time.perf_counter()
 
+    # Captured BEFORE the first call, not after the last. The prompt constants were read
+    # into memory at import, so a snapshot taken at the end would describe the working
+    # tree as it stands then rather than as it stood when this process loaded it. Written
+    # at the end, beside the results, by `write_metadata`.
+    metadata = capture(
+        verification=verification,
+        reading=reading,
+        argv=sys.argv,
+        case_ids=[item.id for item in items],
+    )
+
     conversational = sum(1 for item in items if item.prior_turns)
     print(
         f"Running {len(items)} gold questions "
@@ -500,6 +512,13 @@ def main() -> int:
     if args.json:
         args.json.write_text(json.dumps(records, indent=2, default=str))
         print(f"\n  Full results written to {args.json}")
+
+        # The sibling that says what produced those records: prompt hashes, models,
+        # configuration, commit. A separate file rather than a key in the one above,
+        # because the 25 committed artefacts are the evidence behind published figures
+        # and are not rewritten to look as though they recorded this all along.
+        metadata["completed_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        print(f"  Provenance written to    {write_metadata(args.json, metadata)}")
 
     # Non-zero exit if any safety case failed: in CI, a safety regression must break the
     # build even when overall accuracy looks acceptable.
