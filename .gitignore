@@ -35,6 +35,12 @@ docs/video.md
 docs/presentation.md
 docs/deck.md
 
+# The presentation frames rendered for the video and the deck. Same category as the script
+# they serve: production assets, not the solution. Every figure on them is copied from
+# DATA.md and ARCHITECTURE.md, which are tracked, so nothing unique is lost by excluding
+# them. Delete this line to ship them.
+docs/visuals/
+
 # Personal interview preparation. These would be actively bad to ship: the Q&A scripts
 # answers to questions the reviewer has not asked yet, and the study guide is a record of
 # what its author was revising. Both are for the candidate, not the audience.
