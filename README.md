@@ -80,8 +80,8 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 679 unit tests, no database or network needed
-pytest                        # all 893; needs the seeded database, and 10 of them
+pytest -m "not integration"   # 683 unit tests, no database or network needed
+pytest                        # all 897; needs the seeded database, and 10 of them
                               # call the live model, so they also need a funded API key
 # The two configurations the published figures were measured on, named explicitly.
 # --no-reading is needed for the BASELINE only: ADR-013's reading defaults on and also
@@ -98,7 +98,7 @@ python eval/run_eval.py                                  # $1.26, 12.6 min (run 
 
 One caveat on reproduction, stated rather than buried: `uv.lock` was refreshed on 2026-08-11 and
 moves ten packages relative to the environment the runs in `eval/results/` were recorded on,
-including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 893 tests pass on the
+including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 897 tests pass on the
 pinned set, which is what establishes that the SQL validator behaves identically. The eval scores
 are model-driven and are quoted as ranges across repeated runs for that reason.
 
@@ -753,14 +753,14 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output, evidence for the numbers above.
 │                             `runNN.json` is the records, `runNN.meta.json` what produced them
-└── tests/                  893 tests
+└── tests/                  897 tests
 ```
 
 ---
 
 ## Testing
 
-893 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+897 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
@@ -772,7 +772,7 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_provenance.py` | 37 | That a run records what produced it, and that no DSN password reaches the committed artefact |
 | `test_quality_triggers.py` | 28 | The code-detected result-shape triggers (ADR-012), weighted toward the cases that must NOT fire |
 | `test_agent_routing.py` | 25 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
-| `test_runtime_verification.py` | 32 | That runtime verification stays advisory: it cannot block, exceed one retry, or approve (ADR-012), and that the reading-only default adds a description and nothing else (ADR-013) |
+| `test_runtime_verification.py` | 33 | That runtime verification stays advisory: it cannot block, exceed one retry, or approve (ADR-012), and that the reading-only default adds a description and nothing else (ADR-013) |
 | `test_config_defaults.py` | 36 | That `RUNTIME_VERIFICATION` and `SQL_READING` parse to their intended defaults, since a sign error in either ships a configuration nobody chose |
 | `test_security_boundary.py` | 19 | That `GRANT`s hold with the read-only guard disabled |
 | `test_llm_extraction.py` | 18 | Parsing model output; functions that raise rather than half-parse |
@@ -787,6 +787,7 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_store.py` | 17 | Conversation persistence: round trip, ordering, cascade delete, concurrent appends |
 | `test_store_isolation.py` | 6 | That the agent's role cannot connect to the conversation store (ADR-014) |
 | `test_store_titles.py` | 5 | Deriving a chat title from its first question |
+| `test_repo_hygiene.py` | 4 | That no document is both untracked and unignored, so preparation material cannot be shipped by accident |
 | `test_seed_characterization.py` | 7 | Data digests, planted patterns, the crane/terminal invariant |
 | `test_second_order_injection.py` | 5 | Injection arriving through query results, not the chat box. Two of the five call a live model and skip without an API key |
 | `test_forecast_grounding.py` | 5 | That a historical figure is never reported as a forecast. Live model calls; skipped without an API key |

@@ -1097,7 +1097,7 @@ rather than a rewrite.
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers.
 │                               `runNN.json` the records, `runNN.meta.json` their provenance
-├── tests/                      893 tests
+├── tests/                      897 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Fourteen decision records
@@ -1117,7 +1117,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 893 tests
+### Test suite: 897 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
@@ -1128,7 +1128,7 @@ streamlit run app.py
 | `test_provenance.py`            | 37    | That a run records what produced it, and that no DSN password reaches the committed artefact |
 | `test_quality_triggers.py`      | 28    | Code-detected result-shape triggers (ADR-012) |
 | `test_agent_routing.py`         | 25    | Graph topology with a stubbed LLM |
-| `test_runtime_verification.py`  | 32    | That runtime verification stays advisory (ADR-012), and that reading-only adds a description and nothing else (ADR-013) |
+| `test_runtime_verification.py`  | 33    | That runtime verification stays advisory (ADR-012), and that reading-only adds a description and nothing else (ADR-013) |
 | `test_config_defaults.py`       | 36    | That RUNTIME_VERIFICATION and SQL_READING parse to their intended defaults |
 | `test_security_boundary.py`     | 19    | That GRANTs hold with the read-only guard disabled |
 | `test_llm_extraction.py`        | 18    | Parsing model output; raise rather than half-parse |
@@ -1143,6 +1143,7 @@ streamlit run app.py
 | `test_store.py`                 | 17    | Conversation persistence: round trip, ordering, cascade delete, concurrency |
 | `test_store_isolation.py`       | 6     | That the agent's role cannot connect to the store (ADR-014) |
 | `test_store_titles.py`          | 5     | Deriving a chat title from its first question |
+| `test_repo_hygiene.py`          | 4     | That no document is both untracked and unignored, so preparation material cannot ship by accident |
 | `test_seed_characterization.py` | 7     | Data digests, planted patterns, crane/terminal invariant |
 | `test_second_order_injection.py`| 5     | Injection arriving through query results |
 | `test_forecast_grounding.py`    | 5     | A historical figure is never reported as a forecast |
@@ -1151,7 +1152,7 @@ streamlit run app.py
 Integration tests are marked, so unit tests run without a database:
 
 ```bash
-pytest -m "not integration"   # 679 unit tests, no database, no network
+pytest -m "not integration"   # 683 unit tests, no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
 python eval/run_eval.py                                # shipped config, 10 to 15 min
