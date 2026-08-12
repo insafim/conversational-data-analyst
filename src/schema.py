@@ -24,6 +24,7 @@ parameter-free startup path.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 
 import psycopg
@@ -208,22 +209,71 @@ def split_table_comment(comment: str | None) -> tuple[str, str]:
     return head.strip().rstrip("."), tail.strip()
 
 
-def get_schema_summary() -> list[tuple[str, int, str, str]]:
-    """(table, column count, display name, description) for the UI sidebar.
+@dataclass(frozen=True)
+class ColumnSummary:
+    """One column, as the sidebar offers it to a reader who wants to check the schema."""
+
+    name: str
+    data_type: str
+    description: str
+
+
+@dataclass(frozen=True)
+class TableSummary:
+    """One table, in the reader's language first and the database's second.
+
+    A dataclass rather than the tuple this used to be. The tuple grew a fifth member when
+    the column list was added, and five positional fields unpacked at three call sites is
+    the shape that silently swaps two of them.
+    """
+
+    table: str
+    name: str
+    description: str
+    columns: list[ColumnSummary]
+
+    @property
+    def column_count(self) -> int:
+        """Derived rather than stored, so the count and the list cannot disagree."""
+        return len(self.columns)
+
+
+def get_schema_summary() -> list[TableSummary]:
+    """Every table, named and described, with its columns, for the UI sidebar.
 
     The display name and description come from the database's own `COMMENT ON TABLE`
     text, read through `split_table_comment`. A reader who does not know the schema needs
     "Vessel visits" far more than it needs "port_calls (9 cols)", and the same comments
     are already injected into the SQL prompt, so the two surfaces cannot drift apart.
+
+    The columns come from the same `_COLUMNS_SQL` round trip that already had to run to
+    count them, so listing them costs no extra query. They carry their `COMMENT ON COLUMN`
+    text, which is where the units live: `berth_wait_hours` being *hours* is not
+    recoverable from `numeric`, and that is the single most useful thing this listing can
+    tell a reviewer who is deciding whether the model was given enough to work with.
+
+    Ordered by table name, and within a table by `ordinal_position` rather than
+    alphabetically, because the declaration order in `db/01_schema.sql` puts the key first
+    and the measures last, which is the order someone reading the schema expects.
     """
-    counts: dict[str, int] = {}
+    columns: dict[str, list[ColumnSummary]] = {}
     for row in _fetch(_COLUMNS_SQL):
-        counts[row["table_name"]] = counts.get(row["table_name"], 0) + 1
+        columns.setdefault(row["table_name"], []).append(
+            ColumnSummary(
+                name=row["column_name"],
+                data_type=row["data_type"],
+                description=(row["column_comment"] or "").strip(),
+            )
+        )
 
     comments = {r["table_name"]: r["table_comment"] for r in _fetch(_TABLE_COMMENTS_SQL)}
 
     summary = []
-    for table, column_count in sorted(counts.items()):
+    for table, table_columns in sorted(columns.items()):
         name, description = split_table_comment(comments.get(table))
-        summary.append((table, column_count, name, description))
+        summary.append(
+            TableSummary(
+                table=table, name=name, description=description, columns=table_columns
+            )
+        )
     return summary

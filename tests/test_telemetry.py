@@ -11,7 +11,14 @@ import json
 import pytest
 
 from src.models import AgentResult, Outcome, QueryResult, RetryReason
-from src.telemetry import load_eval_runs
+from src.telemetry import (
+    OUTCOME_LABELS,
+    count_of,
+    format_unit_usd,
+    format_usd,
+    load_eval_runs,
+    outcome_tiles,
+)
 
 
 def _answer(**overrides) -> AgentResult:
@@ -166,6 +173,155 @@ def _write_run(directory, number: int, records: list[dict]) -> None:
 def _case(**overrides) -> dict:
     base = dict(passed=True, grounded=True, outcome="answered", elapsed_s=6.0, cost_usd=0.01)
     return {**base, **overrides}
+
+
+def test_a_run_is_scored_per_category_because_the_denominators_differ(tmp_path) -> None:
+    """Three questions, three denominators, one file.
+
+    The overall score hides all three. An adversarial case passes by being REFUSED, so
+    safety is a count of successful blocks and cannot be read off a pass rate that also
+    contains answered questions.
+    """
+    _write_run(
+        tmp_path,
+        1,
+        [
+            _case(category="answerable"),
+            _case(category="answerable", passed=False),
+            _case(category="ambiguous", outcome="clarify"),
+            _case(category="adversarial", outcome="refused"),
+            _case(category="adversarial", outcome="rejected"),
+        ],
+    )
+
+    run = load_eval_runs(tmp_path)[0]
+
+    assert run.categories["answerable"] == (1, 2)
+    assert run.categories["answerable"].rate == pytest.approx(0.5)
+    assert run.categories["adversarial"] == (2, 2)
+    assert run.pass_rate == pytest.approx(4 / 5), (
+        "the overall score should not have moved; the categories are a different cut"
+    )
+
+
+def test_a_category_the_run_never_contained_is_absent_not_zero(tmp_path) -> None:
+    """A run with no adversarial cases has not scored 0% on safety, it has no safety
+    figure at all. Showing zero would report an untested guardrail as a failed one."""
+    _write_run(tmp_path, 1, [_case(category="answerable")])
+
+    run = load_eval_runs(tmp_path)[0]
+
+    assert "adversarial" not in run.categories
+    assert [label for label, _ in run.labelled_categories()] == ["Execution accuracy"]
+
+
+def test_categories_are_labelled_in_a_fixed_order(tmp_path) -> None:
+    """Same three positions for every run, so a reader comparing two runs is not
+    re-reading the labels. The order comes from `CATEGORY_LABELS`, not from whatever
+    order the cases happened to appear in the file."""
+    _write_run(
+        tmp_path,
+        1,
+        [
+            _case(category="adversarial", outcome="refused"),
+            _case(category="ambiguous", outcome="clarify"),
+            _case(category="answerable"),
+        ],
+    )
+
+    labels = [label for label, _ in load_eval_runs(tmp_path)[0].labelled_categories()]
+
+    assert labels == ["Execution accuracy", "Ambiguity handling", "Safety"]
+
+
+def test_a_run_without_categories_at_all_reports_none(tmp_path) -> None:
+    """Older artefacts predate the field. The page must render them as a run with no
+    category breakdown rather than raising, because every committed run is read on load."""
+    _write_run(tmp_path, 1, [_case()])
+
+    run = load_eval_runs(tmp_path)[0]
+
+    assert run.categories == {}
+    assert run.labelled_categories() == []
+
+
+# --- how a measurement is written down -------------------------------------------------
+def test_a_per_question_cost_keeps_four_decimals_at_every_size() -> None:
+    """The bug this pair of functions exists to prevent.
+
+    An answered question costs about a cent and a third, which the aggregate format rounds
+    to `$0.01`, the same string a question costing half as much produces. The magnitude
+    rule worked only while a single question stayed under a cent, and it does not.
+    """
+    assert format_unit_usd(0.0142) == "$0.0142"
+    assert format_unit_usd(0.005) == "$0.0050"
+    assert format_unit_usd(0.0135) != format_unit_usd(0.0071), (
+        "two costs that differ by a factor of two render identically"
+    )
+
+
+def test_a_single_thing_is_counted_in_the_singular() -> None:
+    """A refusal and a clarification each make exactly ONE model call, so the two outcomes
+    a demo is most likely to show were the two that read "1 model calls". Found by
+    replaying real run-26 records through the disclosure, not by any test, which is why
+    there is now a test."""
+    assert count_of(1, "model call") == "1 model call"
+    assert count_of(4, "model call") == "4 model calls"
+    assert count_of(0, "row") == "0 rows", "zero takes the plural"
+    assert count_of(1500, "row") == "1,500 rows", "large counts keep their separator"
+
+
+def test_an_aggregate_cost_is_rounded_to_money_but_never_to_nothing() -> None:
+    """A run total of `$1.2567` is noise, so totals round. A total below a cent still
+    keeps its decimals, because `$0.00` for money that was actually spent reads as free."""
+    assert format_usd(1.2567) == "$1.26"
+    assert format_usd(1234.5) == "$1,234.50"
+    assert format_usd(0.004) == "$0.0040"
+
+
+def test_every_outcome_gets_a_tile_including_the_ones_at_zero() -> None:
+    """Zero is the interesting case for a guardrail. A store in which nothing was ever
+    blocked has a real figure, and omitting it would make an untested guardrail look
+    identical to an absent one."""
+    tiles = outcome_tiles({"answered": 5, "rejected": 1})
+
+    assert tiles == [
+        ("Answered", 5),
+        ("Clarified", 0),
+        ("Refused", 0),
+        ("Blocked by validator", 1),
+        ("Errors", 0),
+    ]
+
+
+def test_every_outcome_the_system_can_produce_has_a_tile() -> None:
+    """The guardrail panel must not be able to lose a turn.
+
+    `outcome_tiles` renders the labels it knows and silently drops anything else, so a
+    sixth `Outcome` added to the enum without a label here would vanish from the panel:
+    the tiles would still sum to less than the question count and nothing would say so.
+    Pinned against the enum rather than against a hand-written list, so adding a terminal
+    state fails this test instead of quietly shrinking the panel.
+    """
+    assert set(OUTCOME_LABELS) == set(Outcome), (
+        f"{set(Outcome) - set(OUTCOME_LABELS)} would be counted but never shown"
+    )
+
+
+def test_the_tiles_account_for_every_turn_in_the_store() -> None:
+    """The arithmetic that makes the panel trustworthy: the tiles partition the traffic,
+    so a reader adding them up gets the question count back."""
+    outcomes = {"answered": 7, "clarify": 2, "refused": 1, "rejected": 1, "error": 1}
+    assert sum(count for _, count in outcome_tiles(outcomes)) == sum(outcomes.values())
+
+
+def test_a_block_is_attributed_to_the_validator_not_to_the_model() -> None:
+    """"Rejected" alone invites the reading that the model declined. It is `validator.py`,
+    pure code, refusing to run a statement the model had already written (ADR-004), and
+    that distinction is the whole of the read-only argument."""
+    labels = dict(outcome_tiles({}))
+    assert "Blocked by validator" in labels
+    assert "Rejected" not in labels
 
 
 def test_runs_are_ordered_by_their_number_not_their_name(tmp_path) -> None:
@@ -337,3 +493,38 @@ def test_the_committed_runs_in_this_repository_actually_parse() -> None:
     assert latest.grounded_rate == pytest.approx(0.974, abs=0.001), (
         "groundedness is not 97.4%, which is what the README and ADR-012 report"
     )
+
+
+@pytest.mark.integration
+def test_the_shipped_run_scores_the_three_figures_the_page_puts_on_screen() -> None:
+    """Run 26, pinned against the committed artefact.
+
+    Run 26 rather than 25, and the distinction is the easiest one in this repository to
+    get wrong: runs 21, 23 and 25 are the both-switches-off baseline, runs 20, 22 and 24
+    have runtime verification on, and **run 26 is the configuration that actually ships**
+    (verification off, ADR-013's reading on). These three tiles are the first thing on the
+    eval half of the page, so they are the figures most likely to be read aloud.
+    """
+    from pathlib import Path
+
+    runs = load_eval_runs(Path(__file__).resolve().parent.parent / "eval" / "results")
+    by_number = {run.number: run for run in runs}
+    assert 26 in by_number, "run26.json is missing, so the shipped figures cannot be checked"
+    shipped = by_number[26]
+
+    assert shipped.categories["answerable"] == (72, 77), "execution accuracy is not 72/77"
+    assert shipped.categories["ambiguous"] == (11, 12), "ambiguity handling is not 11/12"
+    assert shipped.categories["adversarial"] == (19, 19), "safety is not 19/19"
+
+    # The rendered strings, because the tiles show percentages and a rate that is right to
+    # four places can still round to the wrong tile.
+    assert [f"{100 * score.rate:.1f}%" for _, score in shipped.labelled_categories()] == [
+        "93.5%",
+        "91.7%",
+        "100.0%",
+    ]
+
+    # The categories partition the run: every case is in exactly one, so the three
+    # denominators sum to the whole and none of the 108 is being quietly dropped.
+    assert sum(score.cases for score in shipped.categories.values()) == shipped.cases
+    assert sum(score.passed for score in shipped.categories.values()) == shipped.passed

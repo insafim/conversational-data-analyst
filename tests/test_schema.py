@@ -79,10 +79,64 @@ def test_schema_context_reports_real_tables_and_date_coverage() -> None:
 
 
 def test_schema_summary_covers_every_table() -> None:
-    rows = get_schema_summary()
-    counts = {table: count for table, count, _name, _description in rows}
+    summaries = get_schema_summary()
+    counts = {summary.table: summary.column_count for summary in summaries}
     assert set(counts) == {"terminals", "vessels", "cranes", "port_calls", "cargo_moves"}
     assert all(count > 0 for count in counts.values())
+
+
+def test_the_sidebar_can_list_the_columns_it_counts() -> None:
+    """The count and the list behind it come from one read, so they cannot disagree.
+
+    `column_count` is derived from `columns` rather than stored beside it, which is the
+    property being pinned: the sidebar makes the count the label of the expander that
+    opens onto the list, so a count that exceeded the list would be a control promising
+    rows it does not have.
+    """
+    summaries = {summary.table: summary for summary in get_schema_summary()}
+
+    port_calls = summaries["port_calls"]
+    assert port_calls.column_count == len(port_calls.columns)
+
+    names = [column.name for column in port_calls.columns]
+    assert names[0] == "port_call_id", (
+        "columns are not in declaration order, so the key is no longer first"
+    )
+    assert "berth_wait_hours" in names
+
+    assert all(column.data_type for column in port_calls.columns), (
+        "a column has no type, so the listing cannot say what it holds"
+    )
+
+
+def test_the_column_listing_carries_the_units_the_type_cannot() -> None:
+    """The reason the listing shows comments rather than only names and types.
+
+    `berth_wait_hours` is `numeric`, and that a value is in HOURS is not recoverable from
+    the type. It is recoverable from `COMMENT ON COLUMN`, which is the same text the SQL
+    prompt is built from, so the sidebar and the model read one source. This is the whole
+    argument for the expander existing; if the comments stopped arriving it would be a
+    list of names a reviewer already knew.
+    """
+    summaries = {summary.table: summary for summary in get_schema_summary()}
+    described = [
+        column
+        for summary in summaries.values()
+        for column in summary.columns
+        if column.description
+    ]
+    assert len(described) >= 20, (
+        f"only {len(described)} columns carry a comment, so the listing has little to add"
+    )
+
+    wait = next(
+        column
+        for column in summaries["port_calls"].columns
+        if column.name == "berth_wait_hours"
+    )
+    assert "hour" in wait.description.lower(), (
+        f"{wait.description!r} does not state the unit, which the numeric type cannot"
+    )
 
 
 def test_every_table_offers_the_sidebar_a_human_name() -> None:
@@ -93,10 +147,16 @@ def test_every_table_offers_the_sidebar_a_human_name() -> None:
     reads cannot drift apart. This test is what stops a future comment being rewritten
     into a form that leaves the sidebar showing raw table names.
     """
-    for table, _count, name, _description in get_schema_summary():
-        assert name, f"{table} has no comment, so the sidebar would fall back to its name"
-        assert name != table, f"{table}'s display name is just the table name"
-        assert not name.endswith("."), f"{table}'s display name kept its full stop"
+    for summary in get_schema_summary():
+        assert summary.name, (
+            f"{summary.table} has no comment, so the sidebar would fall back to its name"
+        )
+        assert summary.name != summary.table, (
+            f"{summary.table}'s display name is just the table name"
+        )
+        assert not summary.name.endswith("."), (
+            f"{summary.table}'s display name kept its full stop"
+        )
 
 
 # ---------------------------------------------------------------------------------

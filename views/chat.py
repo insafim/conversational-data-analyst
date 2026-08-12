@@ -6,15 +6,23 @@ Deliberately thin. The UI exists to serve three things the brief actually assess
   must be able to check the agent's work rather than trust it;
 * **chart-type selection**: the rule-based choice is rendered, and the rule that fired
   is shown, so the behaviour is inspectable rather than magic;
-* **latency**: measured and displayed per answer, not hidden.
+* **schema handling**: the sidebar names each table in the reader's language, and the
+  column list behind it is one click away for a reviewer who wants the real thing;
+* **latency**: disclosed per answer, collapsed, with the distribution on the
+  Observability page.
+
+Three of those four are collapsed disclosures rather than page furniture, and that is the
+layout decision this file makes. A non-technical reader gets an answer, a caveat and a
+chart; a reviewer gets the SQL, the columns and the seconds without either audience paying
+for the other's screen space.
 
 Everything else is default Streamlit. Time spent on theming is time not spent on the
 eval harness.
 
-This file renders and decides nothing. What is said beside an answer lives in
-`src/notices.py`; which conversation is open, and the order in which a turn is saved and
-shown, live in `src/conversations.py`. Both are there so they can be asserted without a
-browser, because this file has no test of its own.
+This file renders and decides nothing. What is said beside an answer, and what one turn
+cost, live in `src/notices.py`; which conversation is open, and the order in which a turn
+is saved and shown, live in `src/conversations.py`. Both are there so they can be asserted
+without a browser, because this file has no test of its own.
 """
 
 from __future__ import annotations
@@ -24,8 +32,9 @@ import streamlit as st
 from src.charts import metric_fields, to_dataframe
 from src.conversations import ChatTurn
 from src.models import ChartKind, Outcome
-from src.notices import Level, answer_notices
+from src.notices import Level, answer_notices, turn_telemetry
 from src.schema import get_schema_summary
+from src.telemetry import count_of
 from views.state import chat_session, data_coverage, store_handle
 
 EXAMPLE_QUESTIONS = [
@@ -108,8 +117,14 @@ def render_answer(turn: ChatTurn) -> None:
     # What the follow-up was taken to mean (ADR-011). Shown ABOVE the answer, because a
     # misread question makes the answer below it irrelevant, and the user is the only
     # one who can say so.
+    #
+    # An info box rather than the caption it was, because a caption is the quietest
+    # element Streamlit has and this is the one line on the page the user is being asked
+    # to check. It is not a warning: nothing is wrong, the system is stating the question
+    # it actually answered, and colouring it as a problem would teach the reader to
+    # dismiss it.
     if result.interpreted_question:
-        st.caption(f"Interpreted as: {result.interpreted_question}")
+        st.info(f"**Interpreted as:** {result.interpreted_question}")
 
     st.markdown(result.answer)
 
@@ -133,13 +148,23 @@ def render_answer(turn: ChatTurn) -> None:
         with st.expander("View SQL"):
             st.code(result.sql, language="sql")
 
-    # Seconds, cost, call count, row count, retry reasons and the stage breakdown used to
-    # sit here and now live on the Observability page. What a caption beside an answer can
-    # say about latency is what one turn cost, which is the least useful form of the
-    # number: a single reading has no baseline to be compared against, so a reader cannot
-    # tell 6 seconds from slow. Aggregated over the store it becomes a median and a p95,
-    # which is what the figure is for. `src/notices.py` still owns what stays here, and it
-    # is exactly the set that qualifies THIS answer rather than describing the system.
+    # Seconds, cost, call count and the stage breakdown. Collapsed, and next to the SQL
+    # rather than under the answer, because the two are the same kind of object: a reader
+    # who wants to inspect the machinery opens them, and a reader who wants the answer
+    # never sees either. This was an always-visible caption until 2026-08-12 and was
+    # removed for a reason that has since been answered; `src/notices.py::turn_telemetry`
+    # carries the argument and decides every word of it.
+    telemetry = turn_telemetry(result)
+    if telemetry:
+        with st.expander(telemetry.label):
+            st.caption(telemetry.summary)
+            for stage, seconds in telemetry.stages:
+                st.text(f"{stage:<16}{seconds:>7.2f}s")
+            if telemetry.stages:
+                st.caption(
+                    "Seconds per stage. Stages are timed individually and some overlap, "
+                    "so they do not sum to the total above."
+                )
 
     # Said rather than hidden. The answer above is real and was paid for; what failed is
     # the bookkeeping, and a user who reloads expecting to find this turn should be told
@@ -242,10 +267,20 @@ with st.sidebar:
         # Named in the reader's language, with the database's own name in brackets for
         # anyone who wants to check the SQL. Both come from `COMMENT ON TABLE`, so the
         # sidebar and the model are reading the same description (ADR-003).
-        for table, column_count, name, description in get_schema_summary():
-            st.markdown(f"**{name or table}**  \n`{table}` · {column_count} columns")
-            if description:
-                st.caption(description)
+        for summary in get_schema_summary():
+            st.markdown(f"**{summary.name or summary.table}**  \n`{summary.table}`")
+            if summary.description:
+                st.caption(summary.description)
+            # The column count is the expander's label, so the count and the list it
+            # opens onto are the same control. A reviewer checking whether the model was
+            # given enough to work with wants the names, the types and above all the
+            # comments, which is where the units live; a non-technical reader wants none
+            # of it and, collapsed, never sees it. Same bargain as `View SQL`.
+            with st.expander(count_of(summary.column_count, "column")):
+                for column in summary.columns:
+                    st.markdown(f"`{column.name}` · {column.data_type}")
+                    if column.description:
+                        st.caption(column.description)
     except Exception as exc:  # noqa: BLE001
         st.error(f"Cannot reach the database: {exc}")
         st.caption("Run `docker compose up -d --wait` then `python db/seed.py`.")

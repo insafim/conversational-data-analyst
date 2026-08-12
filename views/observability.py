@@ -9,9 +9,16 @@ rather than a stylistic one: `AppTest.switch_page` only reaches file-based pages
 callable page cannot be driven by a test at all. Source and verification are in `app.py`,
 where the pages are registered.
 
-Everything it aggregates is decided elsewhere. `Store.telemetry()` does the SQL and
-`src/telemetry.py` reads the committed eval artefacts, both asserted in
-`tests/test_telemetry.py` without a browser. This file renders.
+Each half now answers a different question about the guardrails, and the split is
+deliberate. The live half counts what this application happened to be asked, which on a
+fresh store is nothing at all. The eval half carries the 19 adversarial cases, which is
+the half that can actually prove read-only enforcement, because it does not depend on a
+reviewer having tried an attack in this browser. The live panel says so and points down
+the page rather than borrowing the eval figure into its own section.
+
+Everything it aggregates is decided elsewhere. `Store.telemetry()` does the SQL,
+`src/telemetry.py` reads the committed eval artefacts and owns what every measurement is
+called, both asserted in `tests/test_telemetry.py` without a browser. This file renders.
 """
 
 from __future__ import annotations
@@ -21,23 +28,27 @@ from pathlib import Path
 import streamlit as st
 
 from src.conversations import STORE_FAILURES
-from src.telemetry import load_eval_runs
+from src.telemetry import (
+    count_of,
+    format_unit_usd,
+    format_usd,
+    load_eval_runs,
+    outcome_tiles,
+)
 from views.state import chat_session
 
 session = chat_session()
+
+# How many recent questions the live half lists. Ten because it is a window on what just
+# happened, not an archive: the aggregate tiles above already describe the whole store,
+# and a longer list would push the eval section off the screen.
+_RECENT_QUESTIONS = 10
 
 # How often the live half redraws while the page is open. Five seconds is chosen against
 # what it is watching rather than for smoothness: a turn takes about six seconds, so a
 # shorter interval mostly redraws identical numbers, and a longer one makes a question
 # asked in another tab look like it was dropped.
 _REFRESH_SECONDS = 5
-
-
-def _money(amount: float) -> str:
-    """Costs here span four orders of magnitude, from a fraction of a cent per turn to
-    dollars per eval run, and one format cannot show both. Sub-cent values keep four
-    decimals rather than rendering as `$0.00`, which reads as free."""
-    return f"${amount:.4f}" if amount < 0.01 else f"${amount:,.2f}"
 
 
 def _bar_table(counts: dict[str, int]) -> None:
@@ -94,27 +105,53 @@ def live_telemetry() -> None:
     first.metric("Questions", f"{live.turns:,}")
     second.metric("Median latency", f"{live.median_latency_s:.2f}s", help="p50 across turns")
     third.metric("p95 latency", f"{live.p95_latency_s:.2f}s")
-    fourth.metric("Total cost", _money(live.total_cost_usd))
+    fourth.metric("Total cost", format_usd(live.total_cost_usd))
 
     fifth, sixth, seventh = st.columns(3)
-    fifth.metric("Cost per question", _money(live.mean_cost_usd))
+    fifth.metric("Cost per question", format_unit_usd(live.mean_cost_usd))
     sixth.metric("LLM calls", f"{live.llm_calls:,}")
     seventh.metric("Conversations", f"{live.conversations:,}")
 
-    left, right = st.columns(2)
-    with left:
-        st.markdown("**Outcomes**")
-        _bar_table(live.outcomes)
-        st.caption(
-            "A refusal and a clarification are successful outcomes, not failures. Only "
-            "`error` is the system failing to answer."
+    # --- guardrails ---------------------------------------------------------------
+    # Tiles rather than the count table this was, because the counts are the point rather
+    # than their shares: "blocked 1" is a fact about the validator, and "blocked 4.2% of
+    # traffic" is a fact about what happened to get asked today.
+    st.markdown("**Guardrails**")
+    tiles = outcome_tiles(live.outcomes)
+    for column, (label, count) in zip(st.columns(len(tiles)), tiles, strict=True):
+        column.metric(label, f"{count:,}")
+    st.caption(
+        "A refusal and a clarification are successful outcomes, not failures. Only "
+        "`error` is the system failing to answer. These count what this application "
+        "happened to be asked; the enforcement itself is proven against the 19 "
+        "adversarial cases in the Evaluation section below, which is evidence that does "
+        "not depend on anyone having tried an attack in this browser."
+    )
+
+    st.markdown("**Where the time goes**")
+    if live.stage_means_s:
+        st.bar_chart(
+            {
+                "stage": list(live.stage_means_s.keys()),
+                "seconds": list(live.stage_means_s.values()),
+            },
+            x="stage",
+            y="seconds",
+            horizontal=True,
+            # Longest bar at the top. Without it the bars come back in alphabetical order,
+            # which buries the one fact the chart exists to state. Verified from the
+            # generated Vega-Lite spec on the pinned 1.61.1, not assumed: this renders as
+            # `sort: {field: seconds, order: descending}` on the categorical axis.
+            sort="-seconds",
+            # The labels follow the DATA role, not the rendered axis. `horizontal=True`
+            # draws the `x` column up the side and the `y` column along the bottom, but
+            # `x_label` still names the `x` column. Written the other way round first,
+            # which put "mean seconds" against the stage names; the spec showed it.
+            x_label="",
+            y_label="mean seconds",
         )
-    with right:
-        st.markdown("**Where the time goes**")
-        for stage, seconds in live.stage_means_s.items():
-            st.text(f"{stage:<16} {seconds:>6.2f}s")
-        st.caption("Mean seconds per stage. Stages are timed individually, so they sum to "
-                   "slightly less than the total; the difference is graph overhead.")
+    st.caption("Mean seconds per stage. Stages are timed individually, so they sum to "
+               "slightly less than the total; the difference is graph overhead.")
 
     if live.retry_reasons:
         st.markdown("**Retries, by reason**")
@@ -123,6 +160,33 @@ def live_telemetry() -> None:
             "Named rather than counted (ADR-012): a count cannot tell a database error "
             "from the verifier changing the query. A turn that retried twice appears twice."
         )
+
+    # --- the questions themselves -------------------------------------------------
+    st.markdown("**Latest questions**")
+    try:
+        recent = session.store.recent_turns(limit=_RECENT_QUESTIONS)
+    except STORE_FAILURES:
+        st.caption("The recent questions could not be read just now.")
+        return
+
+    # `st.dataframe` renders its cells as text. That is load-bearing rather than
+    # incidental: every question in this table is user-supplied, and a surface that
+    # rendered markdown or HTML here would be a stored-content injection channel into the
+    # operator's own page, which is the class of problem ADR-011 keeps closed elsewhere.
+    st.dataframe(
+        [
+            {
+                "Asked": turn.asked_at[11:19],
+                "Question": turn.question,
+                "Outcome": turn.result.outcome.value,
+                "Latency": f"{turn.result.elapsed_s:.2f}s",
+                "Cost": format_unit_usd(turn.result.cost_usd),
+            }
+            for turn in recent
+        ],
+        width="stretch",
+        hide_index=True,
+    )
 
 
 with st.sidebar:
@@ -155,6 +219,34 @@ runs = load_eval_runs(Path(__file__).resolve().parent.parent / "eval" / "results
 if not runs:
     st.info("No committed eval runs were found in `eval/results/`.")
 else:
+    # The newest run, scored by what the gold set was testing. Three denominators over one
+    # file, and the overall score hides all three: an adversarial case "passes" by being
+    # refused or blocked, so safety can read 100% inside a run whose overall score is 94%.
+    #
+    # The run is NAMED in the caption rather than implied. Three configurations exist in
+    # `eval/results/` and conflating them is the easiest mistake this repository offers:
+    # runs 21, 23 and 25 are the both-switches-off baseline, runs 20, 22 and 24 have
+    # runtime verification on, and the newest run is what actually ships. A figure quoted
+    # without its run number is not checkable.
+    latest = runs[0]
+    scored = latest.labelled_categories()
+    if scored:
+        for column, (label, score) in zip(st.columns(len(scored)), scored, strict=True):
+            column.metric(
+                label,
+                f"{100 * score.rate:.1f}%",
+                help=f"{score.passed} of {count_of(score.cases, 'case')}",
+            )
+        st.caption(
+            f"`{latest.name}`, the newest committed run, scored by category. Safety is "
+            "the adversarial subset: prompt injection, DDL, DML, multiple statements and "
+            "catalog reconnaissance, each of which passes only by being refused before "
+            "the database or blocked by the validator. Execution accuracy is the "
+            "answerable subset, which is a different denominator from the overall score "
+            "in the table below."
+        )
+        st.divider()
+
     st.caption(
         "Committed artefacts, newest first (ADR-010). Execution accuracy and groundedness "
         "are shown apart because they moved in opposite directions when runtime "
@@ -178,7 +270,7 @@ else:
                 # the case in point: committed, and invalid because of a DNS failure.
                 "Errors": run.outcomes.get("error", 0),
                 "Median latency": f"{run.median_latency_s:.2f}s",
-                "Cost": _money(run.total_cost_usd),
+                "Cost": format_usd(run.total_cost_usd),
             }
             for run in runs
         ],

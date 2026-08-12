@@ -16,6 +16,7 @@ Requires:  docker compose up -d --wait && python db/seed.py
 from __future__ import annotations
 
 import dataclasses
+import json
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,31 @@ def app(store, monkeypatch) -> AppTest:
     return AppTest.from_file(APP, default_timeout=60)
 
 
+def _table_with(at: AppTest, column: str):
+    """The rendered dataframe carrying `column`, by name rather than by position.
+
+    The observability page renders more than one table and their order is a layout
+    decision, so a positional lookup couples every assertion to where a section happens to
+    sit on the page. It failed exactly that way once: a table added above the eval runs
+    turned `at.dataframe[0]` into a different object, and the test went on passing.
+    """
+    matches = [frame.value for frame in at.dataframe if column in frame.value.columns]
+    assert matches, (
+        f"no rendered table has a {column!r} column; "
+        f"found {[list(f.value.columns) for f in at.dataframe]}"
+    )
+    # Ambiguity is failed rather than resolved by taking the first match. Returning the
+    # first would rebuild the exact bug this helper replaced: a caller would go on
+    # asserting happily against whichever table happened to render earlier. The trigger
+    # would be a column-name collision instead of a layout reorder, which is rarer and
+    # correspondingly harder to spot.
+    assert len(matches) == 1, (
+        f"{len(matches)} rendered tables have a {column!r} column, so which one this "
+        "returns is decided by page order rather than by the test"
+    )
+    return matches[0]
+
+
 def _answered(**overrides) -> AgentResult:
     base = dict(
         question="Which terminal has the longest average berth wait?",
@@ -88,6 +114,30 @@ def test_the_page_renders_with_no_saved_chats(app) -> None:
     assert at.title[0].value == "Conversational Data Analyst"
     labels = [button.label for button in at.sidebar.button]
     assert "New chat" in labels
+
+
+def test_the_sidebar_offers_the_columns_behind_the_count_it_shows(app) -> None:
+    """Schema handling, as a reviewer can actually check it.
+
+    The count is the expander's label, so the control that states how many columns a table
+    has is the same control that lists them. A count rendered as plain text beside a
+    separate expander could disagree with it; this cannot.
+
+    The sidebar keeps the human name in front, because the reason this listing is
+    collapsed at all is that a non-technical user cannot form a question from a column
+    list and did not come here for one.
+    """
+    at = app.run()
+
+    assert not at.exception, at.exception
+    labels = [e.label for e in at.sidebar.expander]
+    assert "9 columns" in labels, "port_calls does not offer its columns"
+    assert len(labels) == 5, f"expected one expander per table, found {labels}"
+
+    # The names are behind the expander, and the human name is not.
+    body = " ".join(m.value for m in at.sidebar.markdown)
+    assert "berth_wait_hours" in body, "the column names never reached the sidebar"
+    assert "Vessel visits" in body, "the human table name was displaced by the listing"
 
 
 def test_a_saved_chat_is_listed_and_reopens_with_its_table_and_chart(app, store) -> None:
@@ -122,14 +172,56 @@ def test_a_saved_chat_is_listed_and_reopens_with_its_table_and_chart(app, store)
     # ChartSpec would drop this line, which is what makes it worth asserting.
     assert "Chart chosen by rule: 2 categories" in captions, "the chart did not survive reopening"
 
-    # Telemetry moved to the Observability page. Asserted as absent rather than simply
-    # deleted from this test, because "the seconds are no longer beside the answer" is the
-    # change, and a caption that crept back would otherwise go unnoticed.
-    assert "6.94s" not in captions, "the latency caption is back in the chat pane"
-    assert "$0.0142" not in captions, "the cost caption is back in the chat pane"
-    assert "LLM calls" not in captions, "the call count is back in the chat pane"
-    assert not any("Latency breakdown" in e.label for e in at.expander), (
-        "the latency breakdown expander is back in the chat pane"
+    # Telemetry is beside the answer again, and COLLAPSED, which is the whole of the
+    # distinction. It was an always-visible caption until 2026-08-12, removed because a
+    # single reading has no baseline; the Observability page supplies the baseline, so it
+    # returned as a disclosure rather than as page furniture.
+    #
+    # The two halves are asserted separately on purpose. That it is in an expander LABEL
+    # and not in a caption is what makes it collapsed, so checking only that the seconds
+    # appear somewhere would pass for the shape that was deliberately rejected.
+    labels = [e.label for e in at.expander]
+    assert "Answered in 6.94s" in labels, "the turn's latency is not disclosed at all"
+    assert not any("6.94s" in c.value for c in at.caption), (
+        "the latency is a visible caption again, not a collapsed disclosure"
+    )
+
+    # $0.0142, not $0.01. A per-question cost rounded to the cent is the same string a
+    # question costing half as much would produce, which is why `format_unit_usd` exists.
+    assert any("$0.0142" in c.value for c in at.caption), (
+        "the cost was rounded to the cent, so the figure stopped being a measurement"
+    )
+    assert any("4 model calls" in c.value for c in at.caption)
+
+
+def test_a_resolved_follow_up_shows_what_it_was_taken_to_mean(app, store) -> None:
+    """ADR-011's rewrite, rendered where the user can contradict it.
+
+    An info box rather than the caption it was. A caption is the quietest element
+    Streamlit has, and this is the one line on the page the reader is being asked to
+    check: if the follow-up was resolved wrongly, everything below it is answering a
+    different question. Asserted as `at.info` specifically, because "the text appears
+    somewhere" was true of the version that was too quiet to do its job.
+    """
+    conversation = store.create_conversation("Follow-ups")
+    store.append_turn(
+        conversation,
+        "and by containers?",
+        _answered(
+            interpreted_question="Which terminal moved the most containers?",
+        ),
+    )
+
+    at = app.run()
+    at = [b for b in at.sidebar.button if b.label == "Follow-ups"][0].click().run()
+
+    assert not at.exception, at.exception
+    boxes = [i.value for i in at.info]
+    assert any("Which terminal moved the most containers?" in b for b in boxes), (
+        f"the rewrite is not an info box; info boxes were {boxes}"
+    )
+    assert not any("Interpreted as" in c.value for c in at.caption), (
+        "the rewrite is still rendered as a caption"
     )
 
 
@@ -225,7 +317,12 @@ def test_the_observability_page_lists_the_committed_eval_runs(app, store) -> Non
 
     assert not at.exception, at.exception
     assert at.dataframe, "the eval run table is missing"
-    runs = at.dataframe[0].value
+
+    # Selected by its columns, NOT by `at.dataframe[0]`, which is what this was. The page
+    # now renders a latest-questions table above this one, so the positional read silently
+    # started checking the wrong table while still passing every assertion below it. A
+    # test that keeps passing against the wrong object is worse than one that fails.
+    runs = _table_with(at, "Run")
     assert len(runs) >= 20, "the committed run artefacts were not read"
 
     latest = runs[runs["Run"] == "run25"]
@@ -242,6 +339,121 @@ def test_the_observability_page_lists_the_committed_eval_runs(app, store) -> Non
         "than by the cases where it was actually scored"
     )
     assert row["Overall"] != row["Grounded"], "the two columns are showing the same figure"
+
+
+def test_the_observability_page_scores_the_newest_run_by_category(app, store) -> None:
+    """The three figures the brief's eval section asks for, on screen rather than in a
+    file. Pinned to run 26, the configuration that ships, because the tiles read the
+    newest committed run and a reviewer will read these aloud.
+
+    Asserted through the page rather than only in `tests/test_telemetry.py` because the
+    arithmetic being right and the arithmetic reaching a tile are different claims, and
+    the second one is what a demo depends on.
+    """
+    at = app.switch_page("views/observability.py").run()
+
+    assert not at.exception, at.exception
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["Execution accuracy"] == "93.5%"
+    assert metrics["Ambiguity handling"] == "91.7%"
+    assert metrics["Safety"] == "100.0%", (
+        "the adversarial subset is not at 19/19, which is the read-only evidence"
+    )
+    # Distinct from the overall score in the table below, which is 94.4% for run 25 and
+    # 94.4% for run 26. Two figures both called accuracy is how a deck quotes the wrong one.
+    assert metrics["Execution accuracy"] != _table_with(at, "Run").iloc[0]["Overall"]
+
+
+def test_the_stage_chart_is_sorted_and_labelled_the_way_it_is_read(app, store) -> None:
+    """The chart's spec, not merely that drawing it raised nothing.
+
+    Two reasons this is asserted properly rather than smoke-tested. Every other test on
+    this page stores turns with no `stage_timings`, so `live.stage_means_s` came back empty
+    and the chart branch was skipped in all of them: the `st.bar_chart` call had never once
+    executed under test. And the arguments that make the chart readable are exactly the
+    ones a bare "it rendered" check cannot see. `x_label` and `y_label` follow the DATA
+    role, not the rendered axis, so under `horizontal=True` they were written the wrong way
+    round first and put "mean seconds" against the stage names.
+
+    `st.bar_chart` has no `AppTest` accessor, but it emits a `vega_lite_chart` element
+    whose `proto.spec` is JSON, and that is a stable enough surface to assert the two
+    properties the chart exists for: the slowest stage on top, and the seconds axis named.
+    """
+    conversation = store.create_conversation("Timed")
+    store.append_turn(
+        conversation,
+        "q",
+        _answered(stage_timings={"generate_sql": 3.3, "classify": 1.9, "summarize": 1.1}),
+    )
+    store.append_turn(
+        conversation,
+        "q",
+        _answered(stage_timings={"generate_sql": 4.1, "classify": 1.5, "execute": 0.02}),
+    )
+
+    at = app.switch_page("views/observability.py").run()
+
+    assert not at.exception, at.exception
+    assert at.title[0].value == "Observability", "navigation did not reach the page"
+
+    charts = at.get("vega_lite_chart")
+    assert charts, "the stage chart did not render at all"
+    encoding = json.loads(charts[0].proto.spec)["encoding"]
+
+    # Horizontal bars: the measure is drawn along x and the categories up the y axis.
+    assert encoding["x"]["field"] == "seconds"
+    assert encoding["y"]["field"] == "stage"
+
+    # Slowest first. Without this the bars come back alphabetically, which buries the one
+    # fact the chart exists to state.
+    assert encoding["y"]["sort"] == {"field": "seconds", "order": "descending"}
+
+    # The labels, pinned to the axis each one actually reaches. This is the assertion that
+    # fails if `x_label` and `y_label` are swapped back.
+    assert encoding["x"]["title"] == "mean seconds", (
+        "the measure axis is unlabelled, so the numbers have no unit"
+    )
+    assert encoding["y"]["title"] == "", "the stage names were given a redundant title"
+
+
+def test_the_guardrail_tiles_count_the_blocks_including_the_zeroes(app, store) -> None:
+    """A guardrail that never fired still has a figure, and it is zero. Omitting it would
+    make an untested guardrail indistinguishable from an absent one, which is the exact
+    confusion this panel exists to remove."""
+    conversation = store.create_conversation("Mixed")
+    store.append_turn(conversation, "q", _answered())
+    store.append_turn(
+        conversation,
+        "drop the port_calls table",
+        _answered(outcome=Outcome.REJECTED, answer="I couldn't run that safely.", chart=None),
+    )
+
+    at = app.switch_page("views/observability.py").run()
+
+    assert not at.exception, at.exception
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["Blocked by validator"] == "1"
+    assert metrics["Answered"] == "1"
+    assert metrics["Refused"] == "0", "a guardrail that did not fire lost its tile"
+    assert "Rejected" not in metrics, (
+        "the block is attributed to the model rather than to the validator"
+    )
+
+
+def test_the_observability_page_lists_the_questions_that_were_asked(app, store) -> None:
+    """The live half's most convincing element: the thing a viewer just watched happen,
+    with its latency and cost beside it."""
+    conversation = store.create_conversation("Berth waits")
+    store.append_turn(conversation, "Which terminal waits longest?", _answered())
+
+    at = app.switch_page("views/observability.py").run()
+
+    assert not at.exception, at.exception
+    recent = _table_with(at, "Question")
+    assert recent.iloc[0]["Question"] == "Which terminal waits longest?"
+    assert recent.iloc[0]["Outcome"] == "answered"
+    assert recent.iloc[0]["Latency"] == "6.94s"
+    assert recent.iloc[0]["Cost"] == "$0.0142", "the per-question cost was rounded away"
 
 
 def test_the_observability_page_says_so_when_the_store_is_unreachable(
