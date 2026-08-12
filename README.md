@@ -93,7 +93,7 @@ python eval/run_eval.py --verification                   # ADR-012 checks on, ~$
 
 # What the app actually ships: verification off, reading on. Costs more than the
 # baseline above by the reading's one extra cheap call per ANSWERED question.
-python eval/run_eval.py                                  # 10 to 15 min across observed runs
+python eval/run_eval.py                                  # $1.26, 12.6 min (run 26)
 ```
 
 One caveat on reproduction, stated rather than buried: `uv.lock` was refreshed on 2026-08-11 and
@@ -549,6 +549,35 @@ the evidence both in the repo. Turning it on is defensible when an invented figu
 more than a wrong row, which is a judgement about the deployment rather than about the code.
 The honest summary is that a plausible idea, built as specified and measured properly, made
 the headline number worse.
+
+**What the shipped configuration actually costs.** Both tables above measure the two extreme
+settings. What ships is neither: verification off, ADR-013's reading on. Run 26, on 2026-08-12,
+is the first full 108-case run of it, and the first artefact carrying its own provenance, so
+`eval/results/run26.meta.json` records the prompt digest, both model ids and the commit it ran
+from rather than leaving them to be recalled later.
+
+| | Both off (21, 23, 25) | **Shipped (26)** | Verification on (20, 22, 24) |
+| --- | --- | --- | --- |
+| Overall | 102 to 103 / 108 | **102 / 108** | 100 to 101 / 108 |
+| Cost per run | $1.014 to $1.036 | **$1.257** | $1.330 to $1.355 |
+| Cost per answered question | $0.01229 to $0.01245 | **$0.01530** | $0.01621 to $0.01661 |
+| LLM calls | 276 to 279 | **361** | 377 to 384 |
+| Median latency | 6.03 to 6.65 s | **6.91 s** | 6.74 to 7.11 s |
+
+The cost columns are arithmetic over 108 records and can be trusted. The latency column is one
+run against three, and the variance section below is the reason it is quoted as a direction
+rather than a measurement: the reading's unabsorbed cost, collected at the `review` node, was
+36.8s across the run, or 0.48s per answered question.
+
+Run 26's six failures were `q49`, `q62`, `q64` and `q70`, which fail in every both-off run,
+plus `a10` and `q30`. `q30` is new and is the same class as `q62` and `q64`: asked which
+terminals have "Terminal" in the name, it returned the right three rows with an extra
+`port_name` column the question never asked for. Three answers carried a grounding flag, and
+two of them, `q23` and `q27`, are worth naming because `SUMMARIZE_SYSTEM` already forbids
+exactly what they did. It bans banding as arithmetic and gives "the 21,000 to 22,000 range" and
+"crossed 100,000 in June" as its own examples of the mistake; the flagged figures were 21,000
+and 100,000. The prompt naming a failure is not the same as the prompt preventing it, which is
+the argument for keeping the checks outside the prompt.
 
 The gold set has 108 items in three categories (expanded from 36 on 2026-08-10, ADR-010:
 every case now carries a syllabus-topic tag and a behaviour tag; five conversational

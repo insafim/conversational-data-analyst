@@ -93,7 +93,7 @@ Deciding whether that query is right is the task it measurably is not.
   `summarize`, so the additional wall-clock is whatever the overlap does not absorb; the `review`
   collection point measured 0.00s to 2.83s, and single-run deltas were swamped by provider
   variance of up to 17s on one sample. This is quoted as unresolved rather than estimated,
-  and the harness is what will settle it.
+  and the harness is what will settle it. **It has: see the addendum below.**
 - A third configuration is a third thing to keep true. The three-way table above is asserted in
   `tests/test_runtime_verification.py`, including that reading-only performs no regeneration, no
   re-summarisation and raises no caveat, that a raising verifier still returns an answer, and
@@ -121,3 +121,44 @@ better long-term answer and is deferred rather than rejected.
 out of scope here: applying either defect invalidates runs 20 to 25, so the comparison would have
 to be re-measured before ADR-012's conclusion could be restated. That work is scoped in ADR-012's
 addendum and is deliberately left undone.
+
+## Addendum, 2026-08-12: run 26 settles the cost and the latency
+
+The two figures above were left open because five questions could not resolve them. Run 26 is
+the first full 108-case run in the shipped configuration, verification off and reading on, and
+it is also the first artefact carrying its own provenance
+([ADR-006](ADR-006-eval-execution-accuracy.md)'s addendum), so what it measured is recorded
+rather than remembered: `run26.meta.json` pins the prompt digest, both model ids and the commit.
+
+**Cost. The five-question estimate held.** Per answered question, $0.01530 against $0.01229,
+$0.01245 and $0.01234 in runs 21, 23 and 25, which is **22.9% to 24.5% more**, inside the 18% to
+27% predicted above. A full run costs **$1.2567** against $1.0143 to $1.0361 with both switches
+off, and **361 LLM calls** against 276 to 279. The extra calls land only where the ADR said they
+would, and the count reconciles exactly. Against run 25, 31 cases cost nothing more, 72 cost one
+call, four cost two and one costs three, totalling 83. The 72 are answered questions. The four
+are the conversational cases, whose setup turn answers as well and so earns its own reading; a
+fifth setup turn sits under `s19`, whose scored turn is a refusal, which is why that case gains a
+call while producing no reading of its own. The remaining case is `q26`, where a database-error
+retry ran the pipeline twice. So: one reading per answered turn, 81 of them, plus two calls from
+the retry.
+
+**Latency. The overlap absorbs most of the reading, but not all of it, and now the residue has a
+number.** `review` is the collection point, and `src/agent.py` documents its timing as exactly
+the part of the verifier's latency the overlap failed to absorb. Across run 26 that is **36.8s in
+total, or 0.48s per answered question**. Median latency was **6.91s** against 6.03s, 6.65s and
+6.09s with both switches off. Mean 7.01s, p95 14.32s, slowest 18.43s, wall clock 758.6s.
+
+So the earlier framing was too generous to the feature. The reading was described as costing
+"only what that overlap does not absorb", which is true and was doing rhetorical work it had not
+earned: the unabsorbed part is roughly half a second on every answered question, and the shipped
+median now sits above the both-off band rather than inside it.
+
+**What this run cannot establish.** It is one run. This repository's own variance finding
+([ADR-006](ADR-006-eval-execution-accuracy.md)) recorded a nine-point accuracy spread between two
+runs of identical code, and medians separated by a few hundred milliseconds are well inside that
+noise. The cost figures are arithmetic over 108 records and are solid; the latency comparison is
+one sample against three and is stated as a direction, not a measurement.
+
+Accuracy was unaffected, which is what the ADR predicted from construction rather than from
+measurement: 102/108 overall, execution accuracy 72/77, safety 19/19, groundedness 73/76. Four of
+the six failures (q49, q62, q64, q70) are the ones that fail in every both-off run.

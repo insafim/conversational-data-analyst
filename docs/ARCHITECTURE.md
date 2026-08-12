@@ -777,7 +777,7 @@ so `numeric` vs `double precision`, and `date` vs midnight `timestamp`, compare 
 
 ### Measured results
 
-Twenty-five full runs. **The item set grew four times, so a column is comparable only with
+Twenty-six full runs. **The item set grew four times, so a column is comparable only with
 another column from the same set.** Runs 1 to 3 scored a 30-item set (22 answerable), run 4
 scored 33 items, runs 5 to 14 scored 36 items (28 answerable), runs 15 to 17 scored a frozen
 100-item set, run 19 scored 103, and runs 20 onward score 108 (77 answerable) after the
@@ -786,7 +786,9 @@ resolution 22 items in. Raw output for every run is in `eval/results/`.
 
 The six runs below are the current code. They alternate ADR-012's runtime verification off and
 on, so that provider drift across the hour could not land on one configuration and be read as
-an effect of the feature. The three "off" runs are the shipped default.
+an effect of the feature. The three "off" runs were the shipped default when they were made;
+they are not any longer, because ADR-013 subsequently turned the reading on. Run 26, measured
+separately below, is the first full run of what actually ships.
 
 | Metric              | Run 21 | Run 23 | Run 25 | Run 20 | Run 22 | Run 24 |
 | ------------------- | ------ | ------ | ------ | ------ | ------ | ------ |
@@ -969,19 +971,25 @@ code change. Measured cost is **~$0.0095 per question**, or about $1.03 for a 10
 with both switches off (runs 21, 23, 25), rising to ~$0.0124 and ~$1.34 with runtime
 verification on (runs 20, 22, 24). A follow-up turn adds one cheap call for the rewrite node.
 
-The **shipped** default sits between the two. ADR-013's reading adds one cheap-tier call to every
-ANSWERED question, measured at 18% to 27% more per answered question across five questions in
-both orderings; a refusal or a clarification has no SQL to describe and costs nothing extra. The
-figure for a full 108-case run in the shipped configuration is not quoted here because it has not
-been measured across the whole set yet.
+The **shipped** default sits between the two, and run 26 measured it across the whole set:
+**$1.2567 for 108 questions, or ~$0.0116 each**, against ~$1.03 with both switches off and ~$1.34
+with runtime verification on. ADR-013's reading adds one cheap-tier call to every ANSWERED
+question and nothing to a refusal or a clarification, which have no SQL to describe. Per answered
+question that is $0.01530 against $0.01229 to $0.01245 in runs 21, 23 and 25, so **22.9% to
+24.5% more**, inside the 18% to 27% that five questions had predicted. Call count moved the same
+way: 361 against 276 to 279.
 
 ### Latency
 
 **Median 6.03 to 6.65s across runs 21, 23 and 25**, both switches off, and this is the
 weakest number in the system. The shipped default adds ADR-013's reading, which runs on a worker
-thread beside `execute` and so costs only what that overlap does not absorb; the amount was not
-resolvable at small sample size, because single-run deltas were swamped by provider variance of
-up to 17s. It is stated as unmeasured rather than estimated. Mean is 5.6 to 6.3s and p95 is 10.7 to 13.9s; the median is the
+thread beside `execute` and so costs only what that overlap does not absorb. Run 26 put a number
+on the residue: the `review` collection point totalled **36.8s, or 0.48s per answered question**,
+and the shipped median was **6.91s**, above the both-off band rather than inside it. That is one
+run against three, and this document's own variance section is the reason it is quoted as a
+direction and not as a measurement; the cost figures above are arithmetic over 108 records and
+carry no such caveat. Across those same both-off runs mean is 5.6 to 6.3s and p95 is 10.7 to
+13.9s, against 7.01s and 14.32s in run 26; the median is the
 figure to quote, because cold-start outliers pull the mean around. It is a direct consequence
 of three sequential LLM calls, not a defect. The honest fixes are caching and a smaller
 classifier, not a rewrite. What the architecture *does* guarantee is that latency is a
@@ -1202,7 +1210,7 @@ deployments stall.
 | **Streamlit, not React + API**                                | The UI is the least interesting component here, and its implementation should say so                                                               | Would not scale to concurrent users; not a production serving model                                |
 | **Reporting a range, not the best run**                       | Same code scored 86.4% and 95.5%; quoting only the maximum on a "measured, not claimed" system would be self-defeating                             | A less impressive headline number                                                                  |
 | **Withheld capabilities recorded as decisions** (ADR-009)     | Fourteen runs show zero dialect failures, so docs retrieval, web search, MCP and LLM validation are absences with evidence and revisit conditions | The record must be re-examined as models, dialects and scope change                                |
-| **Syllabus- and behaviour-tagged gold set, 108 cases** (ADR-010) | A saturated 36-case suite confirmed rather than measured; two orthogonal tags locate a failure in both the SQL plane and the phrasing plane     | Runs cost ~$1.03 to ~$1.34 and 10 to 15 minutes; question wording itself becomes part of the measured surface |
+| **Syllabus- and behaviour-tagged gold set, 108 cases** (ADR-010) | A saturated 36-case suite confirmed rather than measured; two orthogonal tags locate a failure in both the SQL plane and the phrasing plane     | Runs cost ~$1.03 to ~$1.34, ~$1.26 in the shipped configuration, and 10 to 15 minutes; question wording itself becomes part of the measured surface |
 | **Bounded multi-turn: one rewrite node at the edge** (ADR-011)   | A follow-up resolves against prior questions and SQL only, and everything downstream stays byte-identical to the single-turn pipeline; the resolution is shown to the user as "Interpreted as:" so a misreading is correctable | A follow-up turn costs one extra cheap call; a chain of clarification turns carries no answer text, so "by containers" resolves from the earlier question rather than from the clarifying reply |
 | **Runtime verification, measured then defaulted off** (ADR-012)  | Groundedness rose to 98.7% to 100% against 96.0% to 97.4%, and every mechanism is bounded, advisory and fail-open, so none of it can withhold an answer | Execution accuracy fell to 89.6% to 92.2% against 93.5% to 94.8%, all of it attributable to verifier objections by reason code; ships behind `RUNTIME_VERIFICATION` with the evidence in the repo |
 | **The reading without the verdict** (ADR-013)                    | Every answered question regains a plain-language "What was measured" line, which disappeared for all 108 cases when ADR-012 was defaulted off; no SQL, answer or chart can change, because no path regenerates | One extra cheap call per answered question, 18% to 27% more cost; the verifier's objection is discarded rather than shown, because its `q66` probe objected to a correct query in 4 of 4 trials |
