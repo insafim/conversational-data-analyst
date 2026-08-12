@@ -8,12 +8,19 @@ stops in June, so the question was a reasonable thing to ask. A guard that rejec
 question the interface invited is a worse design than an interface that does not invite
 it.
 
-The whole module is marked `integration` because importing the page runs Streamlit's
-module-level script body, which reads the catalog.
+The whole module is marked `integration` because the function under test reads the
+catalog.
 
-The import is `views.chat` rather than `app`: `app.py` became the navigation entrypoint
-when the observability page landed, and the coverage line lives with the sidebar that
-shows it.
+The import is `views.state` rather than `views.chat`, where this line is rendered, and
+that is load-bearing rather than tidy. `views/chat.py` is a page, so importing it runs its
+module-level script body, and pytest imports every test module during collection. On
+2026-08-12 that import left Streamlit's delta-generator context holding an open form for
+the rest of the process, and the six chat-page cases in `tests/test_app_smoke.py` then
+failed with "`st.button()` can't be used in an `st.form()`" on the sidebar's New chat
+button. Measured: that file passed 10 of 10 alone, and 6 of its 10 failed when collected
+beside this one, the survivors being the four that render only the observability page.
+Importing a page from a test is what caused it, so this module imports the module that
+renders nothing.
 """
 
 from __future__ import annotations
@@ -21,7 +28,7 @@ from __future__ import annotations
 import pytest
 
 from src.validator import validate_sql
-from views import chat
+from views import state
 
 pytestmark = pytest.mark.integration
 
@@ -41,7 +48,7 @@ def test_the_coverage_line_reports_the_window_the_data_actually_holds():
     )
     first, last = bounds.rows[0]
 
-    coverage = chat.data_coverage()
+    coverage = state.data_coverage()
 
     assert coverage == f"{first:%B %Y} to {last:%B %Y}", (
         f"sidebar reports {coverage!r} for data spanning {first} to {last}"
@@ -56,7 +63,7 @@ def test_the_coverage_line_names_a_month_and_year_not_a_raw_date():
     2026" is the same fact in their language, and the whole reason the line exists is to
     be read by someone who would skip a timestamp.
     """
-    coverage = chat.data_coverage()
+    coverage = state.data_coverage()
     assert coverage is not None
     assert "-" not in coverage, f"{coverage!r} exposes a raw date format"
     assert " to " in coverage
@@ -69,5 +76,5 @@ def test_the_apps_own_sql_meets_the_bar_the_agents_sql_must_meet():
     adds a sidebar feature backed by something else, this fails rather than the invariant
     quietly ceasing to be true.
     """
-    result = validate_sql(chat._COVERAGE_SQL)
+    result = validate_sql(state._COVERAGE_SQL)
     assert result.ok, f"the sidebar's own query would be rejected: {result.reason}"

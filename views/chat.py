@@ -26,7 +26,7 @@ from src.conversations import ChatTurn
 from src.models import ChartKind, Outcome
 from src.notices import Level, answer_notices
 from src.schema import get_schema_summary
-from views.state import chat_session, store_handle
+from views.state import chat_session, data_coverage, store_handle
 
 EXAMPLE_QUESTIONS = [
     "Which terminal has the longest average berth wait?",
@@ -43,18 +43,8 @@ DATA_DESCRIPTION = (
     "waited, and how many containers each crane moved."
 )
 
-# The date range is queried rather than written here, because a hard-coded window is
-# wrong the moment the data is reloaded, and wrong quietly.
-#
-# The column is named in this file and not in src/schema.py on purpose. ADR-003's
-# portability argument rests on the schema layer holding no domain literals, and app.py
-# is already the domain-aware layer: the example questions above name terminals and
-# operators. Putting the knowledge where the other domain knowledge lives keeps the claim
-# about src/schema.py true.
-_COVERAGE_SQL = (
-    "SELECT min(arrival_ts)::date AS first_day, max(arrival_ts)::date AS last_day "
-    "FROM port_calls"
-)
+# The data-coverage line is rendered here and computed in `views/state.py`, which is
+# importable without running a page. See the comment above `_COVERAGE_SQL` there.
 
 # Outcomes that are not a normal answer get a visible marker, so a refusal or a
 # clarification is never mistaken for an answer.
@@ -71,37 +61,6 @@ _OUTCOME_BADGE = {
 # How many saved chats the sidebar lists. The store will hold more; this is a demo sidebar
 # and a list longer than the screen is a scroll bar, not a feature.
 _SIDEBAR_CHATS = 20
-
-
-@st.cache_data(show_spinner=False)
-def data_coverage() -> str | None:
-    """One sentence naming the period the data covers, or None if it cannot be read.
-
-    This exists because of a real failure rather than for polish. Asked to project July
-    2026 port calls, the agent returned a historical average and presented it as a
-    forecast. The summariser now refuses that (SUMMARIZE_SYSTEM rule 6), but the catch is
-    downstream of the real problem: nothing on screen told the user the data stops in June
-    2026, so asking about July was a reasonable thing to do. A guard that rejects a
-    question the interface invited is a worse design than an interface that does not
-    invite it.
-
-    cache_data rather than cache_resource because the return is a plain string, and the
-    window only changes when the database is reseeded.
-    """
-    from src.executor import ExecutionError, run_query
-
-    try:
-        result = run_query(_COVERAGE_SQL, row_cap=1)
-    except ExecutionError:
-        # The sidebar already reports an unreachable database above this line. Returning
-        # None omits the sentence instead of duplicating the error.
-        return None
-
-    if not result.rows or result.rows[0][0] is None:
-        return None
-
-    first, last = result.rows[0][0], result.rows[0][1]
-    return f"{first:%B %Y} to {last:%B %Y}"
 
 
 @st.cache_resource
