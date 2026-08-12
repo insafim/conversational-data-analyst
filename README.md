@@ -80,8 +80,8 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 609 unit tests, no database or network needed
-pytest                        # all 798; needs the seeded database, and 10 of them
+pytest -m "not integration"   # 619 unit tests, no database or network needed
+pytest                        # all 821; needs the seeded database, and 10 of them
                               # call the live model, so they also need a funded API key
 # The two configurations the published figures were measured on, named explicitly.
 # --no-reading is needed for the BASELINE only: ADR-013's reading defaults on and also
@@ -98,7 +98,7 @@ python eval/run_eval.py                                  # 10 to 15 min across o
 
 One caveat on reproduction, stated rather than buried: `uv.lock` was refreshed on 2026-08-11 and
 moves ten packages relative to the environment the runs in `eval/results/` were recorded on,
-including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 798 tests pass on the
+including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 821 tests pass on the
 pinned set, which is what establishes that the SQL validator behaves identically. The eval scores
 are model-driven and are quoted as ranges across repeated runs for that reason.
 
@@ -604,7 +604,7 @@ One line of reasoning each, because "not built" and "not considered" are differe
 | **Streaming** | Perceived latency, not latency. With three calls the honest fix is fewer or faster calls. |
 | **Deployment** | Runs locally. Containerising demonstrates a skill this brief does not assess. |
 | **Semantic layer** | The most consequential omission. See below. |
-| **Tracing / observability** | Cost and latency are measured per request but not persisted. No spend trend, no alerting. |
+| **Exported traces and alerting** | Cost and latency are stored per turn and aggregated on the Observability page, but nothing exports them and nothing pages anyone. |
 
 **Multi-turn memory was on this list and is not any more.**
 [ADR-008](docs/ADR/ADR-008-ui-and-scope-boundary.md) deferred it as scope control and predicted it
@@ -626,7 +626,10 @@ the usual reason agent-analytics deployments stall.
 1. **Row-level security** per tenant role, so each user sees only their data.
 2. **A semantic layer** for governed metric definitions.
 3. **The eval suite in CI** as a regression gate on every prompt or model change.
-4. **Tracing and cost persistence**: per-query spend, latency percentiles, failure attribution.
+4. **Exported traces and alerting.** Per-query spend, latency percentiles and failure
+   attribution are stored and aggregated on the Observability page, so what remains is getting
+   them out of this application: an OpenTelemetry exporter over the per-turn `stage_timings`
+   map, and thresholds that page someone. Per-user attribution needs authentication first.
 5. **Retrieval over table metadata** once the schema outgrows the context window
    ([ADR-003](docs/ADR/ADR-003-schema-introspection.md)).
 6. **A different storage and ingestion layer** once query volume or continuous data arrival
@@ -662,7 +665,11 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 ## Layout
 
 ```
-├── app.py                  Streamlit chat UI
+├── app.py                  Entrypoint: page config and navigation
+├── views/
+│   ├── chat.py             The chat page
+│   ├── observability.py    The panel: live traffic and the committed eval runs
+│   └── state.py            The store handle and chat session both pages share
 ├── docker-compose.yml      PostgreSQL 18
 ├── db/
 │   ├── 01_schema.sql       Tables, constraints, indexes, COMMENT ON (prompt context)
@@ -679,6 +686,7 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── notices.py          Which captions and warnings sit beside an answer, and in what order
 │   ├── conversations.py    Which chat is open, and the order a turn is saved and shown
 │   ├── store.py            Conversations and telemetry, in their own database (ADR-014)
+│   ├── telemetry.py        Reads the committed eval runs for the panel
 │   ├── grounding.py        Whether every figure in an answer appears in the rows
 │   ├── quality.py          Code-detected result-shape triggers (ADR-012)
 │   ├── prompts.py          Prompt templates
@@ -690,14 +698,14 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── gold.py               Gold-set schema; validated at load
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output, evidence for the numbers above
-└── tests/                  798 tests
+└── tests/                  821 tests
 ```
 
 ---
 
 ## Testing
 
-798 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+821 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
@@ -717,8 +725,9 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_schema.py` | 12 | Catalog introspection, and that composed identifiers are quoted |
 | `test_schema_labels.py` | 12 | Turning a table's `COMMENT ON` into a sidebar label, including the split it gets wrong |
 | `test_notices.py` | 9 | Which captions and warnings sit beside an answer, and the order they arrive in |
+| `test_telemetry.py` | 18 | What the Observability page aggregates: the SQL over stored turns, and reading the committed eval runs |
 | `test_conversations.py` | 31 | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one |
-| `test_app_smoke.py` | 5 | `app.py` rendered headlessly: that a saved chat reopens with its table and chart, and that a missing store degrades to a caption |
+| `test_app_smoke.py` | 10 | Both pages rendered headlessly: that a saved chat reopens with its table and chart, that a missing store degrades to a caption, and that the panel's figures match the store |
 | `test_store.py` | 17 | Conversation persistence: round trip, ordering, cascade delete, concurrent appends |
 | `test_store_isolation.py` | 6 | That the agent's role cannot connect to the conversation store (ADR-014) |
 | `test_store_titles.py` | 5 | Deriving a chat title from its first question |

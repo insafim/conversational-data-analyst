@@ -30,8 +30,8 @@ the 33 that did not were the 19 refusals and 14 clarifications, which have no SQ
 So the reading was not partially present. It was present for every answer, and then absent for
 every answer.
 
-That matters because of a claim this repository makes elsewhere. `app.py` states, in a comment
-above the line that renders it, that for the non-technical reader
+That matters because of a claim this repository makes elsewhere. The chat page states, in a
+comment above the line that renders it, that for the non-technical reader
 [ADR-008](ADR-008-ui-and-scope-boundary.md) designs for, this sentence and not the SQL expander
 is the verification surface. The shipped configuration had no such surface. A reader who cannot
 audit SQL was left with the answer, the chart, and an expander containing the artefact they came

@@ -1,4 +1,4 @@
-"""The chat session: what `app.py` would otherwise decide inline.
+"""The chat session: what the chat view would otherwise decide inline.
 
 The unit tests here need no database. The integration tests take the shared throwaway-
 database fixture from `tests/conftest.py`, because the ordering property this module
@@ -117,7 +117,8 @@ def test_a_turn_that_produced_no_sql_still_carries_its_question() -> None:
 # --- the store being absent is not an error path ---------------------------------------
 def test_every_navigation_action_is_inert_without_a_store() -> None:
     """Each of these has its own `store is None` guard. None of them may raise: the sidebar
-    renders no chat list at all in this state, but `app.py` still constructs the session."""
+    renders no chat list at all in this state, but the chat page still constructs the
+    session."""
     session = ChatSession(store=None)
 
     assert session.open("anything") is False
@@ -130,8 +131,8 @@ def test_every_navigation_action_is_inert_without_a_store() -> None:
 
 @pytest.mark.integration
 def test_the_sidebar_list_degrades_rather_than_raising(store) -> None:
-    """`app.py` calls this to draw the sidebar on every rerun, so it is the store call most
-    likely to be in flight when the database goes away."""
+    """The chat page calls this to draw the sidebar on every rerun, so it is the store call
+    most likely to be in flight when the database goes away."""
     session = ChatSession(store=store)
     session.answer("Which terminal is busiest?", _asks(_answer()))
     assert len(session.list_conversations()) == 1
@@ -367,7 +368,7 @@ def test_a_refusal_is_saved_and_titled_like_any_other_turn(store) -> None:
 # --- persistence ordering, the bug this module exists to prevent ----------------------
 @pytest.mark.integration
 def test_the_turn_is_durable_before_the_caller_gets_it_back(store) -> None:
-    """The regression guard. `app.py` used to render the answer and append it afterwards,
+    """The regression guard. The chat view used to render the answer and append it afterwards,
     so a click during rendering preempted the rerun and a paid-for turn was lost. Because
     the caller cannot render before `answer()` returns, asserting durability at return is
     asserting that persistence happens first."""
@@ -490,7 +491,7 @@ def test_a_blank_rename_is_refused_rather_than_erasing_the_label(store) -> None:
 
 @pytest.mark.integration
 def test_a_blank_rename_after_an_earlier_failure_still_reports_the_blank_title(store) -> None:
-    """`app.py` tells a blank title from a store outage by whether `last_error` is set, so
+    """the chat page tells a blank title from a store outage by whether `last_error` is set, so
     an error left over from an earlier click would make this report the wrong cause."""
     session = ChatSession(store=store)
     session.answer("Which terminal is busiest?", _asks(_answer()))

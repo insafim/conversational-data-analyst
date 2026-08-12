@@ -225,7 +225,7 @@ def metric_fields(result: QueryResult, chart: ChartSpec) -> MetricFields:
 
     This is here rather than in the Streamlit layer because it is a decision, and the
     argument of ADR-005 is that chart decisions belong in code a test can reach. It was
-    briefly inline in `app.py`, where nothing but running the app by hand exercised it:
+    briefly inline in the view, where nothing but running the app by hand exercised it:
     reverting to positional access (`frame.iloc[0, 0]`) would have passed the entire
     suite while crashing on the first superlative question, because column 0 of
     `terminal_name, avg_wait` is a string and `f"{value:,}"` raises on a string.

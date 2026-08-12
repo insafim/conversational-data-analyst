@@ -1,11 +1,11 @@
 """The chat session: which conversation is open, and what happens to it. No Streamlit here.
 
-Same reasoning as `src/notices.py`, applied to state rather than to ordering. `app.py`
+Same reasoning as `src/notices.py`, applied to state rather than to ordering. The chat view
 held this inline, and the cost was concrete: it rendered the answer and appended it to
 history afterwards, so a click landing during rendering preempted the rerun and the turn
 was lost after the user had already paid for it. An ordering bug that only appears when a
 human clicks at the wrong moment is not something a reviewer can catch by reading, and
-`app.py` has no test file to catch it either.
+the view had no test file to catch it either.
 
 So the sequence lives in `answer()` and is asserted in `tests/test_conversations.py`. The
 caller passes a question and gets back a turn that is already persisted and already in the
@@ -34,7 +34,7 @@ _UNEXPECTED = (
     "usual cause. The error is in the server log."
 )
 
-# Public because `app.py` catches the same set when it constructs the Store, and two copies
+# Public because `views/state.py` catches the same set when it constructs the Store, and two copies
 # of this tuple would drift the first time one of them is widened.
 #
 # Everything a store call can fail with. `psycopg.Error` is in here on `src/store.py`'s own
@@ -159,7 +159,7 @@ class ChatSession:
         A blank title renders as an empty row in the sidebar, which is unclickable, so
         accepting one would lose the conversation behind it.
         """
-        # Cleared before the blank-title check, not only on the store path. `app.py` tells
+        # Cleared before the blank-title check, not only on the store path. The view tells
         # the two failures apart by whether `last_error` is set, so an error left over from
         # an earlier click would make a blank title report itself as a store outage.
         self.last_error = None

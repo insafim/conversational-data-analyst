@@ -1,12 +1,12 @@
 """What is shown beside an answer, and in what order. No Streamlit here.
 
-`app.py` used to decide this inline, which made the ordering an eyeballed property: the
+The chat view used to decide this inline, which made the ordering an eyeballed property: the
 only way to know whether the truncation warning came before or after the chart was to read
 the function or run the app. That is thin ice for a rule that carries meaning. A caveat
 about a chart has to arrive before the chart, because a warning read after the picture has
 already been believed arrived too late.
 
-So the decision lives here as a pure function over `AgentResult`, and `app.py` renders what
+So the decision lives here as a pure function over `AgentResult`, and the view renders what
 it returns without choosing anything. Two things follow. The ordering becomes executable,
 asserted in `tests/test_notices.py` without a database, a model or a browser. And ADR-008's
 claim that the UI layer is thin stays true rather than slowly becoming aspirational as the

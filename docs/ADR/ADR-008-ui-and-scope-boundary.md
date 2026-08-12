@@ -27,7 +27,9 @@ The UI's entire job is to make four things visible, because each maps to an asse
 | Chat input and message history | The conversational requirement |
 | Natural-language answer | Groundedness — phrased only from returned rows |
 | Chart, rendered from a typed `ChartSpec` | Chart-type selection ([ADR-005](ADR-005-deterministic-chart-selection.md)) |
-| Collapsed "View SQL" expander + `6.24s · 3 LLM calls · 6 rows · $0.0093` caption | Auditability, latency and cost visibility |
+| Collapsed "View SQL" expander | Auditability |
+| Sidebar list of saved chats | Conversations that survive a reload ([ADR-014](ADR-014-conversation-store.md)) |
+| An Observability page: latency, cost, outcomes, stage means, eval runs | Latency and cost, aggregated rather than per answer |
 
 Plus one sidebar block with a schema summary and four example questions as buttons, which exists so
 a reviewer can drive the demo without inventing questions.
@@ -101,7 +103,8 @@ which is the opposite of the stated user — a non-technical operations manager.
 
 - UI time stayed within its budget, leaving the eval harness fully built.
 - Visible SQL and a latency caption make two assessed properties directly observable rather than
-  claimed.
+  claimed. *The caption moved to the Observability page on 2026-08-12, see the addendum; the
+  property is still observable, and better, but no longer in this element.*
 - Streamlit's built-in charts mean chart rendering added no dependency and no custom code.
 
 **Negative / accepted**
@@ -124,7 +127,7 @@ worth more than a tidy document.
 [ADR-011](ADR-011-bounded-multi-turn.md) added one rewrite node at the edge of the graph. A
 follow-up such as "and Rotterdam?" is now resolved against the previous turns, bounded to the
 last `HISTORY_TURNS` exchanges (default 3), carrying the earlier question and SQL and never the
-answer text or the returned rows. `app.py` prints the resolved form above the answer as
+answer text or the returned rows. The chat page prints the resolved form above the answer as
 "Interpreted as: ...", so a misreading is visible to the only person who can correct it. Five
 conversational cases sit in the gold set and are scored on every run.
 
@@ -161,7 +164,7 @@ already paid a model call for. Nothing about reading the file made that visible,
 ordering was correct in every reading that did not model the rerun.
 
 So the sequence moved into `src/conversations.py`, alongside `src/notices.py` and for the
-same reason. `app.py` now makes one call, `session.answer(question, ask)`, which asks,
+same reason. The view makes one call, `session.answer(question, ask)`, which asks,
 persists, and then returns the turn to be rendered. There is no second call for the view to
 put in the wrong order. `tests/test_conversations.py` asserts that the turn is durable at
 the moment it is returned, which is the last instant before the caller could render it.
@@ -193,3 +196,71 @@ wrong moment. `tests/test_app_smoke.py` runs the page under Streamlit's `AppTest
 against a throwaway store and covers what only breaks when the page executes, including
 that a reopened chat comes back with its table and chart rather than as text. It submits no
 question, so it calls no model and spends nothing.
+
+## Addendum, 2026-08-12: the telemetry caption becomes a page
+
+The element table above listed a caption reading `6.24s · 3 LLM calls · 6 rows · $0.0093`
+under every answer. It is gone, and the same numbers are now aggregated on a second page.
+The table has been corrected rather than annotated, because a list of elements that
+describes an element the app no longer renders is worse than no list.
+
+**Why a caption was the wrong home for these numbers.** What a caption beside one answer
+can report is what that one turn cost, which is the least useful form of the figure: a
+single reading has no baseline, so a reader cannot tell whether six seconds is fast. The
+same measurements over the store become a median, a p95, a cost per question and a
+per-stage mean, which is what the numbers were being collected for. Nothing new is
+measured; the same `AgentResult` fields are read from a different place.
+
+The split is by audience, which is the same test this ADR used to justify the sidebar
+ordering. Someone asking a question wants the answer and the SQL that produced it.
+Someone deciding whether to trust the system, or what to make faster, wants the
+distribution. Those are different readers, so they are different pages rather than one
+scroll. What stays beside an answer is still owned by `src/notices.py`, and it is exactly
+the set that qualifies that answer rather than describing the system.
+
+**Two pages, both as files.** `st.Page` accepts a callable or a path, and these are paths
+for a testability reason rather than a stylistic one: `AppTest.switch_page` only reaches
+file-based pages, so a callable page cannot be driven by a test at all. That decided the
+layout. `app.py` is now the entrypoint and holds no rendering, `views/chat.py` and
+`views/observability.py` are the pages, and `views/state.py` holds what they share,
+because the entrypoint calls `st.navigation(...).run()` at import and so cannot be
+imported by a page.
+
+**What is aggregated in SQL, and why.** `Store.telemetry()` computes the totals,
+percentiles, outcome counts, retry counts and stage means in one transaction over the
+`jsonb` record. That is the reason ADR-014 stored the turn as `jsonb` rather than as text:
+averaging one number should not require loading every turn, its answer and its result rows
+into the application. The eval half is read from the committed artefacts in
+`eval/results/` instead, because those are the evidence behind the README's figures and
+are under version control; copying them into the store would create a second copy that can
+disagree with the file.
+
+The two halves are never added together. The live half is whatever a user happened to ask
+and the eval half is a fixed 108-case benchmark, so a combined average would describe
+neither.
+
+**One number was nearly published wrong, and the shape of the mistake is worth keeping.**
+The first version divided groundedness by every case in a run, which reports run 25 as
+68.5%. The figure the harness prints, the README quotes and ADR-012 rests on is 97.4%. Both
+are arithmetically correct; they differ in denominator. `eval/run_eval.py` scores
+groundedness only on an ANSWERED outcome and records `null` otherwise, then divides by the
+records carrying a real value, because a refusal has no figures to ground and counting it
+as ungrounded would mark the system down for correctly declining. A panel whose headline
+contradicts the README by 29 points is worse than no panel, and nothing about the code
+looked wrong: it took reading the harness to see that the two were measuring different
+populations. The column is now named "Overall" rather than "Accuracy" for the same reason,
+since execution accuracy is a third number scored on the answerable subset alone.
+
+**One measured caveat about the live half.** Its refresh is a `st.fragment(run_every=5)`,
+and three facts were read from the installed Streamlit 1.61.1 rather than assumed:
+`run_every` sends an `AutoRerun` interval to the browser, so the browser drives the timer;
+a queued rerun is only serviced at a yield point and Streamlit's own comment says `st.*`
+calls are those yield points, so a six-second `ask()` that touches no Streamlit API cannot
+be interrupted to service one; and each websocket connection gets its own session, so a
+second tab is a second session. Navigation makes the first two mostly moot, since a tab
+showing the panel is not running `ask()` at all. The third is what makes the page's own
+advice work: keep it open in a second tab and it keeps refreshing while the first waits.
+
+This also retires the "Tracing persistence" row from `docs/ARCHITECTURE.md`'s omissions
+table. Cost and latency were measured per request and discarded when the answer rendered;
+they are now stored and aggregated, so the omission had become false.

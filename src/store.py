@@ -109,6 +109,28 @@ class ConversationSummary:
 
 
 @dataclass(frozen=True)
+class LiveTelemetry:
+    """What the observability page shows for traffic this application actually served.
+
+    Separate from the eval figures, which `src/telemetry.py` reads from
+    `eval/results/`. The two must never be added together: the eval set is a fixed
+    108-case benchmark and this is whatever a user happened to ask, so a combined
+    average would describe neither.
+    """
+
+    turns: int
+    conversations: int
+    total_cost_usd: float
+    mean_cost_usd: float
+    llm_calls: int
+    median_latency_s: float
+    p95_latency_s: float
+    outcomes: dict[str, int]
+    retry_reasons: dict[str, int]
+    stage_means_s: dict[str, float]
+
+
+@dataclass(frozen=True)
 class StoredTurn:
     """One exchange, rehydrated. `result` is the full `AgentResult`, rows included, so a
     reopened conversation renders identically rather than losing its tables and charts."""
@@ -125,7 +147,7 @@ class Store:
     """Conversations and turns in the application's own database.
 
     The DSN is a constructor argument rather than read from `settings` at every call site,
-    so a test can point at a scratch database and drop it afterwards. `app.py` passes the
+    so a test can point at a scratch database and drop it afterwards. `views/state.py` passes the
     configured default.
 
     ONE connection is held and reused, guarded by a lock. The first version opened a
@@ -172,7 +194,7 @@ class Store:
         if self._connection is not None:
             try:
                 self._connection.close()
-            except Exception:  # noqa: BLE001. Already broken; closing is best effort.
+            except Exception:  # noqa: BLE001  # Already broken; closing is best effort.
                 pass
             self._connection = None
 
@@ -191,7 +213,7 @@ class Store:
         generated again. That is safe here because the first transaction never committed,
         so the retry writes the only surviving copy. It is recorded rather than defended,
         because an in-doubt commit is the one case where "retry" and "it already ran" are
-        not obviously exclusive.
+        not mutually exclusive.
         ANY exception rolls the transaction back, not just a database one. An earlier
         version rolled back on `psycopg.Error` alone, so `_NoSuchConversation` escaped with
         the transaction still open. The connection then sat idle-in-transaction holding
@@ -427,6 +449,85 @@ class Store:
             lambda c: c.execute("SELECT count(*) AS n FROM turn").fetchone()
         )
         return int(row["n"])
+
+    def telemetry(self) -> LiveTelemetry:
+        """Everything the observability page aggregates, in one transaction.
+
+        Computed in SQL rather than in Python, which is the reason the record is stored as
+        `jsonb` rather than as text. Averaging one number should not require loading every
+        turn, its answer and its result rows into the application to do it.
+
+        Five statements share one `_run`, so the page reads a single consistent snapshot
+        instead of five that can disagree if a turn lands between them.
+
+        `percentile_cont` returns NULL over an empty table and `sum` returns NULL over no
+        rows, so every scalar is coalesced. An empty store is the state a reviewer opens
+        this page in, and it has to render as zeroes rather than as a crash.
+        """
+
+        def gather(connection: psycopg.Connection) -> LiveTelemetry:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT count(*) AS turns,
+                           coalesce(sum((result->>'cost_usd')::float), 0) AS cost,
+                           coalesce(sum((result->>'llm_calls')::int), 0) AS calls,
+                           coalesce(
+                               percentile_cont(0.5) WITHIN GROUP (
+                                   ORDER BY (result->>'elapsed_s')::float
+                               ), 0) AS median_s,
+                           coalesce(
+                               percentile_cont(0.95) WITHIN GROUP (
+                                   ORDER BY (result->>'elapsed_s')::float
+                               ), 0) AS p95_s
+                    FROM turn
+                    """
+                )
+                totals = cursor.fetchone()
+
+                cursor.execute("SELECT count(*) AS n FROM conversation")
+                conversations = int(cursor.fetchone()["n"])
+
+                cursor.execute(
+                    "SELECT result->>'outcome' AS key, count(*) AS n"
+                    " FROM turn GROUP BY 1 ORDER BY n DESC"
+                )
+                outcomes = {r["key"]: int(r["n"]) for r in cursor.fetchall() if r["key"]}
+
+                # A turn carries zero or more reasons, so the array is unnested and the
+                # rows counted. A turn that retried twice contributes to both reasons,
+                # which is what makes this attributable rather than a count of retries.
+                cursor.execute(
+                    "SELECT reason AS key, count(*) AS n FROM turn,"
+                    " jsonb_array_elements_text(result->'retry_reasons') AS reason"
+                    " GROUP BY 1 ORDER BY n DESC"
+                )
+                retries = {r["key"]: int(r["n"]) for r in cursor.fetchall()}
+
+                # Mean rather than total: totals just re-rank the stages by how many turns
+                # ran, and the question this answers is which stage to optimise.
+                cursor.execute(
+                    "SELECT stage AS key, avg(seconds::float) AS mean FROM turn,"
+                    " jsonb_each_text(result->'stage_timings') AS t(stage, seconds)"
+                    " GROUP BY 1 ORDER BY mean DESC"
+                )
+                stages = {r["key"]: float(r["mean"]) for r in cursor.fetchall()}
+
+            turns = int(totals["turns"])
+            return LiveTelemetry(
+                turns=turns,
+                conversations=conversations,
+                total_cost_usd=float(totals["cost"]),
+                mean_cost_usd=float(totals["cost"]) / turns if turns else 0.0,
+                llm_calls=int(totals["calls"]),
+                median_latency_s=float(totals["median_s"]),
+                p95_latency_s=float(totals["p95_s"]),
+                outcomes=outcomes,
+                retry_reasons=retries,
+                stage_means_s=stages,
+            )
+
+        return self._run(gather)
 
 
 def _to_summary(row: dict[str, Any]) -> ConversationSummary:

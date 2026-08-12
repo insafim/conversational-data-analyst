@@ -57,8 +57,8 @@ def app(store, monkeypatch) -> AppTest:
     return AppTest.from_file(APP, default_timeout=60)
 
 
-def _answered() -> AgentResult:
-    return AgentResult(
+def _answered(**overrides) -> AgentResult:
+    base = dict(
         question="Which terminal has the longest average berth wait?",
         outcome=Outcome.ANSWERED,
         answer="Jebel Ali Terminal 2, at 17.46 hours.",
@@ -77,6 +77,7 @@ def _answered() -> AgentResult:
         llm_calls=4,
         cost_usd=0.0142,
     )
+    return AgentResult(**{**base, **overrides})
 
 
 def test_the_page_renders_with_no_saved_chats(app) -> None:
@@ -120,7 +121,16 @@ def test_a_saved_chat_is_listed_and_reopens_with_its_table_and_chart(app, store)
     # chart is the rule caption app.py emits beside it. A rehydration that lost the
     # ChartSpec would drop this line, which is what makes it worth asserting.
     assert "Chart chosen by rule: 2 categories" in captions, "the chart did not survive reopening"
-    assert "6.94s" in captions, "the telemetry caption is missing"
+
+    # Telemetry moved to the Observability page. Asserted as absent rather than simply
+    # deleted from this test, because "the seconds are no longer beside the answer" is the
+    # change, and a caption that crept back would otherwise go unnoticed.
+    assert "6.94s" not in captions, "the latency caption is back in the chat pane"
+    assert "$0.0142" not in captions, "the cost caption is back in the chat pane"
+    assert "LLM calls" not in captions, "the call count is back in the chat pane"
+    assert not any("Latency breakdown" in e.label for e in at.expander), (
+        "the latency breakdown expander is back in the chat pane"
+    )
 
 
 def test_new_chat_clears_the_pane_without_deleting_anything(app, store) -> None:
@@ -170,6 +180,139 @@ def test_a_session_that_started_without_a_store_picks_one_up_when_it_returns(
     assert not at.exception, at.exception
     assert [b for b in at.sidebar.button if b.label == "Berth waits by terminal"], (
         "the session is still holding the dead store handle"
+    )
+
+
+def test_the_observability_page_shows_the_traffic_the_store_holds(app, store) -> None:
+    """The live half, driven through the real page.
+
+    `switch_page` is why both pages are files rather than callables: it only reaches
+    file-based pages, so a callable page could not be tested at all. The title assertion
+    is not decoration, it is what proves navigation happened. An earlier version of this
+    test set a query parameter instead, silently rendered the Chat page, and passed on a
+    bare `assert not at.exception`.
+    """
+    conversation = store.create_conversation("Berth waits")
+    store.append_turn(conversation, "q", _answered(elapsed_s=4.0, cost_usd=0.004))
+    store.append_turn(conversation, "q", _answered(elapsed_s=8.0, cost_usd=0.006))
+
+    at = app.switch_page("views/observability.py").run()
+
+    assert not at.exception, at.exception
+    assert at.title[0].value == "Observability", "navigation did not reach the page"
+
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["Questions"] == "2"
+    assert metrics["Median latency"] == "6.00s", "the median of 4s and 8s is not shown"
+    assert metrics["Conversations"] == "1"
+    assert metrics["LLM calls"] == "8", "the call count tile is not wired to the store"
+    # 7.80s, not 8.00s: `percentile_cont` interpolates, so p95 of 4s and 8s is
+    # 4 + 0.95 * (8 - 4). Asserting the interpolated value also pins the choice of
+    # `percentile_cont` over `percentile_disc`, which would return 8.00s here.
+    assert metrics["p95 latency"] == "7.80s", "the p95 tile does not show the tail"
+
+    # Both branches of the money format, which exist because these two figures genuinely
+    # differ by orders of magnitude. A per-question cost rendered as "$0.01" reads as a
+    # cent when it is half of one, and "$0.0100" for a total is noise.
+    assert metrics["Total cost"] == "$0.01"
+    assert metrics["Cost per question"] == "$0.0050", "a sub-cent cost was rounded away"
+
+
+def test_the_observability_page_lists_the_committed_eval_runs(app, store) -> None:
+    """The eval half reads `eval/results/` from disk, so it renders against the real
+    repository rather than against the throwaway store."""
+    at = app.switch_page("views/observability.py").run()
+
+    assert not at.exception, at.exception
+    assert at.dataframe, "the eval run table is missing"
+    runs = at.dataframe[0].value
+    assert len(runs) >= 20, "the committed run artefacts were not read"
+
+    latest = runs[runs["Run"] == "run25"]
+    assert not latest.empty, "run25 is missing from the table"
+    row = latest.iloc[0]
+    assert row["Cases"] == 108
+
+    # The two rates are pinned and checked against each other, because they are the pair
+    # the columns could be swapped between and the swap would otherwise be invisible.
+    # These are the figures ADR-012 and the README quote for run 25.
+    assert row["Overall"] == "94.4%", "the overall column does not match the artefact"
+    assert row["Grounded"] == "97.4%", (
+        "groundedness is wrong, which usually means it was divided by every case rather "
+        "than by the cases where it was actually scored"
+    )
+    assert row["Overall"] != row["Grounded"], "the two columns are showing the same figure"
+
+
+def test_the_observability_page_says_so_when_the_store_is_unreachable(
+    app, store_dsn_for, monkeypatch
+) -> None:
+    """The live half must degrade the way every other store reader does: a message, not a
+    traceback, and the eval half unaffected because it reads from disk."""
+    monkeypatch.setattr(
+        src.store,
+        "settings",
+        dataclasses.replace(settings, store_dsn=store_dsn_for("definitely_absent_db")),
+    )
+    st.cache_resource.clear()
+
+    at = app.switch_page("views/observability.py").run()
+
+    assert not at.exception, at.exception
+    assert at.title[0].value == "Observability"
+    assert any("store is unavailable" in i.value for i in at.info), (
+        "the live half did not explain why it is empty"
+    )
+    assert at.dataframe, "the eval half was lost when the store went away"
+
+
+def test_the_observability_page_survives_an_empty_store(app, store) -> None:
+    """The state a reviewer opens it in: the app is running, nothing has been asked yet.
+    The eval half must still render, because it does not depend on the store at all."""
+    at = app.switch_page("views/observability.py").run()
+
+    assert not at.exception, at.exception
+    assert any("No questions have been asked yet" in i.value for i in at.info), (
+        "an empty store did not explain itself"
+    )
+    assert at.dataframe, "the eval half was lost when the live half was empty"
+
+
+def test_a_store_that_was_down_at_startup_recovers_without_a_restart(
+    app, store, store_dsn_for, monkeypatch
+) -> None:
+    """The cache must not memoise a construction failure.
+
+    `st.cache_resource` memoises a return value but not a raised exception, so
+    `views/state.py` lets `_build_store` raise and catches outside it. Catching inside
+    would cache `None` for the life of the process, and a reviewer who started the app
+    before the database was ready would never get history back without restarting.
+
+    Deliberately does NOT clear the cache between runs: clearing it would prove nothing,
+    since that is what a restart does.
+    """
+    monkeypatch.setattr(
+        src.store,
+        "settings",
+        dataclasses.replace(settings, store_dsn=store_dsn_for("definitely_absent_db")),
+    )
+    st.cache_resource.clear()
+    at = app.run()
+    assert not at.exception, at.exception
+    assert any("not be saved" in c.value for c in at.sidebar.caption), (
+        "the precondition did not hold: the store was reachable"
+    )
+
+    # The database comes back. No cache clear, no restart.
+    store.create_conversation("Berth waits by terminal")
+    monkeypatch.setattr(
+        src.store, "settings", dataclasses.replace(settings, store_dsn=store.dsn)
+    )
+    at = at.run()
+
+    assert not at.exception, at.exception
+    assert [b for b in at.sidebar.button if b.label == "Berth waits by terminal"], (
+        "the failed construction was cached, so the app never noticed the store return"
     )
 
 

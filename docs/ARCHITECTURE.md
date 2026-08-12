@@ -177,11 +177,12 @@ by PostgreSQL respectively, not by the model's cooperation.
 
 ## 4. Technology Stack
 
-Every version below was verified against the installed environment on 2026-08-04. That
-matters more than usual here: PostgreSQL 18 changed the default kind of generated column and
-moved the Docker volume path, LangGraph is on 1.x, pandas on 3.x, and every 2025-era model
-identifier has been retired. Code written from year-old documentation breaks in all four
-places.
+Every version below was verified against the installed environment, most recently on
+2026-08-12 by reading `importlib.metadata.version` for each package and `SHOW server_version`
+for PostgreSQL. That matters more than usual here: PostgreSQL 18 changed the default kind of
+generated column and moved the Docker volume path, LangGraph is on 1.x, pandas on 3.x, and
+every 2025-era model identifier has been retired. Code written from year-old documentation
+breaks in all four places.
 
 | Layer                     | Technology                                                 | Version                 |
 | ------------------------- | ---------------------------------------------------------- | ----------------------- |
@@ -189,12 +190,12 @@ places.
 | **Database**        | PostgreSQL, Docker`postgres:18-alpine`                   | 18.4                    |
 | **DB driver**       | `psycopg` v3, `[binary]` extra (no local libpq needed) | 3.3.4                   |
 | **Agent framework** | `langgraph` (fixed-topology state graph)                 | 1.2.10                  |
-| **LLM access**      | `litellm` (provider selected by model-string prefix)     | 1.95.0                  |
-| **SQL parsing**     | `sqlglot` (AST parsing for the security validator)       | 30.14.0                 |
+| **LLM access**      | `litellm` (provider selected by model-string prefix)     | 1.96.0                  |
+| **SQL parsing**     | `sqlglot` (AST parsing for the security validator)       | 30.16.0                 |
 | **Data frames**     | `pandas` (result frames for charting)                    | 3.0.5                   |
-| **UI**              | `streamlit` (chat, charts, SQL expander)                 | 1.60.0                  |
+| **UI**              | `streamlit` (chat, charts, SQL expander, panel)          | 1.61.1                  |
 | **Typed models**    | `pydantic`                                               | 2.13.4                  |
-| **Tests / lint**    | `pytest` 9.1.1, `ruff` 0.16.1                        | see left                |
+| **Tests / lint**    | `pytest` 9.1.1, `ruff` 0.16.2                        | see left                |
 | **Packaging**       | `uv` + `pyproject.toml`                                | n/a                     |
 
 **Notably absent:** no ORM (the queries are model-generated SQL, so an ORM has nothing to
@@ -877,9 +878,11 @@ the build even when overall accuracy looks acceptable.
 
 ## 13. Frontend
 
-`app.py` is a deliberately thin Streamlit layer
-([ADR-008](ADR/ADR-008-ui-and-scope-boundary.md)). Its entire job is to make four things
-visible, each mapping to an assessed behaviour:
+The Streamlit layer is deliberately thin
+([ADR-008](ADR/ADR-008-ui-and-scope-boundary.md)). `app.py` is the entrypoint and renders
+nothing: it sets the page config and hands off to two pages, `views/chat.py` and
+`views/observability.py`, with `views/state.py` holding what they share. Between them their
+job is to make these visible, each mapping to an assessed behaviour:
 
 | Element                                                                             | Demonstrates                                  |
 | ----------------------------------------------------------------------------------- | --------------------------------------------- |
@@ -887,8 +890,9 @@ visible, each mapping to an assessed behaviour:
 | Natural-language answer                                                             | Groundedness: phrased only from returned rows |
 | Chart rendered from a typed `ChartSpec`, plus the rule that fired                  | Chart-type selection                          |
 | A "What was measured" line in plain language (ADR-013)                              | Groundedness, for a reader who cannot audit SQL |
-| Collapsed "View SQL" expander + `1.8s · 3 LLM calls · 6 rows · $0.0099` caption | Auditability, latency, cost                   |
+| Collapsed "View SQL" expander                                                        | Auditability                                  |
 | Sidebar chat list, with New chat, reopen, rename and delete                          | Conversations that survive a reload (ADR-014) |
+| An Observability page: median and p95 latency, cost, outcomes, stage means, eval runs | Latency and cost, aggregated rather than per answer |
 
 Outcomes that are not a normal answer carry a visible badge, so a refusal or clarification is
 never mistaken for an answer.
@@ -907,7 +911,7 @@ the chart is drawn from the truncated rows too, and a caveat read after the pict
 already been believed arrived too late.
 
 **Which notices appear, and in what order, is decided in `src/notices.py` rather than in the
-view.** `app.py` renders the list it is given and chooses nothing. The ordering carries
+view.** The chat page renders the list it is given and chooses nothing. The ordering carries
 meaning, so leaving it inline made it an eyeballed property: the only way to check it was to
 read the render function or run the app. As a pure function over `AgentResult` it is asserted
 in `tests/test_notices.py` without a database, a model or a browser, and reversing the order
@@ -916,7 +920,7 @@ thin" claim true as the UI grows, rather than slowly aspirational.
 
 **Which conversation is open, and when a turn is saved, is decided in `src/conversations.py`
 for the same reason.** The ordering there was a real defect rather than a hypothetical one:
-`app.py` rendered the answer and appended it to history afterwards, so a click landing during
+the chat view rendered the answer and appended it to history afterwards, so a click landing during
 rendering preempted the rerun and discarded a turn the user had already paid for. The view now
 makes one call, `session.answer(question, ask)`, which asks, persists, then returns the turn to
 render, so there is no order left for the view to get wrong. `tests/test_conversations.py`
@@ -929,11 +933,15 @@ error about bookkeeping. The same reasoning makes the store optional: `db/03_app
 runs only on the container's first boot, so an older data volume has no store database, and
 that degrades to a caption in the sidebar instead of a page that will not load.
 
-**`app.py` now has a test.** `tests/test_app_smoke.py` runs the page under Streamlit's own
-`AppTest` harness against a throwaway store, which is what covers the part that only breaks
-when the page actually executes: that a saved chat reopens carrying its table and chart, and
-that New chat clears the pane without deleting anything. No question is submitted, so no model
-is called.
+**The pages have tests.** `tests/test_app_smoke.py` runs them under Streamlit's own `AppTest`
+harness against a throwaway store, which covers the part that only breaks when a page actually
+executes: that a saved chat reopens carrying its table and chart, that New chat clears the pane
+without deleting anything, and that the panel's metrics read what the store holds. No question
+is submitted, so no model is called.
+
+Both pages are files rather than callables passed to `st.Page`, which is a testability decision:
+`AppTest.switch_page` only reaches file-based pages, so a callable page could not be driven by a
+test at all.
 
 **The SQL expander is the load-bearing UI decision.** It converts the system from something a
 user must trust into something a user can check, and it is the human-in-the-loop story in this
@@ -982,10 +990,20 @@ what an autonomous loop would have produced.
 
 ### Observability
 
-`llm.Usage` accumulates calls and cost per question via `litellm.completion_cost()`, surfaced
-in the UI caption and aggregated by the eval harness. **What is not built is persistence.**
-Spend is visible per request and per run, but nothing is stored, so there is no spend trend, no
-per-user attribution and no alerting. Named on the path to production rather than implied.
+`llm.Usage` accumulates calls and cost per question via `litellm.completion_cost()`, and the
+eval harness aggregates the same figures across a run.
+
+**Persistence landed with the conversation store.** Every turn is written to `ports_app` as a
+`jsonb` record carrying `elapsed_s`, `stage_timings`, `llm_calls`, `cost_usd`, `outcome` and
+`retry_reasons` (ADR-014), and the Observability page aggregates them in SQL: median and p95
+latency, cost per question, outcomes, mean seconds per stage, and retries by reason. Before
+that the numbers were measured per request and discarded when the answer rendered, so no
+question about a trend could be answered.
+
+**What is still not built** is per-user attribution, which needs authentication first, and
+alerting. There is no exporter either, though `stage_timings` is a name-to-duration map per
+turn, which is the shape an OpenTelemetry span set needs, so emitting traces is an adapter
+rather than a rewrite.
 
 ---
 
@@ -993,7 +1011,11 @@ per-user attribution and no alerting. Named on the path to production rather tha
 
 ```
 ├── README.md                   Setup, run instructions and the measured results
-├── app.py                      Streamlit chat UI
+├── app.py                      Entrypoint: page config and navigation
+├── views/
+│   ├── chat.py                 The chat page
+│   ├── observability.py        The panel: live traffic and the committed eval runs
+│   └── state.py                The store handle and chat session both pages share
 ├── docker-compose.yml          PostgreSQL 18 (host port 55432)
 ├── pyproject.toml              Dependencies, pytest markers, ruff config
 ├── uv.lock                     Exact pinned resolution, so an install is reproducible
@@ -1013,6 +1035,7 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── notices.py              Which captions and warnings sit beside an answer, and in what order
 │   ├── conversations.py        Which chat is open, and the order a turn is saved and shown
 │   ├── store.py                Conversations and telemetry, in their own database (ADR-014)
+│   ├── telemetry.py            Reads the committed eval runs for the panel
 │   ├── grounding.py            Whether every figure in an answer appears in the rows
 │   ├── quality.py              Code-detected result-shape triggers (ADR-012)
 │   ├── prompts.py              Prompt templates
@@ -1024,7 +1047,7 @@ per-user attribution and no alerting. Named on the path to production rather tha
 │   ├── gold.py                 Gold-set schema; validated at load
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers
-├── tests/                      798 tests
+├── tests/                      821 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Fourteen decision records
@@ -1044,7 +1067,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 798 tests
+### Test suite: 821 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
@@ -1063,8 +1086,9 @@ streamlit run app.py
 | `test_schema.py`                | 12    | Catalog introspection; composed identifiers are quoted |
 | `test_schema_labels.py`         | 12    | Turning a table's COMMENT ON into a sidebar label, including the split it gets wrong |
 | `test_notices.py`               | 9     | Which captions and warnings sit beside an answer, and their order |
+| `test_telemetry.py`             | 18    | The Observability page's arithmetic: SQL aggregates over stored turns, and the eval-run reader |
 | `test_conversations.py`         | 31    | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one |
-| `test_app_smoke.py`             | 5     | `app.py` under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption |
+| `test_app_smoke.py`             | 10    | Both pages under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption, the panel's metrics match the store |
 | `test_store.py`                 | 17    | Conversation persistence: round trip, ordering, cascade delete, concurrency |
 | `test_store_isolation.py`       | 6     | That the agent's role cannot connect to the store (ADR-014) |
 | `test_store_titles.py`          | 5     | Deriving a chat title from its first question |
@@ -1076,7 +1100,7 @@ streamlit run app.py
 Integration tests are marked, so unit tests run without a database:
 
 ```bash
-pytest -m "not integration"   # 609 unit tests, no database, no network
+pytest -m "not integration"   # 619 unit tests, no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
 python eval/run_eval.py                                # shipped config, 10 to 15 min
@@ -1111,7 +1135,6 @@ consequences visible in the suite:
 | **Streaming**           | Perceived latency, not latency. With three calls the honest fix is fewer or faster calls                                                                                                     |
 | **Deployment**          | Runs locally. Containerising demonstrates a skill this brief does not assess                                                                                                                 |
 | **Async / concurrency** | Single-user by design; Streamlit's rerun model would not scale to concurrent users anyway                                                                                                    |
-| **Tracing persistence** | Cost and latency are measured per request but not stored                                                                                                                                     |
 | **Semantic layer**      | The most consequential omission; see below                                                                                                                                                   |
 
 **Multi-turn memory used to be on this list and no longer is.** It was omitted by
@@ -1136,8 +1159,10 @@ deployments stall.
 2. **A semantic layer** for governed metric definitions.
 3. **The eval suite in CI** as a regression gate on every prompt or model change. The harness
    already exits non-zero on a safety regression.
-4. **Tracing and cost persistence**: per-query spend, latency percentiles, failure
-   attribution.
+4. **Exported traces and alerting.** Per-query spend, latency percentiles and failure
+   attribution are now stored and aggregated on the Observability page, so what remains is
+   getting them out of this application: an OpenTelemetry exporter over the `stage_timings`
+   map, and thresholds that page someone. Per-user attribution needs authentication first.
 5. **Retrieval over table metadata** once the schema outgrows the context window
    ([§7](#7-schema-handling)).
 6. **A different storage and ingestion layer** once query volume or continuous data arrival
