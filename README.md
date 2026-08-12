@@ -113,10 +113,10 @@ as-is except for the API key.
 | `MODEL_CHEAP` | No | `anthropic/claude-haiku-4-5` | Classify + summarise (2 of 3 calls) |
 | `MODEL_STRONG` | No | `anthropic/claude-sonnet-5` | SQL generation only |
 | `POSTGRES_PORT` | No | `55432` | Deliberately not 5432 |
-| `POSTGRES_ANALYST_USER` | No | `analyst_ro` | The read-only role the agent uses |
-| `APP_STORE_USER` | No | `app_rw` | Owns `ports_app`, the separate database holding saved chats and telemetry. The agent's role has no `CONNECT` on it (ADR-014) |
+| `POSTGRES_ANALYST_USER` | No | `analyst_ro` | The read-only role the agent uses. Fixed on the bundled database² |
+| `APP_STORE_USER` | No | `app_rw` | Owns `ports_app`, the separate database holding saved chats and telemetry. The agent's role has no `CONNECT` on it (ADR-014). Fixed on the bundled database² |
 | `APP_STORE_DB` | No | `ports_app` | The conversation store's database. Separate from the analytics database by design |
-| `POSTGRES_ADMIN_USER` | No | `postgres` | Owner. Used **only** by `db/seed.py` |
+| `POSTGRES_ADMIN_USER` | No | `postgres` | Owner. Used **only** by `db/seed.py`. Must match `POSTGRES_USER`, the variable docker-compose creates the superuser from² |
 | `STATEMENT_TIMEOUT_MS` | No | `5000` | Bounds an expensive query |
 | `ROW_CAP` | No | `500` | Bounds result rows in-process. Rows, not bytes |
 | `MAX_SQL_RETRIES` | No | `1` | Retries on a database error only |
@@ -128,6 +128,18 @@ as-is except for the API key.
 
 ¹ Whichever provider your `MODEL_*` prefixes name. Switching provider is an env change, not a code
 change, e.g. `MODEL_CHEAP=openai/gpt-5-mini`, `MODEL_STRONG=openai/gpt-5.4-mini`.
+
+² **Role NAMES are not configurable on the bundled database, though passwords and database
+names are.** The three variables above name a role; the scripts in `db/` create those roles
+under literal names, so changing one of these points the application at a role nothing ever
+created. `db/02_roles.sql` writes `analyst_ro` literally and `db/03_app_store.sql` writes
+`app_rw` literally; only `ANALYST_RO_PASSWORD`, `APP_STORE_PASSWORD` and `APP_STORE_DB` are
+threaded through `docker-compose.yml` into those scripts. `POSTGRES_ADMIN_USER` is the odd one:
+the superuser IS created from a variable, but from `POSTGRES_USER`, which docker-compose passes
+to the container. Set both to the same value or neither.
+
+These three become real settings the moment you point the app at a PostgreSQL you provisioned
+yourself, because then nothing in `db/` runs and the roles are whatever your DBA called them.
 
 ### Troubleshooting
 
