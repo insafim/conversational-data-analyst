@@ -58,6 +58,10 @@ _CONSTANT_NAME = re.compile(r"[A-Z][A-Z0-9_]*")
 # cannot hang on a git process wedged behind a lock or a network-mounted worktree.
 _GIT_TIMEOUT_S = 5
 
+# Enough to see what was dirty, bounded so one pathological run cannot bloat a committed
+# artefact. `dirty_count` carries the true total when the list is truncated.
+_MAX_DIRTY_PATHS = 20
+
 
 def prompt_hashes(module: ModuleType | Any = prompts) -> dict[str, str]:
     """sha256 of every prompt constant in `module`, keyed by name.
@@ -95,11 +99,22 @@ def prompt_digest(hashes: dict[str, str]) -> str:
 
 
 def git_state(repo_root: Path) -> dict[str, Any]:
-    """The commit the run was made from, and whether the tree was clean.
+    """The commit the run was made from, whether the tree was clean, and what was dirty.
 
     `dirty` is reported rather than dropped. On a modified tree the SHA does not identify
     the code that ran, and an artefact recording only the SHA would overstate what it
     pins down.
+
+    `dirty_paths` exists because the boolean alone is not actionable, and run 26 proved
+    it. That artefact records `dirty: true` for an honest but harmless reason: redirecting
+    the harness output to `eval/results/runNN.log` creates that file seconds before
+    provenance is captured, so the tree really did carry an untracked file. A reader of
+    the metadata could not tell that from a modified `src/`. Listing the paths separates
+    the two without the alternative, which would have been to special-case the harness's
+    own output and so make the flag lie in exactly the situation it exists for.
+
+    The list is capped, with `dirty_count` carrying the true total, because this file is
+    committed and an unbounded list is a way for one pathological run to bloat it.
 
     Returns nulls rather than raising when git is unavailable or the directory is not a
     repository. A run made from an exported tarball still has to produce its metadata; a
@@ -123,15 +138,44 @@ def git_state(repo_root: Path) -> dict[str, Any]:
 
     sha = run("rev-parse", "HEAD")
     if sha is None:
-        return {"sha": None, "dirty": None}
+        return {"sha": None, "dirty": None, "dirty_paths": None, "dirty_count": None}
 
     status = run("status", "--porcelain")
-    return {
-        "sha": sha.strip(),
+    if status is None:
         # `status` failing where `rev-parse` succeeded leaves cleanliness unknown, which
         # is not the same as clean and must not be recorded as it.
-        "dirty": bool(status.strip()) if status is not None else None,
+        return {"sha": sha.strip(), "dirty": None, "dirty_paths": None, "dirty_count": None}
+
+    paths = _porcelain_paths(status)
+    return {
+        "sha": sha.strip(),
+        "dirty": bool(paths),
+        "dirty_paths": paths[:_MAX_DIRTY_PATHS],
+        "dirty_count": len(paths),
     }
+
+
+def _porcelain_paths(status: str) -> list[str]:
+    """Repo-relative paths out of `git status --porcelain` output.
+
+    Each line is two status characters, a space, then the path. A rename is reported as
+    `old -> new`, and only the new name is kept: it is the path that exists on disk now,
+    which is what a reader of this record is trying to identify.
+
+    Paths containing unusual characters are quoted by git and are left quoted rather than
+    unescaped. This record is a hint for a human deciding whether a dirty tree mattered,
+    not an input to anything, so a rare quoted path costs nothing and unescaping it would
+    be code with no test that ever exercises it honestly.
+    """
+    paths = []
+    for line in status.splitlines():
+        if len(line) < 4:
+            continue
+        path = line[3:].strip()
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        paths.append(path)
+    return sorted(paths)
 
 
 def _package_version(name: str) -> str | None:

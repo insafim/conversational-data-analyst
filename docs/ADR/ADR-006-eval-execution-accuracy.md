@@ -235,8 +235,16 @@ did not write that down.
 carrying a sha256 per prompt constant in `src/prompts.py` and one aggregate digest over
 the registry, a hash of the gold set, both model ids, the configuration that changes what
 a run measures, the effective `--verification` and `--reading` values, the case ids
-actually run, the invocation, the commit with a dirty flag, and the Python and litellm
-versions. The comparison the variance section wanted to make is a diff of two digests.
+actually run, the invocation, the commit with a dirty flag and the paths that were dirty,
+and the Python and litellm versions. The comparison the variance section wanted to make is a
+diff of two digests.
+
+The dirty PATHS were added on the same day, after run 26 recorded `dirty: true` for an honest
+but harmless reason: redirecting the harness output to `runNN.log` creates that file seconds
+before provenance is captured. The boolean was correct and useless, because a reader could not
+tell the run's own log from a modified `src/`. Listing the paths separates them without
+special-casing the harness's output, which would have made the flag lie in the one situation it
+exists for. Run 26's own metadata predates the field and carries only the boolean.
 
 Three choices inside that are worth stating, because each rejects an easier option:
 

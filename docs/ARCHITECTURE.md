@@ -1057,7 +1057,7 @@ rather than a rewrite.
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers.
 │                               `runNN.json` the records, `runNN.meta.json` their provenance
-├── tests/                      855 tests
+├── tests/                      858 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Fourteen decision records
@@ -1077,7 +1077,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 855 tests
+### Test suite: 858 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
@@ -1085,7 +1085,7 @@ streamlit run app.py
 | `test_validator.py`             | 93    | The security gate: write-blocking rules, evasions, fail-closed parsing |
 | `test_eval_scoring.py`          | 35    | The comparison logic, i.e. the definition of "correct" |
 | `test_charts.py`                | 30    | Every chart rule, at its boundaries |
-| `test_provenance.py`            | 34    | That a run records what produced it, and that no DSN password reaches the committed artefact |
+| `test_provenance.py`            | 37    | That a run records what produced it, and that no DSN password reaches the committed artefact |
 | `test_quality_triggers.py`      | 28    | Code-detected result-shape triggers (ADR-012) |
 | `test_agent_routing.py`         | 25    | Graph topology with a stubbed LLM |
 | `test_runtime_verification.py`  | 32    | That runtime verification stays advisory (ADR-012), and that reading-only adds a description and nothing else (ADR-013) |
@@ -1111,7 +1111,7 @@ streamlit run app.py
 Integration tests are marked, so unit tests run without a database:
 
 ```bash
-pytest -m "not integration"   # 651 unit tests, no database, no network
+pytest -m "not integration"   # 654 unit tests, no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
 python eval/run_eval.py                                # shipped config, 10 to 15 min

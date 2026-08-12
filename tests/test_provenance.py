@@ -370,6 +370,87 @@ class TestGitState:
 
         assert git_state(tmp_path)["sha"] == expected
 
+    def test_dirty_paths_name_what_was_dirty_not_just_that_something_was(
+        self, tmp_path
+    ) -> None:
+        """The boolean alone is not actionable, which run 26 demonstrated: it recorded
+        `dirty: true` because the shell redirect had created the run's own log file
+        seconds earlier. A reader could not tell that from a modified `src/`."""
+        identity = [
+            "-c", "user.email=t@example.com",
+            "-c", "user.name=t",
+            "-c", "commit.gpgsign=false",
+        ]
+
+        def git(*args: str) -> None:
+            subprocess.run(
+                ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True
+            )
+
+        git("init", "-q")
+        (tmp_path / "tracked.txt").write_text("original")
+        git("add", "tracked.txt")
+        git(*identity, "commit", "-q", "-m", "initial")
+
+        clean = git_state(tmp_path)
+        assert clean["dirty_paths"] == []
+        assert clean["dirty_count"] == 0
+
+        (tmp_path / "untracked.log").write_text("the run's own output")
+        state = git_state(tmp_path)
+
+        assert state["dirty"] is True
+        assert state["dirty_paths"] == ["untracked.log"]
+        assert state["dirty_count"] == 1
+
+    def test_the_path_list_is_capped_but_the_count_is_not(self, tmp_path) -> None:
+        """This record is committed, so one pathological run must not bloat it. The count
+        is what keeps a truncated list honest rather than merely short."""
+        identity = [
+            "-c", "user.email=t@example.com",
+            "-c", "user.name=t",
+            "-c", "commit.gpgsign=false",
+        ]
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
+        (tmp_path / "seed.txt").write_text("x")
+        subprocess.run(["git", "add", "seed.txt"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", *identity, "commit", "-q", "-m", "c"],
+            cwd=tmp_path, check=True, capture_output=True,
+        )
+        for i in range(25):
+            (tmp_path / f"file{i:02d}.txt").write_text("x")
+
+        state = git_state(tmp_path)
+
+        assert len(state["dirty_paths"]) == 20
+        assert state["dirty_count"] == 25
+
+    def test_a_rename_reports_the_name_that_exists_now(self, tmp_path) -> None:
+        """`git status --porcelain` writes a rename as `old -> new`. The new name is the
+        one on disk, which is what a reader of this record is trying to identify."""
+        identity = [
+            "-c", "user.email=t@example.com",
+            "-c", "user.name=t",
+            "-c", "commit.gpgsign=false",
+        ]
+
+        def git(*args: str) -> None:
+            subprocess.run(
+                ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True
+            )
+
+        git("init", "-q")
+        (tmp_path / "before.txt").write_text("content")
+        git("add", "before.txt")
+        git(*identity, "commit", "-q", "-m", "initial")
+        git("mv", "before.txt", "after.txt")
+
+        paths = git_state(tmp_path)["dirty_paths"]
+
+        assert paths == ["after.txt"]
+        assert not any("->" in p for p in paths)
+
     def test_a_directory_outside_a_repository_reports_no_sha_rather_than_raising(
         self, tmp_path
     ) -> None:
@@ -378,6 +459,8 @@ class TestGitState:
 
         assert state["sha"] is None
         assert state["dirty"] is None
+        assert state["dirty_paths"] is None
+        assert state["dirty_count"] is None
 
 
 class TestSiblingPath:
