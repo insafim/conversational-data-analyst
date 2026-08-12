@@ -49,6 +49,18 @@ docs/sql_study_guide.md
 docs/interview_qa.md
 docs/prep_card.md
 
+# The same two categories again, under names the lists above did not anticipate. Both were
+# sitting untracked and unignored, which is the state where one `git add -A` ships them.
+#
+# `important_things_to_add.md` is rehearsed spoken answers, including what to say when
+# pushed back on, so it belongs with the Q&A scripts directly above. It also quotes session
+# ids and tooling internals from the sessions that produced it, which are nobody's business
+# outside this machine. `my_narration.md` is a spoken cut of the demo script, so it belongs
+# with `docs/video.md` rather than here, and is listed in this block only to keep the two
+# newly found files together.
+docs/important_things_to_add.md
+docs/my_narration.md
+
 # Reference material from an unrelated project, used only as a formatting example.
 # It describes a different client's system and must never ship in this deliverable.
 sample/
