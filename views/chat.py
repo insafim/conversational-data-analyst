@@ -1,6 +1,8 @@
 """The chat page (ADR-008).
 
-Deliberately thin. The UI exists to serve three things the brief actually assesses:
+Deliberately thin. Every element it renders serves something the brief assesses. The list is
+uncounted on purpose: a stated total is one more thing to update, and the last one was wrong
+for two additions before anybody noticed.
 
 * **auditability**: the SQL is one click away on every answer, because a client analyst
   must be able to check the agent's work rather than trust it;
@@ -8,13 +10,15 @@ Deliberately thin. The UI exists to serve three things the brief actually assess
   is shown, so the behaviour is inspectable rather than magic;
 * **schema handling**: the sidebar names each table in the reader's language, and the
   column list behind it is one click away for a reviewer who wants the real thing;
-* **latency**: disclosed per answer, collapsed, with the distribution on the
-  Observability page.
+* **latency and cost**: disclosed per answer, collapsed, with the distribution on the
+  Observability page;
+* **conversations that survive a reload**: the sidebar lists saved chats, and reopening one
+  brings back its table and its chart rather than its text (ADR-014).
 
-Three of those four are collapsed disclosures rather than page furniture, and that is the
-layout decision this file makes. A non-technical reader gets an answer, a caveat and a
-chart; a reviewer gets the SQL, the columns and the seconds without either audience paying
-for the other's screen space.
+The SQL, the columns and the telemetry are collapsed disclosures rather than page furniture,
+and that is the layout decision this file makes. A non-technical reader gets an answer, a
+caveat and a chart; a reviewer gets the rest without either audience paying for the other's
+screen space.
 
 Everything else is default Streamlit. Time spent on theming is time not spent on the
 eval harness.

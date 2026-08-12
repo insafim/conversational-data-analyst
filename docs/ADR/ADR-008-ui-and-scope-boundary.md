@@ -20,7 +20,9 @@ prototype that names its omissions and justifies each one reads as judgement.
 
 **Streamlit, deliberately thin, plus an explicit and defended out-of-scope list.**
 
-The UI's entire job is to make four things visible, because each maps to an assessed line:
+The UI's entire job is to make a small set of things visible, because each maps to an assessed
+line. The set is listed rather than counted: this sentence stated a total once, addenda added
+rows underneath it, and the total was wrong for long enough to be worth not repeating.
 
 | Element | What it demonstrates |
 | --- | --- |
@@ -28,8 +30,8 @@ The UI's entire job is to make four things visible, because each maps to an asse
 | Natural-language answer | Groundedness — phrased only from returned rows |
 | Chart, rendered from a typed `ChartSpec` | Chart-type selection ([ADR-005](ADR-005-deterministic-chart-selection.md)) |
 | Collapsed "View SQL" expander | Auditability |
-| Collapsed per-answer telemetry: seconds, cost, model calls, stage breakdown | Latency, for the turn just taken (see the 2026-08-12 addenda) |
-| Sidebar table list, each opening onto its columns and their units | Schema handling, without a column list a non-technical reader must scroll past |
+| Collapsed per-answer telemetry: seconds, cost, model calls, stage breakdown | Latency AND cost, for the turn just taken (see the 2026-08-12 addenda) |
+| Sidebar table list, each opening onto its columns, their types and their units | Schema handling, without a column list a non-technical reader must scroll past |
 | Sidebar list of saved chats | Conversations that survive a reload ([ADR-014](ADR-014-conversation-store.md)) |
 | An Observability page: latency, cost, guardrail counts, stage means, per-category eval scores, eval runs | Latency and cost as a distribution, and the safety record as evidence |
 

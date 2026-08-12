@@ -7,10 +7,15 @@ brief actually assesses:
   must be able to check the agent's work rather than trust it;
 * **chart-type selection**: the rule-based choice is rendered, and the rule that fired
   is shown, so the behaviour is inspectable rather than magic;
+* **schema handling**: each table is named in the reader's language, and its column count
+  is the control that opens onto the columns, their types and their units;
 * **conversations that survive a reload**, kept in a database the agent cannot reach
   (ADR-014);
-* **latency and cost**, measured and shown, now aggregated on the Observability page
-  rather than as a caption under one answer.
+* **latency and cost**, measured and shown in both forms: collapsed beside the answer for
+  the turn just taken, and as a median, a p95 and a per-stage mean on the Observability
+  page. The per-answer figure was removed on 2026-08-12 and restored once the page existed
+  to give it a baseline, which is the whole argument for showing it. ADR-008's two
+  addenda of that date carry it in each direction.
 
 Two pages rather than one long scroll, because the audiences differ: the chat is for
 someone asking a question, and the panel is for someone deciding whether to trust the
