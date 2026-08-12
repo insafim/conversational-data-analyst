@@ -28,8 +28,10 @@ The UI's entire job is to make four things visible, because each maps to an asse
 | Natural-language answer | Groundedness — phrased only from returned rows |
 | Chart, rendered from a typed `ChartSpec` | Chart-type selection ([ADR-005](ADR-005-deterministic-chart-selection.md)) |
 | Collapsed "View SQL" expander | Auditability |
+| Collapsed per-answer telemetry: seconds, cost, model calls, stage breakdown | Latency, for the turn just taken (see the 2026-08-12 addenda) |
+| Sidebar table list, each opening onto its columns and their units | Schema handling, without a column list a non-technical reader must scroll past |
 | Sidebar list of saved chats | Conversations that survive a reload ([ADR-014](ADR-014-conversation-store.md)) |
-| An Observability page: latency, cost, outcomes, stage means, eval runs | Latency and cost, aggregated rather than per answer |
+| An Observability page: latency, cost, guardrail counts, stage means, per-category eval scores, eval runs | Latency and cost as a distribution, and the safety record as evidence |
 
 Plus one sidebar block with a schema summary and four example questions as buttons, which exists so
 a reviewer can drive the demo without inventing questions.
@@ -103,8 +105,9 @@ which is the opposite of the stated user — a non-technical operations manager.
 
 - UI time stayed within its budget, leaving the eval harness fully built.
 - Visible SQL and a latency caption make two assessed properties directly observable rather than
-  claimed. *The caption moved to the Observability page on 2026-08-12, see the addendum; the
-  property is still observable, and better, but no longer in this element.*
+  claimed. *Both 2026-08-12 addenda apply. The caption became a page, then came back as a
+  collapsed expander beside the SQL once the page existed to give it a baseline. It is
+  observable in both places now, per turn and as a distribution.*
 - Streamlit's built-in charts mean chart rendering added no dependency and no custom code.
 
 **Negative / accepted**
@@ -264,3 +267,60 @@ advice work: keep it open in a second tab and it keeps refreshing while the firs
 This also retires the "Tracing persistence" row from `docs/ARCHITECTURE.md`'s omissions
 table. Cost and latency were measured per request and discarded when the answer rendered;
 they are now stored and aggregated, so the omission had become false.
+
+## Addendum, 2026-08-12: the caption comes back, collapsed
+
+The previous addendum removed the per-answer telemetry caption and gave the reason: what a
+caption beside one answer can report is what that one turn cost, and a single reading has
+no baseline, so a reader cannot tell whether six seconds is fast. It is back. The argument
+was not wrong; it has been answered. **The Observability page is the baseline.** Once a
+median, a p95 and a per-stage mean exist one click away, a per-turn figure has something to
+be read against, and "6.94s" stops being a number with no scale.
+
+What is still refused is the earlier *shape*. It was an always-visible caption under every
+answer, competing for attention with the answer itself. It is now a collapsed expander
+labelled `Answered in 6.94s`, sitting immediately after `View SQL`, and the two are placed
+together because they are the same kind of object: a reader who wants to inspect the
+machinery opens them, and a reader who wants the answer never sees either. The label states
+the outcome as well as the duration, so it agrees with the badge above the answer rather
+than duplicating only half of it.
+
+The wording, the verb per outcome and the arithmetic are decided in `src/notices.py`
+alongside `answer_notices`, not in the view. That is the same rule the previous addendum
+applied and the reason this file can claim the UI layer is thin: the page opens an expander
+around a value it did not compute.
+
+**A rounding bug found by building it.** The cost was formatted by the function the panel
+used, which switches to two decimals above a cent. An answered question costs about
+`$0.0142`, so the figure a reviewer is most likely to check rendered as `$0.01`, which is
+the same string a question costing half as much would produce. The magnitude rule was a
+proxy for a distinction it could not actually express, so there are now two functions: a
+per-unit cost keeps four decimals at every size, and an aggregate rounds to money. The
+smoke test asserting the cost was *absent* from the chat pane had kept passing after the
+caption returned, because the string it was looking for no longer existed.
+
+## Addendum, 2026-08-12: two more things the sidebar owes a reviewer
+
+**The page switcher moved to the top bar.** Streamlit renders it in the sidebar by default,
+where it sat above the chat's own header and made the first thing in the sidebar a control
+belonging to the application rather than to the page. `st.navigation(position="top")`
+separates them: the top bar is where you are, the sidebar is what this page gives you. The
+supported values on the pinned 1.61.1 are `sidebar`, `hidden` and `top`, so there is no
+option to put it at the foot of the sidebar without hiding it and hand-rolling
+`st.page_link` on every page, which is navigation in two places and one forgotten link away
+from an unreachable page.
+
+**The column count became the control that lists the columns.** The sidebar named each
+table in the reader's language and stated how many columns it had, which is the useful half
+for a non-technical user and not enough for a reviewer judging schema handling. The count is
+now the label of an expander that opens onto the column names, their types, and their
+`COMMENT ON COLUMN` text. The comments are the reason it is worth opening: `berth_wait_hours`
+being *hours* is not recoverable from `numeric`, and that same text is what
+[ADR-003](ADR-003-schema-introspection.md) injects into the SQL prompt, so the sidebar and
+the model read one source and cannot drift.
+
+Collapsed, for the reason the whole element table above is collapsed by default: a column
+listing is the artefact a non-technical user came here to avoid. The count is the label
+rather than a separate line so the two cannot disagree, and `column_count` is derived from
+the column list rather than stored beside it so that stays true in code as well as on
+screen.

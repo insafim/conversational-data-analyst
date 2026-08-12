@@ -907,7 +907,9 @@ job is to make these visible, each mapping to an assessed behaviour:
 | A "What was measured" line in plain language (ADR-013)                              | Groundedness, for a reader who cannot audit SQL |
 | Collapsed "View SQL" expander                                                        | Auditability                                  |
 | Sidebar chat list, with New chat, reopen, rename and delete                          | Conversations that survive a reload (ADR-014) |
-| An Observability page: median and p95 latency, cost, outcomes, stage means, eval runs | Latency and cost, aggregated rather than per answer |
+| Collapsed per-answer telemetry: seconds, cost, model calls, stage breakdown       | Latency, for the turn just taken              |
+| Sidebar table list, each opening onto its columns, types and units                 | Schema handling, without a listing the reader must scroll past |
+| An Observability page: latency, cost, guardrail counts, stage means, per-category eval scores, eval runs | Latency and cost as a distribution, and the safety record as evidence |
 
 Outcomes that are not a normal answer carry a visible badge, so a refusal or clarification is
 never mistaken for an answer.
@@ -1024,6 +1026,28 @@ latency, cost per question, outcomes, mean seconds per stage, and retries by rea
 that the numbers were measured per request and discarded when the answer rendered, so no
 question about a trend could be answered.
 
+**The page answers two different questions about the guardrails, and keeps them apart.** The
+live half counts what this application happened to be asked, as tiles for answered,
+clarified, refused, blocked by the validator and errored. On a fresh store every one of them
+is zero, which is honest and proves nothing. The eval half carries the figure that does: the
+newest committed run scored by category, where the adversarial subset passes only by being
+refused before the database or blocked by `validator.py`. Run 26 reads 19 of 19. The live
+panel points at it rather than borrowing the number into its own section, because the two
+halves are never added together (ADR-010): one is whatever a user typed and the other is a
+fixed 108-case benchmark.
+
+**Per-category scoring is three denominators over one file.** Execution accuracy is the
+answerable subset, ambiguity handling the ambiguous subset, safety the adversarial one, and
+none of them is the overall score. The names live in `src/telemetry.py` rather than in the
+page, because "execution accuracy" is the specific figure ADR-006 defines and a second name
+for it invented at the render layer is how a deck ends up quoting the wrong number.
+
+**Latency is disclosed twice, deliberately.** Beside the answer it is one turn, collapsed
+into an expander labelled with the outcome and the seconds. On this page it is a median, a
+p95 and a per-stage mean. The per-turn figure was removed in the first version of this page
+and restored once the page existed, because a single reading only means something against a
+distribution; ADR-008's two 2026-08-12 addenda carry the argument both ways.
+
 **What is still not built** is per-user attribution, which needs authentication first, and
 alerting. There is no exporter either, though `stage_timings` is a name-to-duration map per
 turn, which is the shape an OpenTelemetry span set needs, so emitting traces is an adapter
@@ -1073,7 +1097,7 @@ rather than a rewrite.
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers.
 │                               `runNN.json` the records, `runNN.meta.json` their provenance
-├── tests/                      858 tests
+├── tests/                      893 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Fourteen decision records
@@ -1093,7 +1117,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 858 tests
+### Test suite: 893 tests
 
 | File                               | Tests | Scope                                                                    |
 | ---------------------------------- | ----- | ------------------------------------------------------------------------ |
@@ -1110,12 +1134,12 @@ streamlit run app.py
 | `test_llm_extraction.py`        | 18    | Parsing model output; raise rather than half-parse |
 | `test_multi_turn.py`            | 15    | Bounded multi-turn behaviour (ADR-011) |
 | `test_executor.py`              | 13    | Row cap, statement timeout, verbatim execution, errors |
-| `test_schema.py`                | 12    | Catalog introspection; composed identifiers are quoted |
+| `test_schema.py`                | 14    | Catalog introspection; composed identifiers are quoted; the sidebar's column listing carries its units |
 | `test_schema_labels.py`         | 12    | Turning a table's COMMENT ON into a sidebar label, including the split it gets wrong |
-| `test_notices.py`               | 9     | Which captions and warnings sit beside an answer, and their order |
-| `test_telemetry.py`             | 18    | The Observability page's arithmetic: SQL aggregates over stored turns, and the eval-run reader |
+| `test_notices.py`               | 23    | Which captions and warnings sit beside an answer, their order, and what one turn cost |
+| `test_telemetry.py`             | 30    | The Observability page's arithmetic: SQL aggregates over stored turns, the eval-run reader, per-category scores, and how a cost is written |
 | `test_conversations.py`         | 31    | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one |
-| `test_app_smoke.py`             | 10    | Both pages under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption, the panel's metrics match the store |
+| `test_app_smoke.py`             | 16    | Both pages under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption, the panel's metrics and category tiles match the artefacts |
 | `test_store.py`                 | 17    | Conversation persistence: round trip, ordering, cascade delete, concurrency |
 | `test_store_isolation.py`       | 6     | That the agent's role cannot connect to the store (ADR-014) |
 | `test_store_titles.py`          | 5     | Deriving a chat title from its first question |
@@ -1127,7 +1151,7 @@ streamlit run app.py
 Integration tests are marked, so unit tests run without a database:
 
 ```bash
-pytest -m "not integration"   # 654 unit tests, no database, no network
+pytest -m "not integration"   # 679 unit tests, no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
 python eval/run_eval.py                                # shipped config, 10 to 15 min

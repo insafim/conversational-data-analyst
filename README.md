@@ -80,8 +80,8 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 654 unit tests, no database or network needed
-pytest                        # all 858; needs the seeded database, and 10 of them
+pytest -m "not integration"   # 679 unit tests, no database or network needed
+pytest                        # all 893; needs the seeded database, and 10 of them
                               # call the live model, so they also need a funded API key
 # The two configurations the published figures were measured on, named explicitly.
 # --no-reading is needed for the BASELINE only: ADR-013's reading defaults on and also
@@ -98,7 +98,7 @@ python eval/run_eval.py                                  # $1.26, 12.6 min (run 
 
 One caveat on reproduction, stated rather than buried: `uv.lock` was refreshed on 2026-08-11 and
 moves ten packages relative to the environment the runs in `eval/results/` were recorded on,
-including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 858 tests pass on the
+including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 893 tests pass on the
 pinned set, which is what establishes that the SQL validator behaves identically. The eval scores
 are model-driven and are quoted as ranges across repeated runs for that reason.
 
@@ -753,14 +753,14 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output, evidence for the numbers above.
 │                             `runNN.json` is the records, `runNN.meta.json` what produced them
-└── tests/                  858 tests
+└── tests/                  893 tests
 ```
 
 ---
 
 ## Testing
 
-858 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+893 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
@@ -778,12 +778,12 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_llm_extraction.py` | 18 | Parsing model output; functions that raise rather than half-parse |
 | `test_multi_turn.py` | 15 | That a first turn pays nothing, history carries no answer text, and a rewrite is still untrusted (ADR-011) |
 | `test_executor.py` | 13 | Row cap and its boundary, statement timeout, verbatim execution, errors |
-| `test_schema.py` | 12 | Catalog introspection, and that composed identifiers are quoted |
+| `test_schema.py` | 14 | Catalog introspection, that composed identifiers are quoted, and that the sidebar's column listing carries its units |
 | `test_schema_labels.py` | 12 | Turning a table's `COMMENT ON` into a sidebar label, including the split it gets wrong |
-| `test_notices.py` | 9 | Which captions and warnings sit beside an answer, and the order they arrive in |
-| `test_telemetry.py` | 18 | What the Observability page aggregates: the SQL over stored turns, and reading the committed eval runs |
+| `test_notices.py` | 23 | Which captions and warnings sit beside an answer, the order they arrive in, and what one turn cost |
+| `test_telemetry.py` | 30 | What the Observability page aggregates: the SQL over stored turns, the committed eval runs, their per-category scores, and how a cost is written |
 | `test_conversations.py` | 31 | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one |
-| `test_app_smoke.py` | 10 | Both pages rendered headlessly: that a saved chat reopens with its table and chart, that a missing store degrades to a caption, and that the panel's figures match the store |
+| `test_app_smoke.py` | 16 | Both pages rendered headlessly: that a saved chat reopens with its table and chart, that a missing store degrades to a caption, and that the panel's figures and category tiles match the artefacts |
 | `test_store.py` | 17 | Conversation persistence: round trip, ordering, cascade delete, concurrent appends |
 | `test_store_isolation.py` | 6 | That the agent's role cannot connect to the conversation store (ADR-014) |
 | `test_store_titles.py` | 5 | Deriving a chat title from its first question |
