@@ -110,7 +110,7 @@ as-is except for the API key.
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
 | `ANTHROPIC_API_KEY` | **Yes**¹ | n/a | Or `OPENAI_API_KEY` / `GEMINI_API_KEY` |
-| `MODEL_CHEAP` | No | `anthropic/claude-haiku-4-5` | Classify + summarise (2 of 3 calls) |
+| `MODEL_CHEAP` | No | `anthropic/claude-haiku-4-5` | Classify, summarise and the reading: 3 of the 4 calls on an answered question. Also the follow-up rewrite, which only a multi-turn question pays for |
 | `MODEL_STRONG` | No | `anthropic/claude-sonnet-5` | SQL generation only |
 | `POSTGRES_PORT` | No | `55432` | Deliberately not 5432 |
 | `POSTGRES_ANALYST_USER` | No | `analyst_ro` | The read-only role the agent uses. Fixed on the bundled database² |
@@ -202,12 +202,17 @@ generate_sql ◄─────────────────────�
    ▼                                          │ (Postgres error in context)
 validate ──fail──► reject (END: refusal)      │
    │ pass                                     │
+   ├──────────► verify (the reading, ADR-013) │
    ▼                                          │
 execute ──db error────────────────────────────┘
    │ rows
    ▼
-summarize ──► pick_chart ──► END
+summarize ──► review ──► pick_chart ──► END
 ```
+
+`verify` hangs off `validate` beside `execute` rather than in front of it, and `review` is where
+its sentence is collected. With both switches off neither runs and `summarize` goes straight to
+`pick_chart`, which is the configuration the baseline runs measured.
 
 | Node | Implementation | Why |
 | --- | --- | --- |
@@ -215,11 +220,15 @@ summarize ──► pick_chart ──► END
 | `generate_sql` | LLM (strong tier) | The one task where capability changes the answer |
 | `validate` | **code** | A safety boundary must not be a prompt |
 | `execute` | **code** | Connection policy, timeout, row cap |
+| `verify` | LLM (cheap tier) | The "What was measured" line, beside `execute` rather than before it. Its objection is discarded (ADR-013) |
 | `summarize` | LLM (cheap tier) | Grounded phrasing of returned rows |
 | `pick_chart` | **code** | Deterministic and unit-testable |
 
-**Three LLM calls per question** (four if the retry fires); everything else is code. The model
-decides *content*, the graph decides *flow*.
+**Four LLM calls on an answered question**: `classify`, `generate_sql`, the reading (ADR-013)
+and `summarize`. Only three are sequential, because the reading runs beside `execute`. A
+refusal or a clarification costs one, a follow-up adds one for the rewrite, and a retry adds
+two, one to regenerate the SQL and one to read what was regenerated, for six. Everything else
+is code. The model decides *content*, the graph decides *flow*.
 
 Two edges carry the security argument. `validate` sits on the **only** edge into `execute`, so no
 path reaches the database unchecked. And the retry edge returns to `generate_sql`, never to
@@ -227,7 +236,7 @@ path reaches the database unchecked. And the retry edge returns to `generate_sql
 
 A fixed graph rather than an autonomous loop because the path here is known in advance, which makes
 guardrails structural, cost a ceiling instead of a distribution, and failure modes enumerable.
-The honest trade-off, that LangGraph is oversized for six nodes, is argued in
+The honest trade-off, that LangGraph is oversized for a graph this small, is argued in
 [ADR-002](docs/ADR/ADR-002-fixed-path-graph-over-agent-loop.md).
 
 **Schema handling.** Not hard-coded and not explored per query. `src/schema.py` introspects
@@ -453,8 +462,10 @@ numbers but never forbade *computing* them. It now prohibits arithmetic across r
 selections ("the highest is X") are allowed, new numbers are not, because a computed figure is
 indistinguishable to a reader from a retrieved one.
 
-**~$0.0095 per question**, 3 LLM calls each, 276 to 279 calls per 108-question run. With
-runtime verification on it is ~$0.0124 and 377 to 384 calls.
+**~$0.0095 per question** with both switches off, 3 LLM calls each, 276 to 279 calls per
+108-question run. With runtime verification on it is ~$0.0124 and 377 to 384 calls. What ships
+is neither, and run 26 measured it at ~$0.0116 and 361 calls; the table below sets the three
+side by side.
 
 **Read the variance, not the best number.** Runs 2 and 3 are the same code and the same prompts, and
 they differ by 9 points. Two things drive that, and they are worth separating:
@@ -643,7 +654,7 @@ One line of reasoning each, because "not built" and "not considered" are differe
 | --- | --- |
 | **Authentication** | One implicit user. Identity is a precondition for row-level security, which is why it heads the production path rather than being a UI feature. |
 | **Caching** | Would cut cost and latency, but optimises a system whose correctness is not yet established. Correctness first. |
-| **Streaming** | Perceived latency, not latency. With three calls the honest fix is fewer or faster calls. |
+| **Streaming** | Perceived latency, not latency. With four calls, three of them sequential, the honest fix is fewer or faster calls. |
 | **Deployment** | Runs locally. Containerising demonstrates a skill this brief does not assess. |
 | **Semantic layer** | The most consequential omission. See below. |
 | **Exported traces and alerting** | Cost and latency are stored per turn and aggregated on the Observability page, but nothing exports them and nothing pages anyone. |

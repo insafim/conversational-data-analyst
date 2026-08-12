@@ -231,6 +231,30 @@ def test_reading_only_still_retries_a_database_error(stub) -> None:
     assert result.outcome is Outcome.ANSWERED
 
 
+def test_a_retried_question_pays_for_a_second_reading(stub) -> None:
+    """Six calls, not five, and the sixth is the one that is easy to miss.
+
+    `validate` fans out to `verify`, so a regenerated statement is read again exactly as
+    the first one was. That makes a database-error retry cost two extra calls rather than
+    one: the regeneration, and the reading of what was regenerated.
+
+    It is pinned because the number is quoted. README.md and docs/ARCHITECTURE.md both
+    state six, and the fan-out in `_route_after_validate` is a single line that a future
+    change could reasonably rewrite to reuse the first reading, halving the figure while
+    every other test here still passed. The count is the claim, so the count is asserted.
+    """
+    stubbed = stub(sql_sequence=["SELECT * FROM no_such_table", TERMINALS_SQL])
+    result = agent_module.ask("How many berths?", verification=False, reading=True)
+
+    assert result.outcome is Outcome.ANSWERED
+    assert result.retried is True
+    assert [len(stubbed.calls[node]) for node in
+            ("classify", "generate_sql", "verify", "summarize")] == [1, 2, 2, 1]
+    assert result.llm_calls == 6, (
+        f"a retried answered question should cost 6 model calls, got {result.llm_calls}"
+    )
+
+
 def test_reading_only_produces_the_same_sql_answer_and_chart_as_everything_off(stub) -> None:
     """ADR-013's safety claim, asserted directly rather than inferred.
 

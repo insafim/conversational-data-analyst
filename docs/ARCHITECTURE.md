@@ -135,7 +135,7 @@ flowchart TB
     end
 
     subgraph App["Application (single process)"]
-        GRAPH["LangGraph pipeline<br/>contextualize to classify to generate to validate to execute to summarize<br/>(verify, ground_check and review only when RUNTIME_VERIFICATION is on)"]
+        GRAPH["LangGraph pipeline<br/>contextualize to classify to generate to validate to execute to summarize<br/>(verify and review ship on, for the reading; ground_check only when RUNTIME_VERIFICATION is on)"]
         VAL["validator.py<br/>sqlglot AST gate"]
         EXEC["executor.py<br/>read-only, timeout, row cap"]
         CHART["charts.py<br/>rule-based, no LLM"]
@@ -272,15 +272,16 @@ flowchart TD
     G --> V{validate}
     V -- fail --> RJ[reject]
     V -- pass --> E{execute}
-    V -- "pass, if enabled (ADR-012)" --> VF[verify]
+    V -- "pass, if verify or reading" --> VF[verify]
     VF --> DV([verdict left in state])
     E -- "db error, db_retries <= 1" --> G
     E -- "bad result shape, once" --> G
     E -- "db error, exhausted" --> ERR([error])
     E -- rows --> S[summarize]
-    S -- "verification off" --> P[pick_chart]
+    S -- "both switches off" --> P[pick_chart]
+    S -- "reading on, shipped" --> RV{review}
     S -- "verification on" --> GC[ground_check]
-    GC --> RV{review}
+    GC --> RV
     RV -- "objection, once" --> G
     RV -- "ungrounded, once" --> S
     RV -- ok --> P
@@ -292,9 +293,15 @@ flowchart TD
 
 `contextualize` runs only when the caller passes history, so a first turn does not pay for
 it. `verify` is a sibling of `execute`, never a step before it: it can object and it can
-attach a caveat, and that is the whole of its authority. With `RUNTIME_VERIFICATION` off,
-`verify`, `ground_check` and `review` are absent from the topology rather than present as
-no-ops, which is what makes the comparison in the README a comparison.
+attach a caveat, and that is the whole of its authority.
+
+**Three configurations, and the topology differs in each**
+([ADR-013](ADR/ADR-013-the-reading-without-the-verdict.md)). With both switches off, `verify`,
+`ground_check` and `review` are absent from the topology rather than present as no-ops, which is
+what makes the comparison in the README a comparison. **What ships is `SQL_READING` on and
+`RUNTIME_VERIFICATION` off**: `verify` runs for its plain-language description of the query,
+`review` collects it, `ground_check` stays absent, and the verifier's objection is discarded
+unread. With `RUNTIME_VERIFICATION` on, all three run and the objection is applied.
 
 ### Node responsibilities
 
@@ -310,13 +317,19 @@ no-ops, which is what makes the comparison in the README a comparison.
 | `summarize`    | LLM            | cheap            | State the answer, grounded strictly in returned rows  |
 | `pick_chart`   | **code** | n/a              | Choose the visualisation ([§10](#10-chart-selection)) |
 | `contextualize` | LLM           | cheap            | Rewrite a follow-up into a standalone question (ADR-011); skipped on first turns |
-| `verify`       | LLM            | cheap            | Advisory: does the SQL measure what was asked (ADR-012)? Never sees results |
+| `verify`       | LLM            | cheap            | Advisory: does the SQL measure what was asked (ADR-012)? In the shipped configuration only its description is kept, as the "What was measured" line (ADR-013). Never sees results |
 | `ground_check` | **code** | n/a              | Advisory: every figure in the answer appears in the rows, question or SQL |
 | `review`       | **code** | n/a              | Applies the advisory verdicts and decides the next hop |
 
-**Three LLM calls per question; four if the retry fires.** A follow-up turn adds one for
-the rewrite, and runtime verification adds one more when enabled. Everything else is code.
-The division is deliberate: *the model decides content, the graph decides flow.*
+**Four LLM calls on an answered question in the shipped configuration**: `classify`,
+`generate_sql`, the reading, and `summarize`. Only three of them are sequential, because the
+reading runs beside `execute` rather than in front of it. A refusal or a clarification costs
+one, a follow-up turn adds one for the rewrite, and a retry adds two rather than one, because
+`validate` fans out to the reading on the second pass as well as the first: one call to
+regenerate the SQL and one to read what was regenerated, measured at six on a retried answered
+question. With both switches
+off it is three, which is the configuration runs 21, 23 and 25 measured. Everything else is
+code. The division is deliberate: *the model decides content, the graph decides flow.*
 
 ### Two edges that carry the security argument
 
@@ -962,10 +975,12 @@ Two model tiers behind one wrapper ([ADR-007](ADR/ADR-007-llm-provider-and-tieri
 
 | Tier   | Env var          | Used by                     | Rationale                                            |
 | ------ | ---------------- | --------------------------- | ---------------------------------------------------- |
-| Cheap  | `MODEL_CHEAP`  | `classify`, `summarize` | Short, bounded, low-difficulty language tasks        |
+| Cheap  | `MODEL_CHEAP`  | `classify`, `summarize`, `verify`, `contextualize` | Short, bounded, low-difficulty language tasks        |
 | Strong | `MODEL_STRONG` | `generate_sql`            | The one node where capability determines correctness |
 
-Two of three calls go to the cheap tier. Provider is chosen by the model-string prefix
+Three of the four calls on an answered question go to the cheap tier, and `generate_sql` is the
+only node that needs the strong one. `contextualize` is a fifth cheap call that only a follow-up
+turn pays for, which is why the table lists four nodes against a count of three. Provider is chosen by the model-string prefix
 (`anthropic/…`, `openai/…`, `gemini/…`), so switching provider is an environment change, not a
 code change. Measured cost is **~$0.0095 per question**, or about $1.03 for a 108-question run
 with both switches off (runs 21, 23, 25), rising to ~$0.0124 and ~$1.34 with runtime
@@ -991,10 +1006,11 @@ direction and not as a measurement; the cost figures above are arithmetic over 1
 carry no such caveat. Across those same both-off runs mean is 5.6 to 6.3s and p95 is 10.7 to
 13.9s, against 7.01s and 14.32s in run 26; the median is the
 figure to quote, because cold-start outliers pull the mean around. It is a direct consequence
-of three sequential LLM calls, not a defect. The honest fixes are caching and a smaller
-classifier, not a rewrite. What the architecture *does* guarantee is that latency is a
-**ceiling** (3 calls, 4 with a retry) rather than a distribution with a long tail, which is
-what an autonomous loop would have produced.
+of three sequential LLM calls, the fourth running beside `execute` rather than after it, and
+not a defect. The honest fixes are caching and a smaller classifier, not a rewrite. What the
+architecture *does* guarantee is that latency is a **ceiling** (four calls, six with a retry,
+three of them on the critical path) rather than a distribution with a long tail, which is what
+an autonomous loop would have produced.
 
 ### Observability
 
@@ -1143,7 +1159,7 @@ consequences visible in the suite:
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Authentication**      | One implicit user. Identity is a precondition for row-level security, which is why it heads the production path rather than being a UI feature                                               |
 | **Caching**             | Would cut cost and latency, but optimises a system whose correctness is not yet established. Correctness first                                                                               |
-| **Streaming**           | Perceived latency, not latency. With three calls the honest fix is fewer or faster calls                                                                                                     |
+| **Streaming**           | Perceived latency, not latency. With four calls, three of them sequential, the honest fix is fewer or faster calls                                                                                                     |
 | **Deployment**          | Runs locally. Containerising demonstrates a skill this brief does not assess                                                                                                                 |
 | **Async / concurrency** | Single-user by design; Streamlit's rerun model would not scale to concurrent users anyway                                                                                                    |
 | **Semantic layer**      | The most consequential omission; see below                                                                                                                                                   |
@@ -1196,7 +1212,7 @@ deployments stall.
 | Decision                                                            | Why                                                                                                                                                | Trade-off                                                                                          |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | **Fixed-topology graph, not an autonomous agent loop**        | The path is known in advance, so guardrails become structural, cost becomes a ceiling rather than a distribution, and failure modes are enumerable | Cannot handle genuinely multi-step exploration ("find anomalies, then investigate the biggest")    |
-| **LangGraph despite six nodes**                               | Typed state, topology-as-documentation, and the mechanism for checkpointing and multi-turn later                                                   | Honestly oversized today; plain functions would work. A bet on the next increment                  |
+| **LangGraph despite thirteen nodes**                               | Typed state, topology-as-documentation, and the mechanism for checkpointing and multi-turn later                                                   | Honestly oversized today; plain functions would work. A bet on the next increment                  |
 | **Read-only DB role as the real boundary**                    | A control the model can influence is a tendency; one it cannot reach is a guarantee                                                                | Requires provisioning a role, which is what a client DBA would do anyway                           |
 | **sqlglot AST walk, not a `sqlparse` statement-type check** | A data-modifying CTE has top-level type`Select`, so a check on the top-level type alone admits it and it executes                                | An extra dependency; allow-list shape occasionally blocks exotic-but-valid SQL                     |
 | **Allow-list validator, not a keyword deny-list**             | An unanticipated construct is denied by default rather than admitted by omission                                                                   | False positives (e.g.`INTERSECT` initially), which is the correct direction to fail in           |
@@ -1206,7 +1222,7 @@ deployments stall.
 | **Port operations domain, not e-commerce**                    | E-commerce is over-represented in training data, so accuracy would partly measure memorisation rather than schema comprehension                    | Less immediately familiar to a reader than orders and products                                     |
 | **Deterministic seed, fixed date window**                     | Reference SQL contains literal dates; a moving window would decay accuracy for unrelated reasons                                                   | Relative dates must resolve against injected data ranges, not the clock                            |
 | **Result-set comparison, not SQL text**                       | Many correct formulations exist; string comparison measures style, not correctness                                                                 | Slightly stricter than "did the user get the right answer", since an extra column counts as a miss |
-| **Two model tiers**                                           | Cost per task is a design input; two of three calls do not need capability                                                                         | Two behaviour profiles to reason about; a prompt tuned on one tier may not transfer                |
+| **Two model tiers**                                           | Cost per task is a design input; three of the four calls do not need capability                                                                         | Two behaviour profiles to reason about; a prompt tuned on one tier may not transfer                |
 | **Streamlit, not React + API**                                | The UI is the least interesting component here, and its implementation should say so                                                               | Would not scale to concurrent users; not a production serving model                                |
 | **Reporting a range, not the best run**                       | Same code scored 86.4% and 95.5%; quoting only the maximum on a "measured, not claimed" system would be self-defeating                             | A less impressive headline number                                                                  |
 | **Withheld capabilities recorded as decisions** (ADR-009)     | Fourteen runs show zero dialect failures, so docs retrieval, web search, MCP and LLM validation are absences with evidence and revisit conditions | The record must be re-examined as models, dialects and scope change                                |
