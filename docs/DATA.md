@@ -4,6 +4,11 @@
 > constructed, why this domain was chosen over the obvious alternatives, and — the part
 > most likely to be useful to you right now — **what you can ask it**.
 >
+> If you have never worked with port data, start with
+> [§1 The operation, in one paragraph](#the-operation-in-one-paragraph) and
+> [the vocabulary](#the-vocabulary) that follows it. One paragraph and a glossary, after
+> which nothing below is jargon.
+>
 > If you are here to try the demo and do not know what questions the data can answer,
 > skip to [§10 Asking your own questions](#10-asking-your-own-questions). Sections
 > [§4 Value inventory](#4-value-inventory) and [§5 Verified data profile](#5-verified-data-profile)
@@ -22,6 +27,9 @@
 ## Table of contents
 
 1. [Why this data](#1-why-this-data)
+   - [The operation, in one paragraph](#the-operation-in-one-paragraph)
+   - [The vocabulary](#the-vocabulary)
+   - [Why this domain and not another](#why-this-domain-and-not-another)
 2. [The schema at a glance](#2-the-schema-at-a-glance)
 3. [Column reference](#3-column-reference)
 4. [Value inventory](#4-value-inventory)
@@ -37,6 +45,69 @@
 ---
 
 ## 1. Why this data
+
+### The operation, in one paragraph
+
+A container terminal is a stretch of quay wall where ships dock and containers are lifted on
+and off. Ships do not dock on arrival. A terminal has a fixed number of **berths**, the
+spaces along the quay that one ship can occupy, and when all of them are taken an arriving
+ship waits offshore at **anchorage** until one frees up. Once it has a berth, the terminal's
+**quay cranes** work it: each crane lifts containers off the ship (a **discharge**) and lifts
+others on (a **load**), for hours, until the exchange is done. The ship then departs and the
+berth passes to the next one waiting.
+
+That sequence is the entire dataset. Each table is one part of it:
+
+| The physical thing | The table | What it lets you ask |
+| --- | --- | --- |
+| the terminal, and the port it sits in | `terminals` | where |
+| the ship, and the line that operates it | `vessels` | whose |
+| the quay cranes belonging to that terminal | `cranes` | with what equipment |
+| one ship's visit: arrived, berthed, departed | `port_calls` | how long it waited, how long it stayed |
+| one crane working one ship for a stretch | `cargo_moves` | how many containers moved |
+
+Two durations come out of a single visit, and they measure opposite things:
+
+- **Berth wait** is arrival to berth. Nothing is happening; the ship is queueing offshore. It
+  measures congestion, and it is mostly the port's problem. Materialised as
+  `berth_wait_hours`.
+- **Time at berth**, or dwell, is berth to departure. Cargo is being worked. It measures how
+  fast the terminal does the job. Derived from `departure_ts - berth_ts`.
+
+A terminal can be an outlier on one and ordinary on the other, which is why they are worth
+separating. Jebel Ali Terminal 2 averages 17.46 hours of berth wait against 5.56 to 5.94
+everywhere else, roughly three times the field. Its time at berth, 24.25 hours, is also the
+highest of the six, but by 0.23 hours over a field running 23.21 to 24.02
+([§5](#5-verified-data-profile)). Ships queue to get in, then get worked at much the same
+speed as anywhere else.
+
+### The vocabulary
+
+Every domain term this document uses, and the column it corresponds to. None of it is needed
+to run the demo. It is here so that a reader who has never touched port data can read
+[§5](#5-verified-data-profile) and [§7](#7-the-planted-signal) as findings rather than as
+numbers.
+
+| Term | What it means | Where it is in this data |
+| --- | --- | --- |
+| **Port call** | One visit by one ship to one terminal, arrival through departure | one `port_calls` row |
+| **Berth** | A single space along the quay wall where one ship can dock | `terminals.berth_count` counts them |
+| **Anchorage** | The offshore area where a ship waits when no berth is free | no column; the waiting itself is `berth_wait_hours` |
+| **Berth wait** | Arrival to berth. Queueing, so it reads as congestion | `port_calls.berth_wait_hours`, stored |
+| **Time at berth**, dwell | Berth to departure. Cargo work, so it reads as efficiency | derived from `departure_ts - berth_ts` |
+| **Quay crane**, ship-to-shore crane | The rail-mounted crane on the quay that lifts containers between ship and shore | one `cranes` row |
+| **Move** | One crane lifting one container | counted in batches by `cargo_moves.container_count` |
+| **Load** / **discharge** | Putting a container onto the ship / taking one off it | `cargo_moves.move_type` |
+| **Throughput** | Containers handled over some period | `SUM(cargo_moves.container_count)` |
+| **Crane productivity** | Containers handled per crane per hour | `container_count / (duration_minutes / 60.0)` |
+| **TEU** | Twenty-foot equivalent unit, the standard unit of container ship capacity. A 40-foot container is 2 TEU | `vessels.capacity_teu` |
+| **IMO number** | A permanent seven-digit ship identifier issued by the International Maritime Organization | `vessels.imo_number`, typed `char(7)` |
+| **Flag state** | The country a ship is registered in. A legal and tax choice, not a route | `vessels.flag_country` |
+| **Operator**, line | The shipping company running the ship's services | `vessels.operator` |
+| **Ro-Ro** | Roll-on roll-off: loaded by driving vehicles aboard rather than lifting boxes | a `vessels.vessel_type` value |
+| **Bulk carrier** | Carries unpackaged cargo such as grain or ore, loaded loose rather than in containers | a `vessels.vessel_type` value |
+
+### Why this domain and not another
 
 The brief asked for a database with "a minimum of 4 tables that require joins to answer
 questions", with input data of our choice and synthetic where appropriate. That phrasing
@@ -87,7 +158,7 @@ cannot be made to contain a finding on demand.
 
 | Alternative | Why not |
 | --- | --- |
-| **Generic e-commerce** (customers / orders / products / order_items) | The default choice, and massively over-represented in LLM training data. That inflates apparent SQL accuracy — the model half-remembers the schema — which makes the eval flattering rather than informative. It also says nothing about the audience's domain. |
+| **Generic e-commerce** (customers / orders / products / order_items) | The canonical SQL teaching schema, and its query patterns are correspondingly familiar. A model can then score well because the structure closely resembles common examples rather than because it reasoned over an unfamiliar one, which makes the eval less diagnostic of the capability being measured. It also says nothing about the audience's domain. |
 | **A public real-world dataset** | Adds download, size and licensing friction to a repo whose README promises a two-command start. More importantly, signal cannot be planted in it, so the demo becomes hostage to whatever the data happens to contain. |
 | **8–10 tables for a "richer" schema** | Overbuilding. Five already force four-table joins. More tables mean a longer schema prompt and more SQL error surface, testing nothing extra that the brief asks about. |
 | **The minimum 4 tables** | Meets the letter of the brief with zero margin. The fifth table costs nothing and buys an extra join path. |
@@ -102,6 +173,9 @@ Full decision record with consequences: [ADR-001](ADR/ADR-001-domain-and-data-mo
 terminals ──< cranes ──────< cargo_moves >── port_calls >── vessels
      └────────────────────────────────────< port_calls
 ```
+
+The same diagram rendered, with row counts and grains on each table, is at
+[docs/visuals/data.html](visuals/data.html).
 
 Read `──<` as "one to many". Two dimension tables (`vessels`, `terminals`), one equipment
 dimension (`cranes`), and two fact tables at **different grains** — `port_calls` is one row
@@ -134,6 +208,40 @@ Note there is **no direct path from `cargo_moves` to `terminals` or `vessels`**.
 volume by port must route through `port_calls`. This is the single most useful thing to
 know when predicting what SQL a question will require.
 
+### What a four-table question actually looks like
+
+§1 claims the join depth arises from the question. Here is the claim executed. "Which three
+operators moved the most containers at Jebel Ali?" needs the metric from `cargo_moves`, the
+operator from `vessels`, and the place from `terminals`, and neither dimension is reachable
+without `port_calls` in between:
+
+```sql
+SELECT v.operator, SUM(cm.container_count) AS containers
+FROM cargo_moves cm
+JOIN port_calls pc ON pc.port_call_id = cm.port_call_id
+JOIN vessels    v  ON v.vessel_id     = pc.vessel_id
+JOIN terminals  t  ON t.terminal_id   = pc.terminal_id
+WHERE t.port_name = 'Jebel Ali'
+GROUP BY v.operator
+ORDER BY containers DESC
+LIMIT 3;
+```
+
+```
+        operator         | containers
+-------------------------+------------
+ Cardinal Container Line |      10952
+ Halcyon Freight         |      10506
+ Meridian Lines          |       9641
+```
+
+Two things in that query are the whole argument for this schema. `port_calls` appears
+although the question never mentions a visit, because it is the only bridge between the
+metric and either dimension. And the filter is `t.port_name`, not `t.terminal_name`, because
+"Jebel Ali" is the port; the terminal is called `Jebel Ali Terminal 2`. Filtering the wrong
+one returns zero rows and no error, which is the trap documented in
+[§3](#3-column-reference).
+
 ### A structural invariant the foreign keys do not enforce
 
 A crane belongs to one terminal and can only service vessels berthed at that terminal. The
@@ -161,6 +269,9 @@ The "Notes" column is close to what the model sees at query time — see
 | `terminal_id` | `integer` PK | Identity. |
 | `terminal_name` | `text` | Unique across all ports. **Every terminal name begins with its `port_name`** — see the trap below. |
 | `port_name` | `text` | The port containing the terminal. A port may have several terminals; here each has one. |
+| `country` | `text` | Country of the port. |
+| `berth_count` | `smallint` | Berths available — a capacity proxy. Constrained 1–30. |
+| `opened_year` | `smallint` | Year the terminal opened. Constrained 1900–2100. |
 
 > **The `port_name` / `terminal_name` trap.** Every terminal name in this table starts with
 > its own port name: port `Jebel Ali` contains terminal `Jebel Ali Terminal 2`. So a bare
@@ -169,9 +280,6 @@ The "Notes" column is close to what the model sees at query time — see
 > erroring. The eval caught exactly this in `q19`. The only fix available was to state the
 > relationship in the `COMMENT ON` text, which reaches the model through the prompt, and
 > `tests/test_schema.py` now asserts it still does.
-| `country` | `text` | Country of the port. |
-| `berth_count` | `smallint` | Berths available — a capacity proxy. Constrained 1–30. |
-| `opened_year` | `smallint` | Year the terminal opened. Constrained 1900–2100. |
 
 ### `vessels` — 40 rows
 
