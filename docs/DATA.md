@@ -31,6 +31,9 @@
    - [The vocabulary](#the-vocabulary)
    - [Why this domain and not another](#why-this-domain-and-not-another)
 2. [The schema at a glance](#2-the-schema-at-a-glance)
+   - [What a schema is](#what-a-schema-is)
+   - [Every table and every column](#every-table-and-every-column)
+   - [How the tables connect](#how-the-tables-connect)
 3. [Column reference](#3-column-reference)
 4. [Value inventory](#4-value-inventory)
 5. [Verified data profile](#5-verified-data-profile)
@@ -168,6 +171,88 @@ Full decision record with consequences: [ADR-001](ADR/ADR-001-domain-and-data-mo
 ---
 
 ## 2. The schema at a glance
+
+### What a schema is
+
+A **schema** is the structure of a database rather than its contents: which tables exist,
+what columns each one holds, what type each column is, and which columns tie one table to
+another. The data is the 341,608 containers. The schema is the shape they are stored in.
+
+Five levels, because the rest of this document moves between them constantly:
+
+| Level | In this database |
+| --- | --- |
+| the database | `ports` |
+| a table | `cranes`, one of five |
+| a row | one physical crane, `RTM-QC-01` |
+| a column | one fact recorded about every crane, `max_lift_tonnes` |
+| a foreign key | the link recording which terminal owns that crane |
+
+The distinction carries more weight here than in most projects, because
+[§9](#9-how-the-data-reaches-the-model) never shows the model a single row before it writes
+SQL. The structure below, plus the column comments, is the entire input. Everything the agent
+knows about this domain when it plans a query is on this page.
+
+### Every table and every column
+
+Column order and types are as declared. `PK` marks a primary key, `FK` a foreign key and the
+table it points at.
+
+```
+ports  (the database)
+│
+├── terminals                6 rows   one container terminal
+│     terminal_id            integer   PK
+│     terminal_name          text
+│     port_name              text
+│     country                text
+│     berth_count            smallint
+│     opened_year            smallint
+│
+├── vessels                 40 rows   one ship
+│     vessel_id              integer   PK
+│     vessel_name            text
+│     imo_number             char(7)
+│     vessel_type            text
+│     capacity_teu           integer
+│     operator               text
+│     flag_country           text
+│     year_built             smallint
+│
+├── cranes                  25 rows   one quay crane, owned by exactly one terminal
+│     crane_id               integer   PK
+│     terminal_id            integer   FK -> terminals
+│     crane_code             text
+│     model                  text
+│     commissioned_date      date
+│     max_lift_tonnes        smallint
+│     status                 text
+│
+├── port_calls           1,500 rows   one visit of one vessel to one terminal
+│     port_call_id           integer   PK
+│     vessel_id              integer   FK -> vessels
+│     terminal_id            integer   FK -> terminals
+│     arrival_ts             timestamp
+│     berth_ts               timestamp
+│     departure_ts           timestamp
+│     status                 text
+│     remarks                text
+│     berth_wait_hours       numeric(10,2)   generated, stored
+│
+└── cargo_moves          6,577 rows   one batch of container moves by one crane during one port call
+      move_id                integer   PK
+      port_call_id           integer   FK -> port_calls
+      crane_id               integer   FK -> cranes
+      move_type              text
+      container_count        integer
+      move_ts                timestamp
+      duration_minutes       smallint
+```
+
+That is the map. [§3](#3-column-reference) is the legend: what each column means, what unit it
+is in, and which ones are easy to misread.
+
+### How the tables connect
 
 ```
 terminals ──< cranes ──────< cargo_moves >── port_calls >── vessels
