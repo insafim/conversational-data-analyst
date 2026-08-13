@@ -17,8 +17,9 @@ Three constraints shaped the choice:
 1. **Join depth must be inherent, not contrived.** If the interesting questions can be answered
    from one table, the exercise tests nothing. Join requirements should fall out of the domain's
    natural shape.
-2. **The audience is a consulting firm.** A domain that resembles their client work makes every
-   demo query sound like a real client question rather than a toy.
+2. **The questions must sound operational.** Terminals, congestion and equipment productivity
+   are the vocabulary of an operations review, so a demo query reads as a real business
+   question rather than a toy.
 3. **Results must be reproducible.** The eval harness compares result sets against reference SQL.
    Any non-determinism in the data makes the pass rate meaningless.
 
@@ -89,9 +90,10 @@ question the moment a user says "recently".
 ## Alternatives considered
 
 **A generic e-commerce schema (customers/orders/products/order_items).** Rejected. It is the
-default choice, it is over-represented in LLM training data — which inflates apparent SQL accuracy
-and makes the eval flattering rather than informative — and it says nothing about the domain the
-audience works in.
+canonical SQL teaching schema, and its query patterns are correspondingly familiar. A model can
+then score well because the structure closely resembles common examples rather than because it
+reasoned over an unfamiliar one, which makes the eval less diagnostic of the capability being
+measured.
 
 **A public real-world dataset.** Rejected. Adds download and licensing friction to a repo whose
 README promises a two-command start, and real data cannot have signal deliberately planted, so the
@@ -172,7 +174,7 @@ costs to make it real.
 - Planted signal means demo answers are interesting, and the charts have visible shape.
 - Fixed seed plus fixed date window makes the eval pass rate reproducible across machines and
   across time.
-- Domain resonance with the audience is free.
+- Demo questions read as operational rather than academic, at no extra cost.
 
 **Negative / accepted**
 

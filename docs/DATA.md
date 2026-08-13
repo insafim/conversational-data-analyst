@@ -149,9 +149,9 @@ The last one traverses `cargo_moves → port_calls → vessels` **and** `port_ca
 Four tables in one query, arising from the question rather than from artificially splitting
 a table in half to manufacture a join.
 
-**2. It resembles the audience's client work.** Contango is a consulting firm. A domain of
-terminals, congestion and equipment productivity makes every demo query sound like a real
-client question rather than a toy.
+**2. The questions sound operational.** Terminals, congestion and equipment productivity are
+the vocabulary of an actual operations review. A demo query in this domain reads as something
+a business would genuinely ask, rather than as a SQL exercise wearing a business costume.
 
 **3. It supports planted signal.** Because the data is generated, specific, discoverable
 patterns can be built into the distributions — see [§7](#7-the-planted-signal). Real data
@@ -161,7 +161,7 @@ cannot be made to contain a finding on demand.
 
 | Alternative | Why not |
 | --- | --- |
-| **Generic e-commerce** (customers / orders / products / order_items) | The canonical SQL teaching schema, and its query patterns are correspondingly familiar. A model can then score well because the structure closely resembles common examples rather than because it reasoned over an unfamiliar one, which makes the eval less diagnostic of the capability being measured. It also says nothing about the audience's domain. |
+| **Generic e-commerce** (customers / orders / products / order_items) | The canonical SQL teaching schema, and its query patterns are correspondingly familiar. A model can then score well because the structure closely resembles common examples rather than because it reasoned over an unfamiliar one, which makes the eval less diagnostic of the capability being measured. |
 | **A public real-world dataset** | Adds download, size and licensing friction to a repo whose README promises a two-command start. More importantly, signal cannot be planted in it, so the demo becomes hostage to whatever the data happens to contain. |
 | **8–10 tables for a "richer" schema** | Overbuilding. Five already force four-table joins. More tables mean a longer schema prompt and more SQL error surface, testing nothing extra that the brief asks about. |
 | **The minimum 4 tables** | Meets the letter of the brief with zero margin. The fifth table costs nothing and buys an extra join path. |
