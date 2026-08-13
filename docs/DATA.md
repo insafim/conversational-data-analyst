@@ -88,14 +88,14 @@ to run the demo. It is here so that a reader who has never touched port data can
 [§5](#5-verified-data-profile) and [§7](#7-the-planted-signal) as findings rather than as
 numbers.
 
-| Term | What it means | Where it is in this data |
+| Term | What it means | How it appears in this data |
 | --- | --- | --- |
-| **Port call** | One visit by one ship to one terminal, arrival through departure | one `port_calls` row |
+| **Port call** | One visit by one ship to one terminal, arrival through departure | one row of `port_calls`, one per visit |
 | **Berth** | A single space along the quay wall where one ship can dock | `terminals.berth_count` counts them |
 | **Anchorage** | The offshore area where a ship waits when no berth is free | no column; the waiting itself is `berth_wait_hours` |
 | **Berth wait** | Arrival to berth. Queueing, so it reads as congestion | `port_calls.berth_wait_hours`, stored |
 | **Time at berth**, dwell | Berth to departure. Cargo work, so it reads as efficiency | derived from `departure_ts - berth_ts` |
-| **Quay crane**, ship-to-shore crane | The rail-mounted crane on the quay that lifts containers between ship and shore | one `cranes` row |
+| **Quay crane**, ship-to-shore crane | The rail-mounted crane on the quay that lifts containers between ship and shore | one row of `cranes`, one per physical crane |
 | **Move** | One crane lifting one container | counted in batches by `cargo_moves.container_count` |
 | **Load** / **discharge** | Putting a container onto the ship / taking one off it | `cargo_moves.move_type` |
 | **Throughput** | Containers handled over some period | `SUM(cargo_moves.container_count)` |
