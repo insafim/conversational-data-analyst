@@ -126,6 +126,15 @@ def test_the_regression_case_reports_its_figure_as_historical():
     if result.outcome in (Outcome.REFUSED, Outcome.CLARIFY):
         return
 
+    # An `error` outcome must not reach the marker search below. The sibling parametrized
+    # test already asserts this; without it here, the check rests on a provider error
+    # message happening to contain none of "no data", "not cover", "past" or "historical",
+    # and any of those would make this test pass without a model having answered at all.
+    assert result.outcome == Outcome.ANSWERED, (
+        f"the model never answered, so the disclaimer cannot be judged. "
+        f"Outcome was {result.outcome.value}: {result.answer!r}"
+    )
+
     lowered = result.answer.lower()
     assert any(marker in lowered for marker in _COVERAGE_DISCLAIMER), (
         "the July 2026 projection was answered without telling the reader that the data "

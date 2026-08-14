@@ -1,0 +1,31 @@
+# Hand-audit ledger for the reference SQL in gold_questions.yaml (ADR-006).
+#
+# This file is the evidence behind any statement this project makes about the gold set
+# having been checked by a human. It is deliberately separate from gold_questions.yaml:
+# the questions are the specification, and this is the record of who tested it.
+#
+# Empty means nothing has been audited. It does not mean the reference SQL is unchecked
+# in every sense: every query here executes against the seeded data on every run, passes
+# the same validator as the agent's SQL, and eleven cases have been adjudicated after
+# disagreeing with the agent. What an entry adds is scrutiny that does NOT depend on the
+# agent agreeing, which is the one form of evidence the harness cannot produce.
+#
+# Fields are validated by eval/audit.py and exercised by tests/test_gold_audit.py.
+#
+#   id           gold case id; must exist and be answerable
+#   disposition  confirmed | defect | unsure
+#   method       rederived | seed_constant | counted | intent_only
+#   auditor      a person, named
+#   checked_on   date of the check
+#   note         required for defect and unsure
+#
+# `method` matters more than `disposition`. Re-reading your own SQL and agreeing with it
+# is not evidence, because the misreading that produced the query produces the same
+# reading on review; that method is recorded as `intent_only` rather than excluded, so
+# the ledger states the strength of its own evidence instead of flattening it.
+#
+# Append with:
+#
+#   python eval/audit.py record q01 confirmed --method rederived --note "..."
+
+[]

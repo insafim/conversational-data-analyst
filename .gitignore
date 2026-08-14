@@ -72,3 +72,8 @@ sample/
 # eval/results/ IS tracked on purpose: the README cites these numbers, and the raw
 # per-question output is the evidence for them. A reviewer should be able to check the
 # claim rather than take it on trust.
+
+# Generated reading material for the gold-set hand audit. Regenerated on demand by
+# `python eval/audit.py worksheet`, so it carries nothing the repo does not already hold.
+# The audit's OUTPUT, eval/gold_audit.yaml, is tracked: that is the evidence.
+gold_audit_worksheet.md

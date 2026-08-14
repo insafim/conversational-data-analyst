@@ -126,7 +126,12 @@ class AnswerableCase(_CaseBase):
     """Scored by executing ``gold_sql`` and comparing rows against the agent's rows."""
 
     category: Literal["answerable"]
-    gold_sql: str = Field(min_length=1, description="Hand-verified reference SQL.")
+    gold_sql: str = Field(
+        min_length=1,
+        description="Reference SQL, executed against the seeded data and compared with the "
+        "agent's rows. Whether a human has independently audited it, and by what method, is "
+        "recorded per case in gold_audit.yaml rather than asserted here.",
+    )
     ordered: bool = Field(
         description="Whether row order is part of the answer. Required rather than "
         "defaulted, so that every case states its ordering intent explicitly: the "

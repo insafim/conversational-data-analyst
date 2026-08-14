@@ -3,8 +3,8 @@
 Scores the behaviours the brief names, because a system that answers well but cannot say
 no is not deployable:
 
-* **execution accuracy** — the agent's SQL returns the same rows as hand-verified
-  reference SQL;
+* **execution accuracy** — the agent's SQL returns the same rows as the reference
+  SQL (audit status per case: `eval/gold_audit.yaml`);
 * **answer groundedness** — every figure in the answer appears in the returned rows,
   the question, or the SQL. Scored SEPARATELY from accuracy, because an answer can carry
   the right rows and still describe them with an invented number;

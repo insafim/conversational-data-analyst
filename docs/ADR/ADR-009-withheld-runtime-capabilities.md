@@ -123,8 +123,8 @@ a parser, and privileges. A second model-judged layer fails to the same instrume
 the first, so it adds surface without adding independence.
 
 The genuine residual, whether the SQL answers the question asked, is a quality property,
-and it is handled where it can be checked: offline, by executing agent SQL and
-hand-verified reference SQL and comparing result sets (`eval/run_eval.py:112`,
+and it is handled where it can be checked: offline, by executing agent SQL and the
+reference SQL and comparing result sets (`eval/run_eval.py:112`,
 [ADR-006](ADR-006-eval-execution-accuracy.md)), and at runtime by showing the SQL to the
 reader, which `src/prompts.py:177` assumes when it instructs the summary not to describe
 the SQL.

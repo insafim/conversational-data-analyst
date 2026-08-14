@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-04
 - **Decision owner:** Insaf Ismath
-- **Related:** [ADR-002](ADR-002-fixed-path-graph-over-agent-loop.md), [ADR-006](ADR-006-eval-execution-accuracy.md)
+- **Related:** [ADR-002](ADR-002-fixed-path-graph-over-agent-loop.md), [ADR-006](ADR-006-eval-execution-accuracy.md), [ADR-014](ADR-014-conversation-store.md)
 
 ## Context
 
@@ -272,3 +272,36 @@ it.
   path to production, because multi-tenant client data makes it mandatory rather than optional.
 - The validator parses with sqlglot's PostgreSQL dialect. A construct sqlglot mis-parses is a
   potential gap; the database role remains the backstop.
+
+## Addendum, 2026-08-14: graded against OWASP after the fact
+
+This decision was made from a threat model rather than from a standard, and the standard was
+consulted afterwards to check the result. Recording the outcome here because the exercise found
+two gaps, and a check that finds nothing is usually a check that was not performed.
+
+OWASP's [Least Privilege Principle](https://owasp.org/www-community/controls/Least_Privilege_Principle)
+states the rule this ADR's layer 1 implements, and the
+[Database Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Database_Security_Cheat_Sheet.html)
+section "Creating Secure Permissions" lists five concrete controls. Three are met: no built-in
+account at runtime, one account per service, and minimum permissions for `analyst_ro`, which is
+the role this ADR is about. Two are not, and they fail at different scopes. One is specific to
+`app_rw`. The other is system-wide and applies to `analyst_ro` as much as to anything else.
+
+**`app_rw` owns `ports_app`,** against the cheat sheet's advice that an application account should
+not own its database. Accepted: the alternative is a fourth identity whose only job is DDL on a
+two-table schema, and the role holds no `CONNECT` on the analytics database, so ownership grants
+nothing outside its own.
+
+**Connections are not restricted by host.** The container runs the stock `pg_hba.conf`, ending in
+`host all all all scram-sha-256`. This is a deployment control rather than application code, and
+it moves to the path-to-production list alongside row-level security.
+
+The categories in the OWASP Top 10 for LLM Applications are cited by name and not by number in
+`docs/GUARDRAILS.md`, because that list was republished on 2026-08-04 and its entries are
+distributed as a PDF rather than as a page this repository can show it checked. The Foundation
+wiki page for the same list still serves the 2023 edition, which is the trap that makes the
+distinction worth stating.
+
+Nothing in either document asked for a control this system lacks in code, so this addendum
+changes no behaviour. `docs/GUARDRAILS.md` is the detailed reference; this records why the
+grading happened and what it cost.

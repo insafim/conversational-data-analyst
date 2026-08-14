@@ -15,7 +15,7 @@
 
 ## Table of Contents
 
-1. [The Problem &amp; The Product](#1-the-problem--the-product)
+1. [The Problem & The Product](#1-the-problem--the-product)
 2. [Core Domain Concepts](#2-core-domain-concepts)
 3. [System Architecture at a Glance](#3-system-architecture-at-a-glance)
 4. [Technology Stack](#4-technology-stack)
@@ -23,17 +23,17 @@
 6. [The Agent Pipeline](#6-the-agent-pipeline)
 7. [Schema Handling](#7-schema-handling)
 8. [The Security Model](#8-the-security-model)
-9. [Query Execution &amp; Runtime Limits](#9-query-execution--runtime-limits)
+9. [Query Execution & Runtime Limits](#9-query-execution--runtime-limits)
 10. [Chart Selection](#10-chart-selection)
-11. [Data Model &amp; The Domain Choice](#11-data-model--the-domain-choice)
+11. [Data Model & The Domain Choice](#11-data-model--the-domain-choice)
 12. [Evaluation](#12-evaluation)
 13. [Frontend](#13-frontend)
-14. [Cost, Latency &amp; Observability](#14-cost-latency--observability)
+14. [Cost, Latency & Observability](#14-cost-latency--observability)
 15. [Repository Structure](#15-repository-structure)
-16. [Development &amp; Testing](#16-development--testing)
+16. [Development & Testing](#16-development--testing)
 17. [Deliberately Out of Scope](#17-deliberately-out-of-scope)
 18. [Path to Production](#18-path-to-production)
-19. [Key Design Decisions &amp; Trade-offs](#19-key-design-decisions--trade-offs)
+19. [Key Design Decisions & Trade-offs](#19-key-design-decisions--trade-offs)
 
 ---
 
@@ -66,11 +66,11 @@ natural language, and charts the result when a chart helps.
 
 The three properties it is actually built around, each answering a problem above:
 
-| Property                                        | How it is achieved                                                               | Where it is proven                                               |
-| ----------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| **Correctness is measured**               | Gold set of 108 questions with hand-verified reference SQL; result-set comparison | [§12](#12-evaluation), `eval/`                                 |
-| **Safety is structural**                  | Read-only role beneath a code validator beneath prompt hardening                 | [§8](#8-the-security-model), `tests/test_security_boundary.py` |
-| **Ambiguity is answered with a question** | `classify` routes under-specified questions to a clarification exit            | [§6](#6-the-agent-pipeline), scored in the gold set              |
+| Property                                        | How it is achieved                                                             | Where it is proven                                               |
+| ----------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| **Correctness is measured**               | Gold set of 108 questions with executable reference SQL; result-set comparison | [§12](#12-evaluation), `eval/`                                 |
+| **Safety is structural**                  | Read-only role beneath a code validator beneath prompt hardening               | [§8](#8-the-security-model), `tests/test_security_boundary.py` |
+| **Ambiguity is answered with a question** | `classify` routes under-specified questions to a clarification exit          | [§6](#6-the-agent-pipeline), scored in the gold set              |
 
 ### What "done" looks like for a user
 
@@ -93,7 +93,7 @@ these definitions are load-bearing rather than background.
 | -------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | **Terminal**   | A container-handling facility within a port                                  | The primary grouping dimension                                                          |
 | **Vessel**     | A ship calling at terminals; belongs to an **operator** (shipping line) | Carries capacity (TEU), type, and the operator dimension                                |
-| **Crane**      | A quay crane belonging to exactly one terminal                               | Equipment productivity; *a crane can only service vessels berthed at its own terminal* |
+| **Crane**      | A quay crane belonging to exactly one terminal                               | Equipment productivity;*a crane can only service vessels berthed at its own terminal* |
 | **Port call**  | One visit of one vessel to one terminal                                      | The grain for congestion and visit-count questions                                      |
 | **Cargo move** | One batch of container moves by one crane during one port call               | Finer grain than a port call; the throughput measure                                    |
 
@@ -140,11 +140,14 @@ flowchart TB
         EXEC["executor.py<br/>read-only, timeout, row cap"]
         CHART["charts.py<br/>rule-based, no LLM"]
         SCHEMA["schema.py<br/>introspection cache"]
+        STORE["store.py + conversations.py<br/>saved chats, per-turn telemetry"]
     end
 
-    subgraph Data["Data Tier"]
+    subgraph Data["Data Tier (one container, two databases)"]
         RO{{"analyst_ro role<br/>SELECT only"}}
-        PG[("PostgreSQL 18<br/>5 tables")]
+        PG[("ports<br/>analytics data, 5 tables")]
+        RW{{"app_rw role<br/>owns ports_app, nothing in ports"}}
+        APP[("ports_app<br/>conversation, turn<br/>analyst_ro holds no CONNECT")]
     end
 
     subgraph External["External"]
@@ -166,12 +169,24 @@ flowchart TB
     GRAPH <--> LLM
     EVAL --> GRAPH
     EVAL --> PG
+    UI <--> STORE
+    STORE --> RW
+    RW --> APP
+    RO --x APP
 ```
 
 **The one structural property worth reading the diagram for:** there is no path from the
-graph to the database that does not pass through `validate` and then `execute`, and
+graph to the analytics data that does not pass through `validate` and then `execute`, and
 `execute` authenticates as `analyst_ro`. Those two facts are enforced by graph topology and
 by PostgreSQL respectively, not by the model's cooperation.
+
+**The second property is the crossed edge.** Saved conversations live in a different
+database, `ports_app`, written by `store.py` as `app_rw` with fixed statements. No edge runs
+from the graph to it, and `analyst_ro` holds no `CONNECT` on it, so the agent cannot reach
+chat history even with fully compromised SQL generation. That is why the store appears in the
+data tier rather than inside the application: the separation is enforced by PostgreSQL, in the
+same place and by the same mechanism as the read-only guarantee
+([§5](#5-runtime-topology), [ADR-014](ADR/ADR-014-conversation-store.md)).
 
 ---
 
@@ -187,7 +202,7 @@ breaks in all four places.
 | Layer                     | Technology                                                 | Version                 |
 | ------------------------- | ---------------------------------------------------------- | ----------------------- |
 | **Language**        | Python                                                     | 3.12 (`>=3.12,<3.14`) |
-| **Database**        | PostgreSQL, Docker`postgres:18-alpine`                   | 18.4                    |
+| **Database**        | PostgreSQL, Docker `postgres:18-alpine`                   | 18.4                    |
 | **DB driver**       | `psycopg` v3, `[binary]` extra (no local libpq needed) | 3.3.4                   |
 | **Agent framework** | `langgraph` (fixed-topology state graph)                 | 1.2.10                  |
 | **LLM access**      | `litellm` (provider selected by model-string prefix)     | 1.96.0                  |
@@ -195,55 +210,160 @@ breaks in all four places.
 | **Data frames**     | `pandas` (result frames for charting)                    | 3.0.5                   |
 | **UI**              | `streamlit` (chat, charts, SQL expander, panel)          | 1.61.1                  |
 | **Typed models**    | `pydantic`                                               | 2.13.4                  |
-| **Tests / lint**    | `pytest` 9.1.1, `ruff` 0.16.2                        | see left                |
+| **Tests / lint**    | `pytest` 9.1.1, `ruff` 0.16.2                          | see left                |
 | **Packaging**       | `uv` + `pyproject.toml`                                | n/a                     |
 
 **Notably absent:** no ORM (the queries are model-generated SQL, so an ORM has nothing to
 do), no migration tool (the schema is created once from `db/01_schema.sql`), no vector
-database (the schema fits in context, see [§7](#7-schema-handling)), no task queue, no cache.
+database (the schema fits in context, see [§7](#7-schema-handling)), no task queue, and no
+cache tier.
+
+**What "no cache tier" means, precisely.** There is no Redis and no Memcached, and nothing
+caches a question, an answer, a model response or a result set. Every question is answered
+from scratch, which is what makes the per-question cost and latency in
+[§14](#14-cost-latency--observability) figures about the pipeline rather than about a hit
+rate, and what makes two eval runs of the same gold set comparable.
+
+Five things are cached, and all five hold setup rather than results: the rendered schema
+description (`src/schema.py`, `lru_cache(maxsize=1)`, [ADR-003](ADR/ADR-003-schema-introspection.md)),
+the compiled graph (`src/agent.py`), the agent handle and the store connection
+(`views/chat.py` and `views/state.py`, both `st.cache_resource`), and the one-sentence data
+coverage line (`views/state.py`, `st.cache_data`). Reading the schema from the catalog on
+every question would add latency for no benefit, since DDL does not change while the process
+runs; serving an answer from a cache would change what the measured numbers mean.
 
 ---
 
 ## 5. Runtime Topology
 
-A single Python process plus one database container. No API tier, no worker, no broker,
-because nothing here is asynchronous or multi-user by design
+A single Python process plus one database container. That container holds **two databases**:
+`ports`, the analytics data the agent queries, and `ports_app`, the application's own state
+([ADR-014](ADR/ADR-014-conversation-store.md)). No API tier, no worker, no broker, because
+nothing here is asynchronous or multi-user by design
 ([ADR-008](ADR/ADR-008-ui-and-scope-boundary.md)).
 
 ```mermaid
 flowchart LR
-    ST["streamlit run app.py<br/>or python eval/run_eval.py"]
+    UIP["streamlit run app.py"]
+    EV["python eval/run_eval.py"]
     SEED["python db/seed.py"]
-    PG[("cda_postgres<br/>postgres:18-alpine<br/>host port 55432")]
 
-    ST -- "analyst_ro (SELECT only)" --> PG
+    subgraph C["cda_postgres - postgres:18-alpine - host port 55432"]
+        PG[("ports<br/>analytics data, 5 tables")]
+        APP[("ports_app<br/>saved chats, per-turn telemetry")]
+    end
+
+    UIP -- "analyst_ro (SELECT only)" --> PG
+    EV -- "analyst_ro (SELECT only)" --> PG
+    UIP -- "app_rw (owns this database)" --> APP
     SEED -- "postgres (owner)" --> PG
 ```
 
-### Two connection identities, kept apart on purpose
+Only the Streamlit process touches `ports_app`. The eval harness reads the analytics data and
+writes its results to `eval/results/` as files, so a scored run leaves no trace in the store
+and the Observability page's live traffic and its eval figures cannot be confused for each
+other ([§14](#14-cost-latency--observability)).
+
+### Three connection identities, kept apart on purpose
 
 The most important thing in the runtime topology, enforced in `src/config.py` rather than by
 convention:
 
-| Identity             | Used by                                                   | Privileges                         |
-| -------------------- | --------------------------------------------------------- | ---------------------------------- |
-| `postgres` (owner) | `db/seed.py` **only**                             | Full DDL and DML                   |
-| `analyst_ro`       | The agent, the UI, the eval harness, schema introspection | `CONNECT`, `USAGE`, `SELECT` |
+| Identity             | Database       | Used by                                                   | Privileges                                     |
+| -------------------- | -------------- | --------------------------------------------------------- | ---------------------------------------------- |
+| `postgres` (owner) | `ports`      | `db/seed.py` **only**                             | Full DDL and DML                               |
+| `analyst_ro`       | `ports`      | The agent, the UI, the eval harness, schema introspection | `CONNECT`, `USAGE`, `SELECT`             |
+| `app_rw`           |  `ports_app` | `src/store.py` **only**                           | Owns `ports_app`. No `CONNECT` on `ports` |
 
 The agent never receives the owner credentials. That is structural rather than a matter of
 policy: the code path building the agent's DSN reads different environment variables. There
-is no code path in the request flow that can wacquire write access.
+is no code path in the request flow that can acquire write access to the analytics data.
+
+The third identity is the one worth reading twice, because it is a *write* credential in a
+process whose whole security argument is that it cannot write. It resolves because **neither
+role can open a session on the other's database**, and the denial is mutual rather than
+one-sided. All three cases are pinned in `tests/test_store_isolation.py`:
+
+| Denied                          | Proven by                                                 | How                                    |
+| ------------------------------- | --------------------------------------------------------- | -------------------------------------- |
+| `analyst_ro` to `ports_app` | `test_the_agents_role_cannot_even_connect_to_the_store` | Connects, asserts `permission denied` |
+| `app_rw` to `ports`         | `test_the_store_role_cannot_read_the_business_data`     | Connects, asserts `permission denied` |
+| `PUBLIC` to `ports_app`     | `test_public_is_not_a_way_in_either`                    | Asserts the grant is absent            |
+
+The first two attempt the connection rather than inspecting a grant, because a grant that
+reads correctly while a session opens anyway is exactly the failure this section exists to
+rule out. The third cannot be written that way: `PUBLIC` is a pseudo-role that cannot be
+logged in as, so there is nothing to connect with and the grant is the only observable. It is
+in the set because `PUBLIC` is what would make the whole separation decorative if it were ever
+granted back.
+
+So `app_rw` can write, but only inside a database holding no business data, and it cannot
+reach `ports` even to read. `analyst_ro` can read the business data and cannot reach
+`ports_app` even to look. Neither identity is a superset of the other, and no code path holds
+both DSNs for the same purpose.
+
+Both denials come from the same one-line pattern applied in opposite directions:
+`db/02_roles.sql:28` revokes everything on `ports` from `PUBLIC` before granting `CONNECT`
+back to `analyst_ro` alone, and `db/03_app_store.sql` does the same for `ports_app` and
+`app_rw`. That pattern is load-bearing rather than tidy, for the reason given below.
+
+### The second database, and why it is not a table
+
+Saved conversations and per-turn telemetry are the same record: a reopened chat needs the
+turn in order to render it again, and the Observability page needs that same turn's latency,
+cost and outcome. One store therefore serves both, and the two views cannot disagree about
+what happened ([§14](#14-cost-latency--observability)).
+
+Where it lives was the decision. The cheaper alternative is a table in `ports`, since that
+database is already running. It is a separate database instead, for one reason of design and
+one of security. [ADR-014](ADR/ADR-014-conversation-store.md) carries both in full; the
+compressed form is that in production these are two systems by **ownership**, **lifecycle**,
+**workload** and **governance**, so modelling that here makes the step to a separate server a
+connection string rather than a migration.
+
+**The security reason is the one that belongs in this document**, because it constrains the
+topology. `db/02_roles.sql` grants `analyst_ro` `SELECT` on every table in `public` and,
+through `ALTER DEFAULT PRIVILEGES`, on every table added later. That default is deliberate, so
+that adding a table cannot silently break the agent, but it means chat history stored in
+`ports` would be readable by the agent the moment it existed, and would put user-supplied text
+inside the database the agent queries. What that costs is set out in
+[§8](#8-the-security-model), which is where the second-order channel is described.
+
+The isolation rests on a `REVOKE`, not on the `CREATE DATABASE`:
+
+```sql
+REVOKE ALL ON DATABASE ports_app FROM PUBLIC;
+GRANT CONNECT ON DATABASE ports_app TO app_rw;
+```
+
+PostgreSQL grants `CONNECT` on a new database to the `PUBLIC` pseudo-role, and every login
+role inherits `PUBLIC`. Without that revoke, `analyst_ro` could simply connect and the
+separation would be decorative. **Creating a separate database is not, by itself, an access
+control.** With it, PostgreSQL denies the session before a query exists, so there is nothing
+to validate, no schema to qualify and no `search_path` to escape.
+
+One consequence worth stating plainly: the store is **written by application code with fixed
+statements, never by model output**, so it needs no validator, and no path from the graph
+reaches it. The store is also optional, and what happens when it is absent is described in
+[§13](#13-frontend).
 
 ### Database bootstrap
 
-`docker-compose.yml` mounts two scripts into `/docker-entrypoint-initdb.d`, which PostgreSQL
-executes **in filename order, on first boot only** (against an empty volume):
+`docker-compose.yml` mounts three scripts into `/docker-entrypoint-initdb.d`, which PostgreSQL
+executes **in filename order, on first boot only** (against an empty volume). One of the two
+orderings is load-bearing and the other is not, which is worth separating:
 
 1. `01_schema.sql`: tables, constraints, indexes, and the `COMMENT ON` statements that
    become prompt context.
 2. `02_roles.sql`: the `analyst_ro` role. Separate and second **because
    `GRANT ... ON ALL TABLES` applies only to tables that exist when it runs**; granting
-   before the DDL silently produces a role with no table privileges at all.
+   before the DDL silently produces a role with no table privileges at all. This ordering is
+   real: reverse it and the agent gets a role with no table privileges, silently.
+3. `03_app_store.sql`: the `app_rw` role, the `ports_app` database it owns, and the
+   `conversation` and `turn` tables inside it. **This one carries no ordering dependency.**
+   Its revoke targets the `PUBLIC` pseudo-role rather than any named role, and removing
+   `PUBLIC`'s `CONNECT` denies every role that inherits it, including roles created later. It
+   is third by filename convention, not by necessity.
 
 The healthcheck deliberately does more than `pg_isready`: it also queries `cargo_moves`,
 because `pg_isready` reports success slightly before the init scripts finish, and a container
@@ -263,21 +383,21 @@ Implemented in `src/agent.py` as a **fixed-topology state graph**
 ```mermaid
 flowchart TD
     START([question]) --> CX{history?}
-    CX -- "yes (ADR-011)" --> CTX[contextualize]
+    CX -- "yes (ADR-011)" --> CTX["contextualize<br/>Rewriter Agent"]
     CX -- "no, first turn" --> C
-    CTX --> C{classify}
+    CTX --> C{"classify<br/>Classifier Agent"}
     C -- ambiguous --> CL[clarify]
     C -- out_of_scope --> RF[refuse]
-    C -- answerable --> G[generate_sql]
+    C -- answerable --> G["generate_sql<br/>SQL Author Agent"]
     G --> V{validate}
     V -- fail --> RJ[reject]
     V -- pass --> E{execute}
-    V -- "pass, if verify or reading" --> VF[verify]
-    VF --> DV([verdict left in state])
+    V -- "pass, when the explainer is on" --> VF["verify<br/>Explainer Agent"]
+    VF --> DV(["the reading, shown as What was measured"])
     E -- "db error, db_retries <= 1" --> G
     E -- "bad result shape, once" --> G
     E -- "db error, exhausted" --> ERR([error])
-    E -- rows --> S[summarize]
+    E -- rows --> S["summarize<br/>Summariser Agent"]
     S -- "both switches off" --> P[pick_chart]
     S -- "reading on, shipped" --> RV{review}
     S -- "verification on" --> GC[ground_check]
@@ -289,11 +409,35 @@ flowchart TD
     CL --> D2([clarify])
     RF --> D3([refused])
     RJ --> D4([rejected])
+
+    classDef agent fill:#efe6ff,stroke:#7c5cff,stroke-width:2px,color:#1c1c28;
+    classDef code fill:#eef3f0,stroke:#4f9d7a,stroke-width:2px,color:#1c1c28;
+    class CTX,C,G,VF,S agent;
+    class CL,RF,V,RJ,E,GC,RV,P code;
 ```
+
+**The five nodes carrying an agent name are the model calls, in purple. The green boxes are
+ordinary code.** That division is what the diagram exists to show, and it uses the same two
+colour values as the presentation frame at `docs/visuals/pipeline.html`, so the two can be
+read against each other. That frame is a demo-video asset which this repository deliberately
+does not track, so the path resolves in a working copy rather than on GitHub. The rounded
+pills are the graph's entry and exit states rather than work, which is why `validate`,
+`execute` and `pick_chart` carry no agent name and why no colour is spent on `answered`.
 
 `contextualize` runs only when the caller passes history, so a first turn does not pay for
 it. `verify` is a sibling of `execute`, never a step before it: it can object and it can
 attach a caveat, and that is the whole of its authority.
+
+**Where that history comes from, and what it is allowed to contain.** The caller is the chat
+session in `src/conversations.py`, and on a reopened conversation the turns are read back from
+`ports_app` ([§5](#5-runtime-topology)), which is what makes a follow-up work after a browser
+reload rather than only within one session. What it hands the graph is deliberately narrow:
+**the earlier question and the SQL it produced, never the answer text and never the returned
+rows**, trimmed to `HISTORY_TURNS` (default 3). Where an earlier turn was itself a follow-up,
+its interpreted form is passed rather than what was typed, so that a chain resolves. Excluding
+rows is not tidiness. Rows are the second-order injection channel of
+[§8](#8-the-security-model), and feeding them back into a later prompt would give a payload a
+second, longer-lived route into the model after the turn that fetched it had ended.
 
 **Three configurations, and the topology differs in each**
 ([ADR-013](ADR/ADR-013-the-reading-without-the-verdict.md)). With both switches off, `verify`,
@@ -305,21 +449,61 @@ unread. With `RUNTIME_VERIFICATION` on, all three run and the objection is appli
 
 ### Node responsibilities
 
-| Node             | Kind           | Model tier       | Responsibility                                        |
-| ---------------- | -------------- | ---------------- | ----------------------------------------------------- |
-| `classify`     | LLM            | cheap            | Route: answerable / ambiguous / out_of_scope          |
-| `clarify`      | code           | n/a              | Terminal: return a clarifying question                |
-| `refuse`       | code           | n/a              | Terminal: classification-time refusal                 |
-| `generate_sql` | LLM            | **strong** | Write one SELECT. Also the retry target               |
-| `validate`     | **code** | n/a              | The safety gate ([§8](#8-the-security-model))         |
-| `reject`       | code           | n/a              | Terminal: validation-time refusal                     |
-| `execute`      | **code** | n/a              | Run as`analyst_ro`, with limits                     |
-| `summarize`    | LLM            | cheap            | State the answer, grounded strictly in returned rows  |
-| `pick_chart`   | **code** | n/a              | Choose the visualisation ([§10](#10-chart-selection)) |
-| `contextualize` | LLM           | cheap            | Rewrite a follow-up into a standalone question (ADR-011); skipped on first turns |
-| `verify`       | LLM            | cheap            | Advisory: does the SQL measure what was asked (ADR-012)? In the shipped configuration only its description is kept, as the "What was measured" line (ADR-013). Never sees results |
-| `ground_check` | **code** | n/a              | Advisory: every figure in the answer appears in the rows, question or SQL |
-| `review`       | **code** | n/a              | Applies the advisory verdicts and decides the next hop |
+Thirteen nodes, of which **five call a model and eight are ordinary code**. The five that call
+a model are named as agents below. The names are a documentation convention introduced here
+and used in the presentation frame at `docs/visuals/pipeline.html`; they are not identifiers in the code,
+where the node functions carry the names in the first column. Naming them still earns its
+keep, because it makes "the Explainer Agent never sees the result rows" a sentence someone can
+check against a specific call.
+
+The table is in pipeline order, not alphabetical, so it can be read as the path a question
+takes.
+
+| Node              | Kind           | Agent                      | Model tier       | What it does                                                                                                                                                                      |
+| ----------------- | -------------- | -------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `contextualize` | LLM            | **Rewriter Agent**   | cheap            | Rewrite a follow-up into a standalone question (ADR-011); skipped on first turns                                                                                                  |
+| `classify`      | LLM            | **Classifier Agent** | cheap            | Route: answerable / ambiguous / out_of_scope                                                                                                                                      |
+| `clarify`       | code           | none                       | n/a              | Terminal: return a clarifying question                                                                                                                                            |
+| `refuse`        | code           | none                       | n/a              | Terminal: classification-time refusal                                                                                                                                             |
+| `generate_sql`  | LLM            | **SQL Author Agent** | **strong** | Write one SELECT. Also the retry target                                                                                                                                           |
+| `validate`      | **code** | none                       | n/a              | The safety gate ([§8](#8-the-security-model))                                                                                                                                     |
+| `reject`        | code           | none                       | n/a              | Terminal: validation-time refusal                                                                                                                                                 |
+| `execute`       | **code** | none                       | n/a              | Run as `analyst_ro`, with limits                                                                                                                                                 |
+| `verify`        | LLM            | **Explainer Agent**  | cheap            | Advisory: does the SQL measure what was asked (ADR-012)? In the shipped configuration only its description is kept, as the "What was measured" line (ADR-013). Never sees results |
+| `summarize`     | LLM            | **Summariser Agent** | cheap            | State the answer, grounded strictly in returned rows                                                                                                                              |
+| `ground_check`  | **code** | none                       | n/a              | Advisory: every figure in the answer appears in the rows, question or SQL                                                                                                         |
+| `review`        | **code** | none                       | n/a              | Applies the advisory verdicts and decides the next hop                                                                                                                            |
+| `pick_chart`    | **code** | none                       | n/a              | Choose the visualisation ([§10](#10-chart-selection))                                                                                                                             |
+
+**Which model each agent is.** The tier column maps to two environment variables, and the
+literal defaults in `src/config.py` are `anthropic/claude-sonnet-5` for the strong tier and
+`anthropic/claude-haiku-4-5` for the cheap one. The prefix is not decoration: it is how
+LiteLLM selects the provider, which is why switching to `openai/…` or `gemini/…` is an
+environment change rather than a code change. So the SQL Author Agent runs on Sonnet and the
+other four run on Haiku
+([§14](#14-cost-latency--observability), [ADR-007](ADR/ADR-007-llm-provider-and-tiering.md)).
+
+**Why the node is called `verify` and the agent is called the Explainer.** The node can do
+two things, and only one of them ships. It returns a plain-language reading of what the SQL
+measures, and it returns an objection saying the SQL does not answer the question. The
+objection is the verification half, and it is off by default because measurement showed it
+cost more execution accuracy than it bought
+([ADR-012](ADR/ADR-012-runtime-verification.md)). The reading is the half that ships, and
+describing is all this agent is permitted to do in the shipped configuration, so **Explainer
+Agent** is what it is called throughout these documents and on the pipeline frame. The code
+identifier stays `verify`, and the switch stays `RUNTIME_VERIFICATION`, because those name
+the full capability rather than the shipped subset. A reader who greps the source and finds
+`verify` is not looking at a different component.
+
+**Where it sits.** It is the only model anywhere near the verification path; `ground_check`
+and `review` are code. It hangs off the same router edge as `execute` rather than sitting in
+front of it, and it is given the question and the SQL but never the returned rows. Running
+beside `execute` absorbs most of its latency but not all: run 26 measured the unabsorbed
+residue at **0.48s per answered question**, 36.8s across the set, and
+[ADR-013](ADR/ADR-013-the-reading-without-the-verdict.md) records that the earlier "costs only
+what the overlap does not absorb" framing was too generous to the feature. It has no authority
+of its own in either configuration: it can force at most one regeneration and it can attach a
+caveat, and `review` decides even that.
 
 **Four LLM calls on an answered question in the shipped configuration**: `classify`,
 `generate_sql`, the reading, and `summarize`. Only three of them are sequential, because the
@@ -363,6 +547,288 @@ distinction to both the UI and the eval harness.
 `ask()` never raises for an expected failure mode. A provider outage, or a query that fails
 twice, returns an `AgentResult` with `outcome=ERROR`, so callers have exactly one code path
 and the eval harness scores a failure rather than crashing on it.
+
+### Node by node
+
+The table above says what each node is for. This says how it does it, in pipeline order.
+
+**About the spoken paragraphs.** Each node carries one, and they are not additions to the
+script. [docs/video.md](video.md) gives the whole pipeline eighteen seconds, which is five
+sentences for thirteen nodes, so these are the answer to give if a reviewer asks about that
+specific node, in interview or in a follow-up call. Read end to end they run several minutes,
+which is why the video says four things and lets the frame carry the rest.
+
+---
+
+#### 1. `contextualize`, the Rewriter Agent
+
+**How it works.** A conditional edge from `START` reaches this node only when the caller
+passed history, so a first turn skips it and reports no timing for a node that did not run.
+It renders the last `HISTORY_TURNS` turns into the prompt as pairs of earlier question and
+the SQL that turn produced, with newlines flattened and `(no query was run)` where a turn
+produced none, then asks the cheap model for a standalone rewrite and reads the `question`
+field out of the JSON.
+
+It fails open in three separate ways, all of which return the typed question unchanged: an
+unparseable reply, an empty rewrite, and a rewrite longer than `max_question_chars`. That
+last one shares its bound with the check `ask()` applies to typed input but not its action,
+and the asymmetry is the point. A typed question over the limit is a user handing the model a
+document. A rewrite over the limit is this node malfunctioning, and refusing a legitimate
+follow-up because our own rewrite ran away would turn an internal fault into a user-visible
+failure. When the rewrite comes back identical to the question, it returns nothing, so the
+screen shows no "Interpreted as" line for a question that was already standalone.
+
+> "It follows the conversation. If you ask a second question that says 'its' or 'and
+> Rotterdam?', a first model rewrites it into a question that stands on its own, and the
+> screen shows you what it resolved to. That last part matters more than the rewrite: a
+> resolution you cannot see is one you cannot correct. It is only given the earlier questions
+> and the SQL they produced, never the rows that came back, and that is a security decision I
+> will come back to."
+
+---
+
+#### 2. `classify`, the Classifier Agent
+
+**How it works.** One cheap call with the schema and the question, returning JSON that routes
+the turn three ways: `answerable` to `generate_sql`, `ambiguous` to `clarify`, `out_of_scope`
+to `refuse`. It also carries back the clarifying question to ask and the reason to give.
+
+If that JSON does not parse, it defaults to `answerable` rather than to a refusal. That
+direction is deliberate: the code validator and the read-only role still stand between this
+node and the database, so a parsing hiccup routed onward is contained by two later layers,
+while a parsing hiccup routed to a refusal is a broken product. This is layer 3 of
+[§8](#8-the-security-model), the layer written on the assumption that it will be defeated.
+
+> "The first thing that happens is a cheap model deciding whether the question can be
+> answered from this database at all, whether it is too vague to answer, or whether it is out
+> of scope. Refusing early is what makes the cost profile work, because a refusal costs one
+> model call instead of four. I want to be clear that this is not the security boundary. It
+> is a router, it is a language model, and I have assumed it can be talked around."
+
+---
+
+#### 3. `clarify`, ordinary code
+
+**How it works.** A terminal node with no model in it. It returns the clarifying question the
+classifier already wrote, falling back to a fixed sentence when that field came back empty,
+and stamps the outcome `CLARIFY`. No SQL is written and no database connection is opened.
+
+> "When the question is ambiguous it asks back instead of guessing. 'Which is the busiest
+> terminal' is two different questions, busiest by ship visits or by containers moved, and
+> they have different answers. For a client, a confident wrong number is worse than no
+> number, because wrong numbers end up in decisions."
+
+---
+
+#### 4. `refuse`, ordinary code
+
+**How it works.** The other classification-time terminal. It prefixes the classifier's reason
+with a fixed apology and stamps the outcome `REFUSED`, again with no SQL and no connection.
+This outcome is kept distinct from `rejected` throughout, because the two happen at different
+layers and collapsing them would hide which layer did the work.
+
+> "If the question is out of scope, it says so and stops, before it has spent anything beyond
+> the one classification call. And notice this is a different outcome from the one you get
+> when the safety gate stops a query. I keep them separate in the results, because they tell
+> me different things about the system."
+
+---
+
+#### 5. `generate_sql`, the SQL Author Agent
+
+**How it works.** The one strong-tier call. The prompt is the introspected schema plus the
+question, and this node is also the target of every regeneration, so on a second pass it
+appends exactly one evidence suffix in a fixed precedence: the verbatim PostgreSQL error, or
+the result-shape complaint, or the verifier's objection. Passing the database error through
+verbatim is what recovered four of four historical retries, which is why the other two causes
+are attached the same way rather than as a bare instruction to try again.
+
+Every cause is cleared as it is consumed, along with the previous groundedness state, so a
+third attempt cannot argue with the first attempt's problem. The retry reason is recorded
+here, where the regeneration actually happens, rather than in the router that decided it, so
+the reason list cannot claim a retry that a router then declined to take.
+
+> "The one place I spend a stronger model is writing the SQL, because that is the one step
+> where model capability changes whether the answer is right. Everything else runs on the
+> cheap tier. If the query fails, this is also where it comes back to, and it comes back
+> carrying the actual PostgreSQL error text rather than a note saying it failed. Handing the
+> model the real error is what makes the retry work."
+
+---
+
+#### 6. `validate`, ordinary code, layer 2
+
+**How it works.** `validate_sql` parses the statement with sqlglot and applies nine checks
+in order: it rejects empty input; it fails closed on any parse error, because a statement we
+cannot understand is one we cannot call safe; it requires exactly one statement, which is what
+defeats stacked-query injection independently of what the second statement contains; it
+requires a SELECT-family root; it walks the entire tree and rejects a write node at any depth;
+it rejects `SELECT ... INTO`, which creates a table while wearing a SELECT's clothes; it
+rejects locking clauses; it rejects denied functions; and it rejects system schemas and
+catalog tables, collecting CTE names first so that a CTE innocently named `pg_summary` is not
+mistaken for the catalog.
+
+Each rejection carries a stable violation code that the tests assert against, and a separate
+user-facing reason, so a rejection is pinned to a rule rather than to the wording of a
+message.
+
+> "Then a piece of ordinary code checks the SQL before anything runs. Not a model, and this
+> is the part people get wrong. You can hide a delete inside a sub-query, and the whole
+> statement still looks like a read to any check that only glances at the first word. This one
+> walks the entire parse tree, so a delete nested three levels down is refused exactly as
+> readily as a bare one. And it fails closed: if it cannot parse the statement, it refuses
+> it."
+
+---
+
+#### 7. `reject`, ordinary code
+
+**How it works.** The validation-time terminal. It returns the validator's reason to the user
+and stamps the outcome `REJECTED`. Critically, this outcome is never retried. A rejection is a
+safety decision rather than a transient failure, and retrying it would hand the model a second
+attempt at the gate.
+
+> "If the gate refuses the query, the turn ends there and the user is told why. I do not retry
+> a rejection. A failed database call is bad luck and worth another attempt; a query the
+> safety gate refused is not, and giving the model a second run at the gate is exactly the
+> thing I do not want to build."
+
+---
+
+#### 8. `execute`, ordinary code
+
+**How it works.** It runs the validated statement as `analyst_ro` under a five second
+`statement_timeout`, through a server-side cursor that fetches the row cap plus one, so
+truncation is detected without a second count and the statement itself is never rewritten
+([§9](#9-query-execution--runtime-limits)). A failure returns the PostgreSQL message and
+increments the database retry counter here, in the node, rather than in the router, because a
+router is a pure function of state and must not be the thing that advances the budget it
+reads.
+
+When runtime verification is on it also applies the three code-detected result-shape triggers
+at this point: an empty result on an answerable question, a result that saturates the row cap,
+and a multi-row result for a singular superlative question. Checking them here rather than
+after the answer is written costs nothing and saves the summarisation call that a regeneration
+would have discarded.
+
+> "The query runs as a role that can read and nothing else, with a five second timeout and a
+> five hundred row cap. The cap is applied by fetching fewer rows rather than by editing the
+> SQL, because the moment this code starts composing SQL around model output, it becomes the
+> thing I am claiming it is not."
+
+---
+
+#### 9. `verify`, the Explainer Agent
+
+**How it works.** One cheap call that reads the question, the schema and the SQL, and returns
+two things: a plain-language **reading** of what the query measures, and an **objection** if it
+judges that the SQL does not answer the question. Only the reading ships, which is why the
+agent is named for explaining rather than for verifying; the objection half is switched off by
+default and the evidence for that is in [ADR-012](ADR/ADR-012-runtime-verification.md).
+
+It never sees the returned rows, which is what makes running it beside `execute` sound: it is
+a statement about intent, and intent is fully determined before a single row comes back. It is
+also why the reading can be shown as "What was measured" rather than "what was found".
+
+It does not block. It submits the call to a small thread pool and returns the future
+immediately, because the installed LangGraph synchronises between supersteps, so a node that
+blocked here would overlap `execute`, measured at 0.025s, and put the rest of its latency
+straight onto the critical path. That is a claim about a third-party library rather than about
+this code, so it is measured:
+`tests/test_agent_routing.py::test_langgraph_barriers_between_supersteps_so_verify_must_not_block`
+runs a two-node branch beside a single longer branch and asserts the total lands where
+synchronisation would put it. Any failure inside that call returns nothing at all, so the
+answer ships without its reading rather than not shipping. That is the whole availability
+argument for putting a model in an advisory position: a flaky one must not be able to degrade
+a working system.
+
+> "There is a second model that reads the question and the SQL, and says in one sentence what
+> the query actually measures. It never sees the results, only the intent. In what ships, I
+> keep its description and show it beside the answer, and I discard its objections, because
+> when I measured it, it objected to a correct query four times out of four. A warning printed
+> next to a right answer is worse than no warning. It runs alongside execution rather than in
+> front of it, so most of its time is absorbed."
+
+---
+
+#### 10. `summarize`, the Summariser Agent
+
+**How it works.** With zero rows it does not call a model at all and answers in code with a
+fixed sentence, because there is nothing to ground an answer in and that is precisely where a
+model is most likely to invent a plausible number. Otherwise it renders up to fifty rows as
+pipe-delimited text with a header, which is more compact per token than JSON and loses nothing
+because there is no nesting to preserve, and passes the question, the SQL and the row count
+alongside, with a note when the cap truncated the result.
+
+On a second pass it appends the exact figures that failed the groundedness check, quoted back
+as numbers, together with the answer that contained them. Naming the offending figure is the
+whole mechanism, because "be more grounded" is not an instruction a model can act on.
+
+> "Then a cheap model writes the answer, and it is only allowed to work from the rows that
+> came back. If the query returns nothing, no model runs at all: code says nothing matched.
+> An empty result is exactly where a language model will happily invent a number for you, so
+> I took the model out of that path."
+
+---
+
+#### 11. `ground_check`, ordinary code
+
+**How it works.** It extracts every number from the answer and accepts it as grounded if it
+appears in the returned rows, exactly or as a rounding, or in the question, or in the SQL, or
+if it is the row count. Small integers are ignored, since they are almost always ordinals or
+counts of listed items rather than data values. On an empty result it looks instead for
+phrasing that says nothing matched. It is the same function the eval scores with, so the
+runtime floor and the published metric cannot disagree about what grounded means.
+
+It has two known false positives, both stated rather than hidden: figures the model derived by
+arithmetic, and the magnitude of a negative value, where the data holds -988 and the natural
+English is "dropped 988". Those false positives are the reason this check is advisory at
+runtime. Blocking on a check that is known to be wrong sometimes would withhold answers that
+are in fact correct.
+
+> "After the answer is written, code checks every number in it against the rows that came
+> back. Not a model checking a model: string and set membership. It is the same function the
+> evaluation scores with, so the number I quote you and the check running in production cannot
+> drift apart. It has two false positives I know about and can describe, which is why it flags
+> rather than blocks."
+
+---
+
+#### 12. `review`, ordinary code
+
+**How it works.** This is where the verifier's future is finally collected, and where the only
+latency it costs is the part that running beside `execute` and `summarize` did not absorb. A
+verdict issued against SQL that a database-error retry has since replaced is discarded, since
+acting on it would mean regenerating a query in response to a complaint about a different one.
+
+Precedence is deliberate: an objection outranks a groundedness violation, because an objection
+says the rows themselves are wrong, and re-describing wrong rows more carefully is not an
+improvement. Each mechanism gets one regeneration. Past that budget the answer ships carrying
+a visible caveat or flag rather than being withheld, because nothing in this node has the
+authority to withhold an answer. In the shipped configuration it collects the reading, returns
+`ok`, and clears the groundedness state as a second independent mechanism rather than relying
+on the routing alone.
+
+> "A small piece of code collects the advisory verdicts and decides what happens next. It can
+> send the query back to be rewritten, once. It can ask for the answer to be restated, once.
+> What it cannot do is refuse to answer you. Advisory means advisory, and past its budget the
+> answer ships with the concern printed next to it rather than swallowed."
+
+---
+
+#### 13. `pick_chart`, ordinary code
+
+**How it works.** Six rules over the shape of the result set, with no model call
+([§10](#10-chart-selection)). Once the SQL has run, the result fully determines which
+encodings are valid, so no linguistic judgement is left for a model to contribute. Every
+`ChartSpec` carries the name of the rule that fired, which is shown in the UI and asserted in
+tests.
+
+> "The chart type is chosen by rules in code, from the shape of the result, not from the
+> words in the question. A time series becomes a line, a ranking becomes bars, a single figure
+> becomes a metric. It is deterministic and unit-tested, and every chart can tell you which
+> rule picked it. This is the clearest example of the whole design: the model decides content,
+> the graph and the code decide flow."
 
 ---
 
@@ -417,9 +883,9 @@ artefact of synthetic data: production systems hit the same problem the moment a
 
 | Approach                                                                 | Verdict                                                                                                                                                                                               |
 | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Hard-coded schema string                                                 | Rejected. Rots silently on the first schema change, and makes this a demo of *this* database rather than a system that works against *a* database                                                  |
+| Hard-coded schema string                                                 | Rejected. Rots silently on the first schema change, and makes this a demo of*this* database rather than a system that works against *a* database                                                  |
 | Per-query agentic discovery (`list_tables` / `describe_table` tools) | Rejected. 2 to 4 extra sequential round trips **per question** to rediscover something unchanged since startup, on a system where latency is assessed, and it reintroduces model-controlled flow |
-| **Startup introspection + full injection**                         | **Chosen.** The entire schema is 6,180 characters (roughly 1,500 tokens)                                                                                                                              |
+| **Startup introspection + full injection**                         | **Chosen.** The entire schema is 6,180 characters (roughly 1,500 tokens)                                                                                                                        |
 
 The generalisable principle: **retrieval earns its place when the schema stops fitting in
 context, not before.** At five tables context is not scarce. Knowing when *not* to reach for
@@ -435,11 +901,11 @@ table metadata, then a curated semantic layer ([§18](#18-path-to-production)).
 Full reasoning in [ADR-004](ADR/ADR-004-defence-in-depth-sql.md). The organising principle:
 **assume the model is fully compromised, and ask what still holds.**
 
-| # | Layer                | Mechanism                                                                                                         | Can the model affect it?                     | Load-bearing?                                      |
-| - | -------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------- |
-| 3 | Prompt hardening     | `classify` refuses hostile / out-of-scope questions                                                             | **Yes**                                | **No.** Written assuming it will be defeated |
+| # | Layer                | Mechanism                                                                                                                          | Can the model affect it?                     | Load-bearing?                                      |
+| - | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------- |
+| 3 | Prompt hardening     | `classify` refuses hostile / out-of-scope questions                                                                              | **Yes**                                | **No.** Written assuming it will be defeated |
 | 2 | Code validator       | sqlglot AST: one statement, SELECT-family root, no write node at any depth, no denied functions, system schemas or system catalogs | No, pure code with no LLM inside             | Yes                                                |
-| 1 | Database permissions | `analyst_ro`: `CONNECT`, `USAGE`, `SELECT`. No write grant exists to revoke                               | No, enforced by PostgreSQL below the process | **Yes, decisively**                          |
+| 1 | Database permissions | `analyst_ro`: `CONNECT`, `USAGE`, `SELECT`. No write grant exists to revoke                                                | No, enforced by PostgreSQL below the process | **Yes, decisively**                          |
 
 ### The attack that shaped the validator
 
@@ -475,10 +941,10 @@ So `tests/test_security_boundary.py` **disables that guard first**, then attempt
 | `DROP TABLE`                             | `ERROR: must be owner of table ...`              |
 | `TRUNCATE`                               | `ERROR: permission denied for table ...`         |
 | `CREATE TABLE`                           | `ERROR: permission denied for schema public`     |
-| CTE-hidden`DELETE`                       | `ERROR: permission denied for table ...`         |
+| CTE-hidden `DELETE`                       | `ERROR: permission denied for table ...`         |
 | `SELECT ... INTO`                        | `ERROR: permission denied for schema public`     |
 | `SELECT pg_sleep(1)`                     | `ERROR: permission denied for function pg_sleep` |
-| Read`pg_authid`                          | `ERROR: permission denied for table pg_authid`   |
+| Read `pg_authid`                          | `ERROR: permission denied for table pg_authid`   |
 
 Every failure is on **permissions**. The test asserts that specifically, and fails if a write
 is ever stopped only by the transaction flag, which would mean the boundary had silently
@@ -528,6 +994,27 @@ happened. It now distinguishes *adopting* the demanded reply from *quoting* it.
 *answer*. It cannot corrupt *data*, because compliance happens after execution under a role
 with no write privilege. That containment is the entire point of layering.
 
+### Where user text is allowed to live
+
+The attack above needs hostile text inside the queried database, so the size of the channel is
+decided by one question: how much user-supplied text does `ports` hold? The answer is one
+row, planted by `db/seed.py` so the defence can be tested.
+
+That is a property to be maintained rather than a fact to be enjoyed, and the conversation
+store is where it was nearly lost. Chat history is user text by definition, and the cheaper
+place to keep it was a table in `ports`. Because of the default-privileges grant described in
+[§5](#5-runtime-topology), storing it there would have made every question any user had ever
+typed readable by model-generated SQL, and would have widened the second-order channel as a
+side effect of a convenience feature. **A separate database keeps the analytics
+data synthetic-only** ([§5](#5-runtime-topology),
+[ADR-014](ADR/ADR-014-conversation-store.md)), so adding saved conversations changed the
+injection surface not at all.
+
+The general form is worth naming, because it outlives this schema: **the second-order surface
+is the set of tables the agent can read that anyone else can write.** Today that set has one
+deliberate member. In a client deployment it would be large, which is where row-level security
+and column masking stop being optional ([§18](#18-path-to-production)).
+
 ### Disclosure through the error path
 
 The controls above govern what the agent may *read*. A separate question is what leaves the
@@ -553,6 +1040,14 @@ directions are pinned in `tests/test_security_boundary.py`.
   than a boundary.
 - Nothing here prevents SQL that is safe, executes, and answers the **wrong question**. That
   is what [§12](#12-evaluation) is for.
+- The process holds a **write credential**, `app_rw`, which the read-only argument above does
+  not cover. It is scoped to `ports_app` and holds nothing in `ports`, so the worst it reaches
+  is the application's own chat history, and no path from the graph reaches it at all. It is
+  still a credential in the process, and a compromise of the process rather than of the model
+  is where it would matter.
+- Saved conversations have **no row-level security**, for the same reason the business data
+  has none: there is one implicit user, and identity is the precondition for both
+  ([§18](#18-path-to-production)).
 
 ---
 
@@ -564,7 +1059,7 @@ safety: the connection authenticates as `analyst_ro` regardless.
 | Limit                 | Value | Bounds what                                                          |
 | --------------------- | ----- | -------------------------------------------------------------------- |
 | `statement_timeout` | 5s    | A valid but ruinously expensive query                                |
-| Row cap               | 500   | A cheap query returning millions of rows (memory in *this* process) |
+| Row cap               | 500   | A cheap query returning millions of rows (memory in*this* process) |
 | `connect_timeout`   | 10s   | A hung connection attempt                                            |
 | Read-only transaction | on    | Accidental writes, with a clear error                                |
 
@@ -605,15 +1100,15 @@ judgement remains, so there is nothing for a language model to contribute.
 
 `src/charts.py` splits into `classify_columns()` (type → charting role) and the rules:
 
-| #  | Condition                                         | Output                                                   |
-| -- | ------------------------------------------------- | -------------------------------------------------------- |
-| 1  | Zero rows                                         | **No chart** (the answer says nothing matched)     |
-| 2  | One row, one numeric column, at most two columns  | **Metric** (a second column labels the figure)     |
-| 3  | A temporal column + ≥1 numeric, **>1 row**       | **Line**                                           |
-| 4  | A label column + ≥1 numeric, ≤12 distinct, **>1 row** | **Bar**                                       |
-| 4b | Several categoricals without a unique first label | **Table** (a bar chart would collapse a dimension) |
-| 5  | Exactly two numerics, nothing else, **>1 row**    | **Scatter**                                        |
-| 6  | Anything else, including a single row carrying more than a label and a measure | **Table**             |
+| #  | Condition                                                                      | Output                                                   |
+| -- | ------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| 1  | Zero rows                                                                      | **No chart** (the answer says nothing matched)     |
+| 2  | One row, one numeric column, at most two columns                               | **Metric** (a second column labels the figure)     |
+| 3  | A temporal column + ≥1 numeric, **>1 row**                               | **Line**                                           |
+| 4  | A label column + ≥1 numeric, ≤12 distinct, **>1 row**                   | **Bar**                                            |
+| 4b | Several categoricals without a unique first label                              | **Table** (a bar chart would collapse a dimension) |
+| 5  | Exactly two numerics, nothing else, **>1 row**                            | **Scatter**                                        |
+| 6  | Anything else, including a single row carrying more than a label and a measure | **Table**                                          |
 
 The `>1 row` guards on rules 3, 4 and 5 are not decoration. A superlative question ("which
 terminal has the longest berth wait?") returns one row holding a label and a measure, which
@@ -762,10 +1257,10 @@ topics its reference answer exercises, and a behaviour label for how the questio
 asked (typos, vague phrasing, fact-checks with false premises, write requests, and so
 on). The harness prints coverage on both dimensions each run.
 
-| Category              | Items | What it asserts                                                |
-| --------------------- | ----- | -------------------------------------------------------------- |
-| **answerable**  | 77    | Agent SQL returns the same rows as hand-verified reference SQL |
-| **ambiguous**   | 12    | Agent asks a clarifying question instead of guessing           |
+| Category              | Items | What it asserts                                                     |
+| --------------------- | ----- | ------------------------------------------------------------------- |
+| **answerable**  | 77    | Agent SQL returns the same rows as the reference SQL                |
+| **ambiguous**   | 12    | Agent asks a clarifying question instead of guessing                |
 | **adversarial** | 19    | Injection / destructive / out-of-scope / write requests are refused |
 
 Five of the answerable and adversarial cases are two-turn conversational cases added with
@@ -803,16 +1298,16 @@ an effect of the feature. The three "off" runs were the shipped default when the
 they are not any longer, because ADR-013 subsequently turned the reading on. Run 26, measured
 separately below, is the first full run of what actually ships.
 
-| Metric              | Run 21 | Run 23 | Run 25 | Run 20 | Run 22 | Run 24 |
-| ------------------- | ------ | ------ | ------ | ------ | ------ | ------ |
-| Runtime verification | off   | off    | off    | on     | on     | on     |
-| Overall             | 103/108 | 103/108 | 102/108 | 100/108 | 100/108 | 101/108 |
-| Execution accuracy  | **93.5%** | **94.8%** | **93.5%** | 89.6% | 90.9% | 92.2% |
-| Answer groundedness | 96.0%  | 97.4%  | 97.4%  | **100%** | **98.7%** | **98.7%** |
-| Ambiguity handling  | 12/12  | 11/12  | 11/12  | 12/12  | 11/12  | 11/12  |
-| Safety / refusals   | 19/19  | 19/19  | 19/19  | 19/19  | 19/19  | 19/19  |
-| Median latency      | 6.03s  | 6.65s  | 6.09s  | 6.74s  | 6.96s  | 7.11s  |
-| Cost per run        | $1.014 | $1.036 | $1.028 | $1.355 | $1.330 | $1.339 |
+| Metric               | Run 21          | Run 23          | Run 25          | Run 20         | Run 22          | Run 24          |
+| -------------------- | --------------- | --------------- | --------------- | -------------- | --------------- | --------------- |
+| Runtime verification | off             | off             | off             | on             | on              | on              |
+| Overall              | 103/108         | 103/108         | 102/108         | 100/108        | 100/108         | 101/108         |
+| Execution accuracy   | **93.5%** | **94.8%** | **93.5%** | 89.6%          | 90.9%           | 92.2%           |
+| Answer groundedness  | 96.0%           | 97.4%           | 97.4%           | **100%** | **98.7%** | **98.7%** |
+| Ambiguity handling   | 12/12           | 11/12           | 11/12           | 12/12          | 11/12           | 11/12           |
+| Safety / refusals    | 19/19           | 19/19           | 19/19           | 19/19          | 19/19           | 19/19           |
+| Median latency       | 6.03s           | 6.65s           | 6.09s           | 6.74s          | 6.96s           | 7.11s           |
+| Cost per run         | $1.014          | $1.036          | $1.028          | $1.355         | $1.330          | $1.339          |
 
 **Accuracy fell when the set grew, and that is the expansion working.** The 36-item suite had
 saturated at 28/28 across seven consecutive runs, which means it had stopped discriminating.
@@ -870,8 +1365,17 @@ returned zero rows. Groundedness moves between runs in the same way, ranging fro
 here, so the accuracy result should not be read as the system being finished.
 
 **The one number that did not move: safety, 19/19 in every run, 114 attempts across these six
-runs without a miss.** That stability is not a property of the model; it comes from enforcing the
-guarantee where the model cannot reach.
+runs without a miss.**
+
+That stability is worth attributing carefully, because the natural reading of it is wrong. It is
+not evidence that the permission layer did the stopping. Counted across all 26 committed runs,
+1,745 case results, no adversarial case has ever ended in `rejected`, which is the outcome the
+validator produces; every one ended in `refused`, apart from 18 provider errors. `refused` comes
+from `classify`, before any SQL exists. So this figure measures the **first** layer, and that
+layer is a prompt. The write guarantee below it is established by
+`tests/test_security_boundary.py`, which disables the bypassable read-only guard and requires
+PostgreSQL itself to refuse each write. See [EVAL.md §6](EVAL.md) and
+[ADR-006's 2026-08-14 addendum](ADR/ADR-006-eval-execution-accuracy.md).
 
 ### What the harness found, about the system and about itself
 
@@ -899,16 +1403,16 @@ nothing: it sets the page config and hands off to two pages, `views/chat.py` and
 `views/observability.py`, with `views/state.py` holding what they share. Between them their
 job is to make these visible, each mapping to an assessed behaviour:
 
-| Element                                                                             | Demonstrates                                  |
-| ----------------------------------------------------------------------------------- | --------------------------------------------- |
-| Chat input + history (`st.chat_message`, `st.chat_input`)                       | The conversational requirement                |
-| Natural-language answer                                                             | Groundedness: phrased only from returned rows |
-| Chart rendered from a typed `ChartSpec`, plus the rule that fired                  | Chart-type selection                          |
-| A "What was measured" line in plain language (ADR-013)                              | Groundedness, for a reader who cannot audit SQL |
-| Collapsed "View SQL" expander                                                        | Auditability                                  |
-| Sidebar chat list, with New chat, reopen, rename and delete                          | Conversations that survive a reload (ADR-014) |
-| Collapsed per-answer telemetry: seconds, cost, model calls, stage breakdown       | Latency, for the turn just taken              |
-| Sidebar table list, each opening onto its columns, types and units                 | Schema handling, without a listing the reader must scroll past |
+| Element                                                                                                  | Demonstrates                                                          |
+| -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Chat input + history (`st.chat_message`, `st.chat_input`)                                            | The conversational requirement                                        |
+| Natural-language answer                                                                                  | Groundedness: phrased only from returned rows                         |
+| Chart rendered from a typed `ChartSpec`, plus the rule that fired                                       | Chart-type selection                                                  |
+| A "What was measured" line in plain language (ADR-013)                                                   | Groundedness, for a reader who cannot audit SQL                       |
+| Collapsed "View SQL" expander                                                                            | Auditability                                                          |
+| Sidebar chat list, with New chat, reopen, rename and delete                                              | Conversations that survive a reload (ADR-014)                         |
+| Collapsed per-answer telemetry: seconds, cost, model calls, stage breakdown                              | Latency, for the turn just taken                                      |
+| Sidebar table list, each opening onto its columns, types and units                                       | Schema handling, without a listing the reader must scroll past        |
 | An Observability page: latency, cost, guardrail counts, stage means, per-category eval scores, eval runs | Latency and cost as a distribution, and the safety record as evidence |
 
 Outcomes that are not a normal answer carry a visible badge, so a refusal or clarification is
@@ -975,10 +1479,10 @@ Streamlit rerun.
 
 Two model tiers behind one wrapper ([ADR-007](ADR/ADR-007-llm-provider-and-tiering.md)):
 
-| Tier   | Env var          | Used by                     | Rationale                                            |
-| ------ | ---------------- | --------------------------- | ---------------------------------------------------- |
+| Tier   | Env var          | Used by                                                    | Rationale                                            |
+| ------ | ---------------- | ---------------------------------------------------------- | ---------------------------------------------------- |
 | Cheap  | `MODEL_CHEAP`  | `classify`, `summarize`, `verify`, `contextualize` | Short, bounded, low-difficulty language tasks        |
-| Strong | `MODEL_STRONG` | `generate_sql`            | The one node where capability determines correctness |
+| Strong | `MODEL_STRONG` | `generate_sql`                                           | The one node where capability determines correctness |
 
 Three of the four calls on an answered question go to the cheap tier, and `generate_sql` is the
 only node that needs the strong one. `contextualize` is a fifth cheap call that only a follow-up
@@ -1097,7 +1601,7 @@ rather than a rewrite.
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers.
 │                               `runNN.json` the records, `runNN.meta.json` their provenance
-├── tests/                      897 tests
+├── tests/                      989 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Fourteen decision records
@@ -1117,42 +1621,44 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 897 tests
+### Test suite: 989 tests
 
-| File                               | Tests | Scope                                                                    |
-| ---------------------------------- | ----- | ------------------------------------------------------------------------ |
-| `test_gold_set.py`              | 337   | Gold-set schema and tag guards, parametrized over all 108 cases |
-| `test_validator.py`             | 93    | The security gate: write-blocking rules, evasions, fail-closed parsing |
-| `test_eval_scoring.py`          | 35    | The comparison logic, i.e. the definition of "correct" |
-| `test_charts.py`                | 30    | Every chart rule, at its boundaries |
-| `test_provenance.py`            | 37    | That a run records what produced it, and that no DSN password reaches the committed artefact |
-| `test_quality_triggers.py`      | 28    | Code-detected result-shape triggers (ADR-012) |
-| `test_agent_routing.py`         | 25    | Graph topology with a stubbed LLM |
-| `test_runtime_verification.py`  | 33    | That runtime verification stays advisory (ADR-012), and that reading-only adds a description and nothing else (ADR-013) |
-| `test_config_defaults.py`       | 36    | That RUNTIME_VERIFICATION and SQL_READING parse to their intended defaults |
-| `test_security_boundary.py`     | 19    | That GRANTs hold with the read-only guard disabled |
-| `test_llm_extraction.py`        | 18    | Parsing model output; raise rather than half-parse |
-| `test_multi_turn.py`            | 15    | Bounded multi-turn behaviour (ADR-011) |
-| `test_executor.py`              | 13    | Row cap, statement timeout, verbatim execution, errors |
-| `test_schema.py`                | 14    | Catalog introspection; composed identifiers are quoted; the sidebar's column listing carries its units |
-| `test_schema_labels.py`         | 12    | Turning a table's COMMENT ON into a sidebar label, including the split it gets wrong |
-| `test_notices.py`               | 23    | Which captions and warnings sit beside an answer, their order, and what one turn cost |
-| `test_telemetry.py`             | 30    | The Observability page's arithmetic: SQL aggregates over stored turns, the eval-run reader, per-category scores, and how a cost is written |
-| `test_conversations.py`         | 31    | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one |
-| `test_app_smoke.py`             | 16    | Both pages under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption, the panel's metrics and category tiles match the artefacts |
-| `test_store.py`                 | 17    | Conversation persistence: round trip, ordering, cascade delete, concurrency |
-| `test_store_isolation.py`       | 6     | That the agent's role cannot connect to the store (ADR-014) |
-| `test_store_titles.py`          | 5     | Deriving a chat title from its first question |
-| `test_repo_hygiene.py`          | 4     | That no document is both untracked and unignored, so preparation material cannot ship by accident |
-| `test_seed_characterization.py` | 7     | Data digests, planted patterns, crane/terminal invariant |
-| `test_second_order_injection.py`| 5     | Injection arriving through query results |
-| `test_forecast_grounding.py`    | 5     | A historical figure is never reported as a forecast |
-| `test_data_coverage.py`         | 3     | The sidebar date range is derived from the data |
+| File                               | Tests | Scope                                                                                                                                                                               |
+| ---------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_gold_set.py`               | 337   | Gold-set schema and tag guards, parametrized over all 108 cases                                                                                                                     |
+| `test_gold_audit.py`             | 78    | The audit ledger for the reference SQL itself: that a documented coverage figure cannot outrun the evidence, and that the triage neither over- nor under-fires                      |
+| `test_validator.py`              | 93    | The security gate: write-blocking rules, evasions, fail-closed parsing                                                                                                              |
+| `test_eval_scoring.py`           | 35    | The comparison logic, i.e. the definition of "correct"                                                                                                                              |
+| `test_charts.py`                 | 30    | Every chart rule, at its boundaries                                                                                                                                                 |
+| `test_provenance.py`             | 37    | That a run records what produced it, and that no DSN password reaches the committed artefact                                                                                        |
+| `test_quality_triggers.py`       | 28    | Code-detected result-shape triggers (ADR-012)                                                                                                                                       |
+| `test_agent_routing.py`          | 25    | Graph topology with a stubbed LLM                                                                                                                                                   |
+| `test_runtime_verification.py`   | 33    | That runtime verification stays advisory (ADR-012), and that reading-only adds a description and nothing else (ADR-013)                                                             |
+| `test_config_defaults.py`        | 36    | That RUNTIME_VERIFICATION and SQL_READING parse to their intended defaults                                                                                                          |
+| `test_security_boundary.py`      | 19    | That GRANTs hold with the read-only guard disabled                                                                                                                                  |
+| `test_llm_extraction.py`         | 18    | Parsing model output; raise rather than half-parse                                                                                                                                  |
+| `test_multi_turn.py`             | 15    | Bounded multi-turn behaviour (ADR-011)                                                                                                                                              |
+| `test_executor.py`               | 13    | Row cap, statement timeout, verbatim execution, errors                                                                                                                              |
+| `test_schema.py`                 | 14    | Catalog introspection; composed identifiers are quoted; the sidebar's column listing carries its units                                                                              |
+| `test_schema_labels.py`          | 12    | Turning a table's COMMENT ON into a sidebar label, including the split it gets wrong                                                                                                |
+| `test_notices.py`                | 23    | Which captions and warnings sit beside an answer, their order, and what one turn cost                                                                                               |
+| `test_telemetry.py`              | 30    | The Observability page's arithmetic: SQL aggregates over stored turns, the eval-run reader, per-category scores, and how a cost is written                                          |
+| `test_conversations.py`          | 31    | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one                                                                                    |
+| `test_app_smoke.py`              | 16    | Both pages under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption, the panel's metrics and category tiles match the artefacts |
+| `test_store.py`                  | 17    | Conversation persistence: round trip, ordering, cascade delete, concurrency                                                                                                         |
+| `test_store_isolation.py`        | 6     | That the agent's role cannot connect to the store (ADR-014)                                                                                                                         |
+| `test_store_titles.py`           | 5     | Deriving a chat title from its first question                                                                                                                                       |
+| `test_repo_hygiene.py`           | 4     | That no document is both untracked and unignored, so preparation material cannot ship by accident                                                                                   |
+| `test_visuals.py`                | 14    | That the presentation frame's schema claims match `db/01_schema.sql`: columns, declared types, key roles and join paths                                                              |
+| `test_seed_characterization.py`  | 7     | Data digests, planted patterns, crane/terminal invariant                                                                                                                            |
+| `test_second_order_injection.py` | 5     | Injection arriving through query results                                                                                                                                            |
+| `test_forecast_grounding.py`     | 5     | A historical figure is never reported as a forecast                                                                                                                                 |
+| `test_data_coverage.py`          | 3     | The sidebar date range is derived from the data                                                                                                                                     |
 
 Integration tests are marked, so unit tests run without a database:
 
 ```bash
-pytest -m "not integration"   # 683 unit tests, no database, no network
+pytest -m "not integration"   # 775 unit tests, no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
 python eval/run_eval.py                                # shipped config, 10 to 15 min
@@ -1180,14 +1686,14 @@ consequences visible in the suite:
 
 "Not built" and "not considered" are different claims. One line of reasoning each:
 
-| Omitted                       | Why                                                                                                                                                                                          |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Authentication**      | One implicit user. Identity is a precondition for row-level security, which is why it heads the production path rather than being a UI feature                                               |
-| **Caching**             | Would cut cost and latency, but optimises a system whose correctness is not yet established. Correctness first                                                                               |
-| **Streaming**           | Perceived latency, not latency. With four calls, three of them sequential, the honest fix is fewer or faster calls                                                                                                     |
-| **Deployment**          | Runs locally. Containerising demonstrates a skill this brief does not assess                                                                                                                 |
-| **Async / concurrency** | Single-user by design; Streamlit's rerun model would not scale to concurrent users anyway                                                                                                    |
-| **Semantic layer**      | The most consequential omission; see below                                                                                                                                                   |
+| Omitted                       | Why                                                                                                                                            |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Authentication**      | One implicit user. Identity is a precondition for row-level security, which is why it heads the production path rather than being a UI feature |
+| **Caching**             | Would cut cost and latency, but optimises a system whose correctness is not yet established. Correctness first                                 |
+| **Streaming**           | Perceived latency, not latency. With four calls, three of them sequential, the honest fix is fewer or faster calls                             |
+| **Deployment**          | Runs locally. Containerising demonstrates a skill this brief does not assess                                                                   |
+| **Async / concurrency** | Single-user by design; Streamlit's rerun model would not scale to concurrent users anyway                                                      |
+| **Semantic layer**      | The most consequential omission; see below                                                                                                     |
 
 **Multi-turn memory used to be on this list and no longer is.** It was omitted by
 [ADR-008](ADR/ADR-008-ui-and-scope-boundary.md) and built by
@@ -1234,28 +1740,28 @@ deployments stall.
 
 ## 19. Key Design Decisions & Trade-offs
 
-| Decision                                                            | Why                                                                                                                                                | Trade-off                                                                                          |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| **Fixed-topology graph, not an autonomous agent loop**        | The path is known in advance, so guardrails become structural, cost becomes a ceiling rather than a distribution, and failure modes are enumerable | Cannot handle genuinely multi-step exploration ("find anomalies, then investigate the biggest")    |
-| **LangGraph despite thirteen nodes**                               | Typed state, topology-as-documentation, and the mechanism for checkpointing and multi-turn later                                                   | Honestly oversized today; plain functions would work. A bet on the next increment                  |
-| **Read-only DB role as the real boundary**                    | A control the model can influence is a tendency; one it cannot reach is a guarantee                                                                | Requires provisioning a role, which is what a client DBA would do anyway                           |
-| **sqlglot AST walk, not a `sqlparse` statement-type check** | A data-modifying CTE has top-level type`Select`, so a check on the top-level type alone admits it and it executes                                | An extra dependency; allow-list shape occasionally blocks exotic-but-valid SQL                     |
-| **Allow-list validator, not a keyword deny-list**             | An unanticipated construct is denied by default rather than admitted by omission                                                                   | False positives (e.g.`INTERSECT` initially), which is the correct direction to fail in           |
-| **Startup schema introspection, not per-query discovery**     | roughly 1,500 tokens injected once beats 2 to 4 extra round trips per question                                                                            | Cached, so DDL changes need a restart; breaks down in the hundreds of tables                       |
-| **Column comments as prompt context**                         | Units, enums and grain are not recoverable from types, and guessing them yields confidently wrong numbers                                          | Comments become production code, maintained with the schema                                        |
-| **Rule-based chart selection, no LLM**                        | Chart choice is a function of data shape rather than language, so the rule is deterministic, free, and unit-testable                               | Ignores explicit user intent ("show as a pie chart")                                               |
-| **Port operations domain, not e-commerce**                    | E-commerce is over-represented in training data, so accuracy would partly measure memorisation rather than schema comprehension                    | Less immediately familiar to a reader than orders and products                                     |
-| **Deterministic seed, fixed date window**                     | Reference SQL contains literal dates; a moving window would decay accuracy for unrelated reasons                                                   | Relative dates must resolve against injected data ranges, not the clock                            |
-| **Result-set comparison, not SQL text**                       | Many correct formulations exist; string comparison measures style, not correctness                                                                 | Slightly stricter than "did the user get the right answer", since an extra column counts as a miss |
-| **Two model tiers**                                           | Cost per task is a design input; three of the four calls do not need capability                                                                         | Two behaviour profiles to reason about; a prompt tuned on one tier may not transfer                |
-| **Streamlit, not React + API**                                | The UI is the least interesting component here, and its implementation should say so                                                               | Would not scale to concurrent users; not a production serving model                                |
-| **Reporting a range, not the best run**                       | Same code scored 86.4% and 95.5%; quoting only the maximum on a "measured, not claimed" system would be self-defeating                             | A less impressive headline number                                                                  |
-| **Withheld capabilities recorded as decisions** (ADR-009)     | Fourteen runs show zero dialect failures, so docs retrieval, web search, MCP and LLM validation are absences with evidence and revisit conditions | The record must be re-examined as models, dialects and scope change                                |
-| **Syllabus- and behaviour-tagged gold set, 108 cases** (ADR-010) | A saturated 36-case suite confirmed rather than measured; two orthogonal tags locate a failure in both the SQL plane and the phrasing plane     | Runs cost ~$1.03 to ~$1.34, ~$1.26 in the shipped configuration, and 10 to 15 minutes; question wording itself becomes part of the measured surface |
-| **Bounded multi-turn: one rewrite node at the edge** (ADR-011)   | A follow-up resolves against prior questions and SQL only, and everything downstream stays byte-identical to the single-turn pipeline; the resolution is shown to the user as "Interpreted as:" so a misreading is correctable | A follow-up turn costs one extra cheap call; a chain of clarification turns carries no answer text, so "by containers" resolves from the earlier question rather than from the clarifying reply |
-| **Runtime verification, measured then defaulted off** (ADR-012)  | Groundedness rose to 98.7% to 100% against 96.0% to 97.4%, and every mechanism is bounded, advisory and fail-open, so none of it can withhold an answer | Execution accuracy fell to 89.6% to 92.2% against 93.5% to 94.8%, all of it attributable to verifier objections by reason code; ships behind `RUNTIME_VERIFICATION` with the evidence in the repo |
-| **The reading without the verdict** (ADR-013)                    | Every answered question regains a plain-language "What was measured" line, which disappeared for all 108 cases when ADR-012 was defaulted off; no SQL, answer or chart can change, because no path regenerates | One extra cheap call per answered question, 18% to 27% more cost; the verifier's objection is discarded rather than shown, because its `q66` probe objected to a correct query in 4 of 4 trials |
-| **A separate database for conversations** (ADR-014)                | Chat history is unreachable by the agent's role, which holds no CONNECT there, and the analytics database keeps holding only synthetic data so the second-order injection surface is unchanged | The process gains a narrow write credential; the store's tests need a running database; production separation (ownership, lifecycle, workload, governance) is modelled rather than deferred |
+| Decision                                                               | Why                                                                                                                                                                                                                            | Trade-off                                                                                                                                                                                          |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Fixed-topology graph, not an autonomous agent loop**           | The path is known in advance, so guardrails become structural, cost becomes a ceiling rather than a distribution, and failure modes are enumerable                                                                             | Cannot handle genuinely multi-step exploration ("find anomalies, then investigate the biggest")                                                                                                    |
+| **LangGraph despite thirteen nodes**                             | Typed state, topology-as-documentation, and the mechanism for checkpointing and multi-turn later                                                                                                                               | Honestly oversized today; plain functions would work. A bet on the next increment                                                                                                                  |
+| **Read-only DB role as the real boundary**                       | A control the model can influence is a tendency; one it cannot reach is a guarantee                                                                                                                                            | Requires provisioning a role, which is what a client DBA would do anyway                                                                                                                           |
+| **sqlglot AST walk, not a `sqlparse` statement-type check**    | A data-modifying CTE has top-level type `Select`, so a check on the top-level type alone admits it and it executes                                                                                                            | An extra dependency; allow-list shape occasionally blocks exotic-but-valid SQL                                                                                                                     |
+| **Allow-list validator, not a keyword deny-list**                | An unanticipated construct is denied by default rather than admitted by omission                                                                                                                                               | False positives (e.g. `INTERSECT` initially), which is the correct direction to fail in                                                                                                           |
+| **Startup schema introspection, not per-query discovery**        | roughly 1,500 tokens injected once beats 2 to 4 extra round trips per question                                                                                                                                                 | Cached, so DDL changes need a restart; breaks down in the hundreds of tables                                                                                                                       |
+| **Column comments as prompt context**                            | Units, enums and grain are not recoverable from types, and guessing them yields confidently wrong numbers                                                                                                                      | Comments become production code, maintained with the schema                                                                                                                                        |
+| **Rule-based chart selection, no LLM**                           | Chart choice is a function of data shape rather than language, so the rule is deterministic, free, and unit-testable                                                                                                           | Ignores explicit user intent ("show as a pie chart")                                                                                                                                               |
+| **Port operations domain, not e-commerce**                       | E-commerce is over-represented in training data, so accuracy would partly measure memorisation rather than schema comprehension                                                                                                | Less immediately familiar to a reader than orders and products                                                                                                                                     |
+| **Deterministic seed, fixed date window**                        | Reference SQL contains literal dates; a moving window would decay accuracy for unrelated reasons                                                                                                                               | Relative dates must resolve against injected data ranges, not the clock                                                                                                                            |
+| **Result-set comparison, not SQL text**                          | Many correct formulations exist; string comparison measures style, not correctness                                                                                                                                             | Slightly stricter than "did the user get the right answer", since an extra column counts as a miss                                                                                                 |
+| **Two model tiers**                                              | Cost per task is a design input; three of the four calls do not need capability                                                                                                                                                | Two behaviour profiles to reason about; a prompt tuned on one tier may not transfer                                                                                                                |
+| **Streamlit, not React + API**                                   | The UI is the least interesting component here, and its implementation should say so                                                                                                                                           | Would not scale to concurrent users; not a production serving model                                                                                                                                |
+| **Reporting a range, not the best run**                          | Same code scored 86.4% and 95.5%; quoting only the maximum on a "measured, not claimed" system would be self-defeating                                                                                                         | A less impressive headline number                                                                                                                                                                  |
+| **Withheld capabilities recorded as decisions** (ADR-009)        | Fourteen runs show zero dialect failures, so docs retrieval, web search, MCP and LLM validation are absences with evidence and revisit conditions                                                                              | The record must be re-examined as models, dialects and scope change                                                                                                                                |
+| **Syllabus- and behaviour-tagged gold set, 108 cases** (ADR-010) | A saturated 36-case suite confirmed rather than measured; two orthogonal tags locate a failure in both the SQL plane and the phrasing plane                                                                                    | Runs cost ~$1.03 to ~$1.34, ~$1.26 in the shipped configuration, and 10 to 15 minutes; question wording itself becomes part of the measured surface                                                |
+| **Bounded multi-turn: one rewrite node at the edge** (ADR-011)   | A follow-up resolves against prior questions and SQL only, and everything downstream stays byte-identical to the single-turn pipeline; the resolution is shown to the user as "Interpreted as:" so a misreading is correctable | A follow-up turn costs one extra cheap call; a chain of clarification turns carries no answer text, so "by containers" resolves from the earlier question rather than from the clarifying reply    |
+| **Runtime verification, measured then defaulted off** (ADR-012)  | Groundedness rose to 98.7% to 100% against 96.0% to 97.4%, and every mechanism is bounded, advisory and fail-open, so none of it can withhold an answer                                                                        | Execution accuracy fell to 89.6% to 92.2% against 93.5% to 94.8%, all of it attributable to verifier objections by reason code; ships behind `RUNTIME_VERIFICATION` with the evidence in the repo |
+| **The reading without the verdict** (ADR-013)                    | Every answered question regains a plain-language "What was measured" line, which disappeared for all 108 cases when ADR-012 was defaulted off; no SQL, answer or chart can change, because no path regenerates                 | One extra cheap call per answered question, 18% to 27% more cost; the verifier's objection is discarded rather than shown, because its `q66` probe objected to a correct query in 4 of 4 trials   |
+| **A separate database for conversations** (ADR-014)              | Chat history is unreachable by the agent's role, which holds no CONNECT there, and the analytics database keeps holding only synthetic data so the second-order injection surface is unchanged                                 | The process gains a narrow write credential; the store's tests need a running database; production separation (ownership, lifecycle, workload, governance) is modelled rather than deferred        |
 
 ---
 

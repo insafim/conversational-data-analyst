@@ -9,7 +9,7 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 - **Safety is structural, not prompted.** The agent connects as a PostgreSQL role holding `SELECT`
   and nothing else. A fully jailbroken model still cannot write: [verified, not
   asserted](#guardrails-verified-not-asserted).
-- **Correctness is measured, not claimed.** A gold set of 108 questions with hand-verified reference
+- **Correctness is measured, not claimed.** A gold set of 108 questions with executable reference
   SQL produces a reproducible accuracy number, including for refusals and ambiguity. When a feature
   did not pay for itself, the measurement is what said so: see [runtime verification,
   measured](#runtime-verification-what-it-bought-and-what-it-cost).
@@ -21,7 +21,11 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 > method, and a consolidated table of design decisions with their trade-offs.
 > [docs/DATA.md](docs/DATA.md) is the dataset reference: what is in it, how it was built,
 > and **what you can ask it**, with a value inventory and a question catalogue.
-> [docs/ADR/](docs/ADR/) holds the fourteen decision records behind them.
+> [docs/GUARDRAILS.md](docs/GUARDRAILS.md) is the security reference, organised by threat
+> rather than by layer, and section 14 gives the commands that reproduce every claim in it.
+> [docs/EVAL.md](docs/EVAL.md) is the evaluation method, and
+> [docs/GOLD_AUDIT.md](docs/GOLD_AUDIT.md) is the audit of the reference SQL that method
+> measures against. [docs/ADR/](docs/ADR/) holds the fourteen decision records behind them.
 
 ---
 
@@ -80,8 +84,8 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 683 unit tests, no database or network needed
-pytest                        # all 897; needs the seeded database, and 10 of them
+pytest -m "not integration"   # 738 unit tests, no database or network needed
+pytest                        # all 952; needs the seeded database, and 7 of them
                               # call the live model, so they also need a funded API key
 # The two configurations the published figures were measured on, named explicitly.
 # --no-reading is needed for the BASELINE only: ADR-013's reading defaults on and also
@@ -98,7 +102,7 @@ python eval/run_eval.py                                  # $1.26, 12.6 min (run 
 
 One caveat on reproduction, stated rather than buried: `uv.lock` was refreshed on 2026-08-11 and
 moves ten packages relative to the environment the runs in `eval/results/` were recorded on,
-including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 897 tests pass on the
+including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 989 tests pass on the
 pinned set, which is what establishes that the SQL validator behaves identically. The eval scores
 are model-driven and are quoted as ranges across repeated runs for that reason.
 
@@ -112,6 +116,8 @@ as-is except for the API key.
 | `ANTHROPIC_API_KEY` | **Yes**¹ | n/a | Or `OPENAI_API_KEY` / `GEMINI_API_KEY` |
 | `MODEL_CHEAP` | No | `anthropic/claude-haiku-4-5` | Classify, summarise and the reading: 3 of the 4 calls on an answered question. Also the follow-up rewrite, which only a multi-turn question pays for |
 | `MODEL_STRONG` | No | `anthropic/claude-sonnet-5` | SQL generation only |
+| `POSTGRES_HOST` | No | `localhost` | Where PostgreSQL is. A real setting only when you bring your own |
+| `POSTGRES_DB` | No | `ports` | The analytics database the agent reads. Created by docker-compose |
 | `POSTGRES_PORT` | No | `55432` | Deliberately not 5432 |
 | `POSTGRES_ANALYST_USER` | No | `analyst_ro` | The read-only role the agent uses. Fixed on the bundled database² |
 | `APP_STORE_USER` | No | `app_rw` | Owns `ports_app`, the separate database holding saved chats and telemetry. The agent's role has no `CONNECT` on it (ADR-014). Fixed on the bundled database² |
@@ -125,6 +131,17 @@ as-is except for the API key.
 | `HISTORY_TURNS` | No | `3` | Prior exchanges the follow-up rewrite may read (ADR-011). Questions and SQL only |
 | `RUNTIME_VERIFICATION` | No | `false` | ADR-012's three runtime checks. Off by default because the [comparison](#runtime-verification-what-it-bought-and-what-it-cost) measured it costing more accuracy than it bought |
 | `SQL_READING` | No | `true` | The "What was measured" line beside each answer (ADR-013). Runs the verifier for its description and discards its objection, so no SQL, answer or chart changes. Costs one cheap-tier call on answered questions only |
+
+Passwords are left out of the table, because what matters about them is not their defaults but
+which name is read where, and the three do not behave alike. `POSTGRES_ANALYST_PASSWORD` is what
+the application reads, while docker-compose passes `ANALYST_RO_PASSWORD` into `db/02_roles.sql`, so
+those two must agree; the `analyst_ro` row of [Troubleshooting](#troubleshooting) is what a
+disagreement looks like. `APP_STORE_PASSWORD` carries one name the whole way through.
+`POSTGRES_ADMIN_PASSWORD` is the password half of footnote 2 and the quiet one: the application
+reads it, docker-compose creates the superuser from `POSTGRES_PASSWORD`, and
+[`.env.example`](.env.example) sets only the first. They agree today because both default to
+`postgres`, so changing one alone leaves `db/seed.py` authenticating with a password the container
+never took.
 
 ¹ Whichever provider your `MODEL_*` prefixes name. Switching provider is an env change, not a code
 change, e.g. `MODEL_CHEAP=openai/gpt-5-mini`, `MODEL_STRONG=openai/gpt-5.4-mini`.
@@ -248,6 +265,34 @@ units, enum values and grain: `berth_wait_hours` being *hours* is not recoverabl
 table metadata earns its place at hundreds of tables, not five.
 ([ADR-003](docs/ADR/ADR-003-schema-introspection.md))
 
+**Chart selection.** In code, from the *shape* of the result set rather than from the wording of
+the question, so the same rows always draw the same chart and every rule is testable at its
+boundary. Six rules, first match wins: no rows draws nothing; one row carrying one measure is a
+metric card; a time axis with a measure is a line; a label column with a measure is bars, up to
+twelve distinct categories, beyond which a bar chart is an unreadable table with extra steps; two
+measures and nothing to group by is a scatter; anything else is a table. Executing the 77 answerable
+`gold_sql` queries and passing each result to `pick_chart` gives **32 metrics, 22 bars, 10 tables,
+9 lines, 2 scatters and 2 empty results**, so every rule is exercised by the gold set and not only
+by its unit tests. That count is a measurement rather than a stored artefact: it is reproduced by
+running `src.executor.run_query` over the queries in `eval/gold_questions.yaml` and tallying
+`src.charts.pick_chart`, which needs the seeded database and no model. Two of those rules exist
+because running the system found what predicting it did not. A superlative question returns a label
+*and* a measure, so it drew a single bar stretched across the container until the metric rule was
+widened to two columns, which rendering the gold set found. And `to_char(ts, 'YYYY-MM')` returns
+text, which classified the commonest time series as categorical until an anchored ISO-8601 check was
+added beside the declared type, which running that query against the real database found.
+([ADR-005](docs/ADR/ADR-005-deterministic-chart-selection.md))
+
+**Latency.** Run 26 measured a median of **6.91s** per turn across all 108 cases, 7.60s across the
+76 it answered, and 2.22s for a refusal or a clarification, which never reaches SQL. The split is
+the useful part: `generate_sql` is 3.66s at the median, `classify` 1.81s and `summarize` 1.50s,
+while the database returns in **0.024s**, three tenths of one percent of an answered turn. The
+reading (ADR-013) runs beside `execute` and is mostly absorbed by it; the part that was not was
+36.8s across the run, 0.48s per answered question, collected at `review`. So this is model latency,
+not query latency, which is why fewer calls or a faster tier are the only levers that move it, and
+why [streaming is out of scope](#deliberately-out-of-scope) rather than a fix. Per-turn stage
+timings are stored for every question and charted on the Observability page.
+
 ---
 
 ## Guardrails: verified, not asserted
@@ -329,6 +374,11 @@ See [ADR-004](docs/ADR/ADR-004-defence-in-depth-sql.md), "The case where layer 1
 ---
 
 ## Evaluation
+
+This section is the results and how they moved. The method behind them is
+[docs/EVAL.md](docs/EVAL.md): what each metric counts, the comparison rules, and what each one
+cannot see. The reference SQL those figures are computed against is itself audited, and
+[docs/GOLD_AUDIT.md](docs/GOLD_AUDIT.md) is that procedure.
 
 <!-- EVAL_RESULTS_START -->
 **This block is history, measured on the retired 28-question set.** The current figures are the
@@ -413,7 +463,16 @@ The clearest evidence of that is which item fails. Run 5 failed `q09` and passed
 the exact opposite, with `q19` returning zero rows from a filter on the wrong column. Same code,
 same prompts, same temperature. The stable number is the one that matters: **safety has never
 missed, at 19/19 in each of the six runs on the current 108-case set, 114 attempts without a
-miss**, because it is enforced where the model cannot reach.
+miss.**
+
+**Be precise about what that stability is evidence of.** It is tempting to credit the permission
+layer, and that is wrong. Across all 26 runs, 1,745 case results, not one adversarial case has
+ever ended in `rejected`, the outcome the validator produces. Every one ended in `refused`, apart
+from 18 provider errors, which means `classify` turned them all away before any SQL existed. So
+this figure measures the **first** layer, and that layer is a prompt. The write guarantee
+underneath it is proven separately, by `tests/test_security_boundary.py` disabling the bypassable
+read-only guard and requiring PostgreSQL to refuse the writes itself. See
+[docs/EVAL.md §6](docs/EVAL.md).
 
 ### What the window-function questions cost, and why that is the useful part
 
@@ -492,8 +551,9 @@ and repeated runs, which is a real cost, not a footnote.
 > of this section for the current figures.
 
 **The one number that did not move: safety, 5/5 in all three runs, 15/15 attempts.** That is the
-result the design is built to guarantee, and it is the one guaranteed by permissions rather than by
-the model.
+result the design is built to guarantee. It is not, however, evidence that permissions did the
+stopping: every one of those cases was refused by the classifier before any SQL was generated, as
+the note above records.
 
 Known failure: `q09` returns `terminal_name, port_name` where the reference selects `terminal_name`.
 The answer is correct and arguably better; strict result-set comparison calls it wrong. Relaxing the
@@ -610,7 +670,7 @@ cannot say no is not deployable:
 
 | Category | Items | What it asserts |
 | --- | --- | --- |
-| **answerable** | 77 | Agent SQL returns the same rows as hand-verified reference SQL |
+| **answerable** | 77 | Agent SQL returns the same rows as the reference SQL |
 | **ambiguous** | 12 | Agent asks a clarifying question instead of guessing |
 | **adversarial** | 19 | Injection / destructive / out-of-scope / write requests are refused |
 
@@ -638,8 +698,14 @@ under-specified.
 against 3.6 points on the retired 28-question set. The interval is narrower, but the headline still
 carries one: it is a regression detector and a smoke test, not a precise measure of general
 capability. Result-set comparison also passes if the *reference*
-SQL is wrong, which is why every reference query was hand-verified against the data.
-([ADR-006](docs/ADR/ADR-006-eval-execution-accuracy.md))
+SQL is wrong, and the agent agreeing with it is weak evidence against that, because the two are
+not independent: both encode the same reading of the same question against the same schema. What
+the harness does establish is narrower. Every reference query executes against deterministically
+seeded data on every run and passes the same validator as the agent's SQL, and eleven of the 77
+answerable cases have been adjudicated individually after disagreeing with the agent. Scrutiny
+that does not depend on the agent agreeing is recorded separately in
+[eval/gold_audit.yaml](eval/gold_audit.yaml): **0 of 77 reference queries** independently audited
+so far. ([ADR-006](docs/ADR/ADR-006-eval-execution-accuracy.md))
 
 `run_eval.py` exits non-zero if any **safety** case fails, so in CI a safety regression breaks the
 build even when overall accuracy still looks fine.
@@ -753,19 +819,20 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output, evidence for the numbers above.
 │                             `runNN.json` is the records, `runNN.meta.json` what produced them
-└── tests/                  897 tests
+└── tests/                  989 tests
 ```
 
 ---
 
 ## Testing
 
-897 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+989 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
 | --- | --- | --- |
 | `test_gold_set.py` | 337 | The gold set's schema and tag guards, parametrized over all 108 cases |
+| `test_gold_audit.py` | 78 | The audit of the gold set itself: that a documented coverage figure cannot outrun the ledger behind it |
 | `test_validator.py` | 93 | The security gate: the write-blocking rules, their evasions, and fail-closed parsing |
 | `test_eval_scoring.py` | 35 | The comparison logic, i.e. the definition of "correct" |
 | `test_charts.py` | 30 | Every chart rule, at its boundaries |
@@ -788,6 +855,7 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_store_isolation.py` | 6 | That the agent's role cannot connect to the conversation store (ADR-014) |
 | `test_store_titles.py` | 5 | Deriving a chat title from its first question |
 | `test_repo_hygiene.py` | 4 | That no document is both untracked and unignored, so preparation material cannot be shipped by accident |
+| `test_visuals.py` | 14 | That the presentation frame's schema claims match `db/01_schema.sql`: columns, declared types, key roles and join paths, so a slide cannot describe a column the database does not have |
 | `test_seed_characterization.py` | 7 | Data digests, planted patterns, the crane/terminal invariant |
 | `test_second_order_injection.py` | 5 | Injection arriving through query results, not the chat box. Two of the five call a live model and skip without an API key |
 | `test_forecast_grounding.py` | 5 | That a historical figure is never reported as a forecast. Live model calls; skipped without an API key |
