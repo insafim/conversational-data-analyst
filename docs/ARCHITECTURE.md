@@ -393,17 +393,17 @@ flowchart TD
     V -- fail --> RJ[reject]
     V -- pass --> E{execute}
     V -- "pass, when the explainer is on" --> VF["verify<br/>Explainer Agent"]
-    VF --> DV(["the reading, shown as What was measured"])
+    VF -. "via state, not an edge" .-> RV
     E -- "db error, db_retries <= 1" --> G
-    E -- "bad result shape, once" --> G
+    E -. "bad result shape, once; verification only" .-> G
     E -- "db error, exhausted" --> ERR([error])
     E -- rows --> S["summarize<br/>Summariser Agent"]
     S -- "both switches off" --> P[pick_chart]
     S -- "reading on, shipped" --> RV{review}
-    S -- "verification on" --> GC[ground_check]
-    GC --> RV
-    RV -- "objection, once" --> G
-    RV -- "ungrounded, once" --> S
+    S -. "verification only" .-> GC[ground_check]
+    GC -. "verification only" .-> RV
+    RV -. "objection, once; verification only" .-> G
+    RV -. "ungrounded, once; verification only" .-> S
     RV -- ok --> P
     P --> D1([answered])
     CL --> D2([clarify])
@@ -424,9 +424,37 @@ does not track, so the path resolves in a working copy rather than on GitHub. Th
 pills are the graph's entry and exit states rather than work, which is why `validate`,
 `execute` and `pick_chart` carry no agent name and why no colour is spent on `answered`.
 
+**A dotted edge is either not on the shipped path or not a graph edge, and its label says
+which.** Five of them are labelled *verification only*: they exist in the code and cannot fire
+with `RUNTIME_VERIFICATION` off, so drawing them solid would show four ways back into the graph
+where the shipped configuration has one. The label carries the most weight on
+`E -. "bad result shape, once" .-> G`, because that edge shares both endpoints with the
+`db_error` retry beside it and only one of the two can fire in what ships. Its gate is inside
+the node rather than on the edge: `execute` checks `verify_enabled` and returns before
+`detect_quality_issue` is reached (`src/agent.py:412`). The
+sixth dotted edge, `verify` to `review`, is the opposite case: it is live in what ships and is
+**not a graph edge at all**. `verify`'s only edge is to `END`; it submits its
+call to a thread pool and leaves a future in state, and `review` collects that future later.
+Drawing it solid would claim a hop the graph does not have, and would hide the mechanism that
+lets the call overlap `execute` at all.
+
 `contextualize` runs only when the caller passes history, so a first turn does not pay for
 it. `verify` is a sibling of `execute`, never a step before it: it can object and it can
 attach a caveat, and that is the whole of its authority.
+
+**Which loops are live.** Three backward edges carry four reason codes, and the shipped
+configuration can fire exactly one of them.
+`execute` returns to `generate_sql` for two unrelated reasons over a single edge, each with its
+own budget, so a query that failed in the database has not spent the allowance for one that
+returned the wrong shape: `db_error` attaches the PostgreSQL message and is the one loop that
+ships, and `quality_trigger` is gated off. `review` returns to `generate_sql` on
+`verifier_objection`, gated off. `review` returns to `summarize`, not to `generate_sql`, on
+`ground_check`, also gated off; the split follows the precedence `review`'s own docstring
+records, where an objection outranks a groundedness violation "because it says the ROWS are
+wrong" (`src/agent.py:546-548`). The eval records this directly: run 21 (both switches off)
+logged no retries at all, run 24 (verification on) logged four verifier objections, two quality
+triggers and three re-summarisations, and **run 26, which is what ships, logged one `db_error`
+and nothing else**.
 
 **Where that history comes from, and what it is allowed to contain.** The caller is the chat
 session in `src/conversations.py`, and on a reopened conversation the turns are read back from
