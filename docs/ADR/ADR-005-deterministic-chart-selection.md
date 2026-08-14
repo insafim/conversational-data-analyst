@@ -7,7 +7,7 @@
 
 ## Context
 
-The brief requires the agent to "visualise it with a chart where appropriate", and names
+The requirements call for the agent to "visualise it with a chart where appropriate", and name
 "chart-type selection" as an assessed capability. Two words in that requirement carry weight:
 *appropriate* implies a judgement, and *where* implies that sometimes the answer is no chart at all.
 
@@ -38,8 +38,13 @@ refused inside rules 3, 4 and 5 rather than falling through to row 6.
 required *exactly one column*. A superlative question — "which terminal has the longest berth
 wait?" — answers with a label **and** a measure, so it returns two columns, missed Rule 2, and
 fell to Rule 4, which drew a bar chart containing a single bar stretched across the full width of
-the container. Four gold questions produced it, including the first example in the UI sidebar, so
-it was the chart most likely to be seen first. Rule 2 now admits the label-plus-measure shape and
+the container. Four gold questions produced it when the defect was found, including the first
+example in the UI sidebar, so it was the chart most likely to be seen first. The gold set has
+grown since, and nine answerable cases produce the shape today. **Four is left standing in this
+paragraph deliberately**, because an ADR records what was true when the decision was taken. The
+current figure is in [CHARTS.md §8](../CHARTS.md#8-three-guards-and-how-each-was-found), and the
+command that reproduces it in
+[CHARTS.md §11](../CHARTS.md#11-verify-it-yourself). Rule 2 now admits the label-plus-measure shape and
 carries the label through as the metric's caption; Rules 3, 4 and 5 refuse single-row results
 outright, because a line through one point shows no trend, one bar is a number drawn wide, and a
 scatter of one point draws no relationship.
@@ -105,7 +110,7 @@ the trusted surface small.
 untestable, and — since the output must be validated against the actual result columns regardless —
 it does not even remove the code path it was supposed to replace.
 
-**Always render a table.** Rejected: the brief explicitly asks for charts, and a table answers a
+**Always render a table.** Rejected: the requirements explicitly ask for charts, and a table answers a
 "how did this trend over time" question far less well than a line.
 
 **A charting library that auto-selects** (e.g. Vega-Lite style automatic encoding). Rejected as

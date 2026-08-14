@@ -158,7 +158,7 @@ class TestScoring:
 
 
 class TestGroundedness:
-    """The brief names answer groundedness as an evaluated behaviour.
+    """The requirements name answer groundedness as an evaluated behaviour.
 
     The failure that matters is a model *inventing* a figure: a plausible number that
     never appeared in the data is worse than a visibly wrong one, because it survives

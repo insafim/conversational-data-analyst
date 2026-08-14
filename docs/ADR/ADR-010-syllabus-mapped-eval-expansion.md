@@ -13,7 +13,7 @@ grown organically (30, then 33, then 36) rather than against any stated coverage
 so "what does this eval actually exercise" had no checkable answer.
 
 Two structured taxonomies existed and were unused: a 75-topic SQL syllabus
-(`docs/sql_study_guide.md`, section 1) and a 19-category behavioural question taxonomy
+and a 19-category behavioural question taxonomy
 from an external multi-agent project (`Questions/`, treated as reference only; different
 domain, different system).
 

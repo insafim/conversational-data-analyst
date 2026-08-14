@@ -8,7 +8,7 @@
 ## Context
 
 To write correct SQL, the model must know the schema. "Schema handling" is named explicitly in the
-brief's evaluation criteria, so *how* the model learns the schema is being assessed, not just
+requirements, so *how* the model learns the schema is what matters, not just
 whether the resulting SQL runs.
 
 There are three ways to supply it: paste it into the prompt as a literal, let the agent discover it
@@ -57,7 +57,7 @@ let it explore). Rejected, and the reasoning generalises:
   context is scarce. Here it is not scarce, so discovery buys nothing and costs latency, money, and
   determinism.
 
-The general principle, which is the part worth stating in an interview: **retrieval earns its place
+The general principle worth stating: **retrieval earns its place
 when the schema no longer fits in context, not before.** Knowing when *not* to reach for RAG is the
 same skill as knowing when to.
 

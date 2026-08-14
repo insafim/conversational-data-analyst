@@ -1,6 +1,6 @@
 """The chat page (ADR-008).
 
-Deliberately thin. Every element it renders serves something the brief assesses. The list is
+Deliberately thin. Every element it renders serves something the requirements cover. The list is
 uncounted on purpose: a stated total is one more thing to update, and the last one was wrong
 for two additions before anybody noticed.
 

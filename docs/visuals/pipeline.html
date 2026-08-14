@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Agentic Pipeline</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0f14; }
+  svg { display: block; width: 100vw; height: 100vh; }
+  .h1   { font: 700 52px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .sub  { font: 400 26px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .nt   { font: 600 26px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .pt   { font: 600 21px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .ps   { font: 400 16px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .note { font: 400 17px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #7e8fa1; }
+  .ns   { font: 400 15.5px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .lg   { font: 400 18px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .fn   { font: 400 13.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* Hover reveal, matching data.html. Everything fades except the hovered node and the
+     pieces that belong to it, so the detail panel can sit over the lower-left band. */
+  .dimmable       { transition: opacity 180ms ease; }
+  svg.focus .dimmable     { opacity: 0.16; }
+  svg.focus .dimmable.lit { opacity: 1; }
+  .hit            { fill: transparent; cursor: default; }
+  #panel          { pointer-events: none; }
+  .pan-bg { fill: #0f1520; stroke-width: 1.5; }
+  .pan-t  { font: 600 22px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .pan-k  { font: 600 12px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #61748a; letter-spacing: 1.6px; }
+  .pan-b  { font: 400 18px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #a9b8c7; }
+</style>
+</head>
+<body>
+<svg id="board" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Concave back, so the head reads as an arrow rather than as a kite at video scale. -->
+    <marker id="aDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 L2.6,5 z" fill="#61748a"/>
+    </marker>
+    <marker id="aModel" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 L2.6,5 z" fill="#c4a3ff"/>
+    </marker>
+    <marker id="aDb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 L2.6,5 z" fill="#6cb6ff"/>
+    </marker>
+    <marker id="aStore" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 L2.6,5 z" fill="#ffb86c"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1920" height="1080" fill="#0b0f14"/>
+
+  <!-- Header. Kept left of x=1400 so a top-right webcam bubble covers nothing. -->
+  <g class="dimmable">
+    <text class="h1" x="80" y="112">The Agentic Pipeline</text>
+    <text class="sub" x="80" y="160">A fixed path, not an agent loop. The model decides content. The graph decides flow.</text>
+  </g>
+
+  <!-- The two pills the narration names. Everything else that used to sit at this level
+       is now behind a hover, because eighteen seconds cannot spend attention on it. -->
+  <!-- contextualize. A node in its own right (ARCHITECTURE.md §6), not a detail of classify:
+       it is the fifth agent, it is a separate cheap-tier call, and it is what puts the
+       "Interpreted as:" line on screen. Drawn above the spine because §6's graph reaches it
+       through a conditional edge, so it is not on the path a first turn takes. -->
+  <g class="dimmable" data-key="rewrite classify">
+    <rect x="80" y="248" width="300" height="116" rx="14" fill="#c4a3ff" fill-opacity="0.08" stroke="#c4a3ff" stroke-opacity="0.45"/>
+    <text class="pt" x="100" y="284">the rewrite</text>
+    <text class="ps" x="100" y="314">on a follow-up turn only</text>
+    <text class="fn" x="100" y="344" fill="#c4a3ff" fill-opacity="0.85">Rewriter Agent</text>
+    <line x1="230" y1="364" x2="230" y2="392" stroke="#c4a3ff" stroke-opacity="0.5" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#aModel)"/>
+  </g>
+
+  <g class="dimmable" data-key="schema generate">
+    <rect x="400" y="248" width="340" height="116" rx="14" fill="#6cb6ff" fill-opacity="0.08" stroke="#6cb6ff" stroke-opacity="0.45"/>
+    <text class="pt" x="420" y="284">the schema</text>
+    <text class="ps" x="420" y="314">introspected from the live database</text>
+    <text class="fn" x="420" y="344" fill="#6cb6ff" fill-opacity="0.8">src/schema.py</text>
+    <line x1="570" y1="364" x2="570" y2="392" stroke="#6cb6ff" stroke-opacity="0.5" stroke-width="2" marker-end="url(#aDb)"/>
+  </g>
+
+  <!-- Named, not just described. This node is called the Explainer Agent rather than
+       "the verifier", so the frame has to show that name. -->
+  <g class="dimmable" data-key="reading execute">
+    <rect x="990" y="248" width="400" height="116" rx="14" fill="#c4a3ff" fill-opacity="0.08" stroke="#c4a3ff" stroke-opacity="0.45"/>
+    <text class="pt" x="1010" y="284">the reading</text>
+    <text class="ps" x="1010" y="314">a second model says what the query measures</text>
+    <text class="fn" x="1010" y="344" fill="#c4a3ff" fill-opacity="0.85">Explainer Agent</text>
+    <line x1="1150" y1="364" x2="1150" y2="392" stroke="#c4a3ff" stroke-opacity="0.5" stroke-width="2" marker-end="url(#aModel)"/>
+  </g>
+
+  <!-- The spine. Six boxes, read left to right, and nothing on them but the name and the
+       thing that implements them. -->
+  <g class="dimmable" data-key="classify">
+    <circle cx="95" cy="452" r="11" fill="#8fa1b3"/>
+    <text class="note" x="95" y="410" text-anchor="middle">question</text>
+    <line x1="112" y1="452" x2="132" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <rect x="140" y="400" width="196" height="104" rx="14" fill="#c4a3ff" fill-opacity="0.10" stroke="#c4a3ff" stroke-opacity="0.55"/>
+    <text class="nt" x="158" y="444">classify</text>
+    <text class="fn" x="158" y="478" fill="#c4a3ff" fill-opacity="0.8">Classifier Agent</text>
+  </g>
+  <g class="dimmable"><line x1="336" y1="452" x2="420" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/></g>
+
+  <g class="dimmable" data-key="generate">
+    <rect x="428" y="400" width="196" height="104" rx="14" fill="#c4a3ff" fill-opacity="0.10" stroke="#c4a3ff" stroke-opacity="0.55"/>
+    <text class="nt" x="446" y="444">generate SQL</text>
+    <text class="fn" x="446" y="478" fill="#c4a3ff" fill-opacity="0.8">SQL Author Agent</text>
+  </g>
+  <g class="dimmable"><line x1="624" y1="452" x2="708" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/></g>
+
+  <g class="dimmable" data-key="validate">
+    <rect x="716" y="400" width="196" height="104" rx="14" fill="#6fd3a3" fill-opacity="0.10" stroke="#6fd3a3" stroke-opacity="0.6"/>
+    <text class="nt" x="734" y="444">validate</text>
+    <text class="fn" x="734" y="478" fill="#6fd3a3" fill-opacity="0.8">src/validator.py</text>
+  </g>
+  <g class="dimmable"><line x1="912" y1="452" x2="996" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/></g>
+
+  <g class="dimmable" data-key="execute">
+    <rect x="1004" y="400" width="196" height="104" rx="14" fill="#6fd3a3" fill-opacity="0.10" stroke="#6fd3a3" stroke-opacity="0.6"/>
+    <text class="nt" x="1022" y="444">execute</text>
+    <text class="fn" x="1022" y="478" fill="#6fd3a3" fill-opacity="0.8">src/executor.py</text>
+  </g>
+  <g class="dimmable"><line x1="1200" y1="452" x2="1284" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/></g>
+
+  <g class="dimmable" data-key="summarise">
+    <rect x="1292" y="400" width="196" height="104" rx="14" fill="#c4a3ff" fill-opacity="0.10" stroke="#c4a3ff" stroke-opacity="0.55"/>
+    <text class="nt" x="1310" y="444">summarise</text>
+    <text class="fn" x="1310" y="478" fill="#c4a3ff" fill-opacity="0.8">Summariser Agent</text>
+  </g>
+  <g class="dimmable"><line x1="1488" y1="452" x2="1572" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/></g>
+
+  <g class="dimmable" data-key="chart">
+    <rect x="1580" y="400" width="196" height="104" rx="14" fill="#6fd3a3" fill-opacity="0.10" stroke="#6fd3a3" stroke-opacity="0.6"/>
+    <text class="nt" x="1598" y="444">pick chart</text>
+    <text class="fn" x="1598" y="478" fill="#6fd3a3" fill-opacity="0.8">src/charts.py</text>
+    <line x1="1776" y1="452" x2="1824" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <circle cx="1843" cy="452" r="11" fill="#8fa1b3"/>
+    <text class="note" x="1843" y="410" text-anchor="middle">answered</text>
+  </g>
+
+  <!-- Two of the four terminal outcomes (ARCHITECTURE.md §6). Only these two are drawn,
+       because they are the pair §6 keeps distinct to show which layer did the work: refuse is
+       layer 3 at classification time, reject is layer 2 at the gate. `clarify` is demonstrated
+       live in the demo, and `ERROR` §6 files under failure containment rather than here. -->
+  <g class="dimmable" data-key="classify">
+    <line x1="238" y1="504" x2="238" y2="530" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <rect x="140" y="534" width="240" height="62" rx="12" fill="#8fa1b3" fill-opacity="0.07" stroke="#8fa1b3" stroke-opacity="0.4"/>
+    <text class="pt" x="158" y="562">refuse</text>
+    <text class="ps" x="158" y="584">before it has spent anything</text>
+  </g>
+  <g class="dimmable" data-key="validate">
+    <line x1="814" y1="504" x2="814" y2="530" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <rect x="716" y="534" width="196" height="62" rx="12" fill="#8fa1b3" fill-opacity="0.07" stroke="#8fa1b3" stroke-opacity="0.4"/>
+    <text class="pt" x="734" y="562">reject</text>
+    <text class="ps" x="734" y="584">the SQL never runs</text>
+  </g>
+
+  <!-- The boundary, with two doorways: x=1102 into the analytics data, x=1660 into the store.
+       This line is the last sentence of the spoken beat, so it stays at rest. Both crossings
+       are drawn because the finished turn IS a database write; a store placed above this line
+       would say the app's own state never crosses it, which is false. -->
+  <g class="dimmable" data-key="validate execute database finished">
+    <line x1="60" y1="748" x2="1040" y2="748" stroke="#ff8a80" stroke-opacity="0.5" stroke-width="2" stroke-dasharray="10 9"/>
+    <line x1="1170" y1="748" x2="1600" y2="748" stroke="#ff8a80" stroke-opacity="0.5" stroke-width="2" stroke-dasharray="10 9"/>
+    <line x1="1720" y1="748" x2="1860" y2="748" stroke="#ff8a80" stroke-opacity="0.5" stroke-width="2" stroke-dasharray="10 9"/>
+    <text class="note" x="80" y="734" fill="#ff8a80" fill-opacity="0.85">No path from the graph to the analytics data avoids validate, then execute.</text>
+    <line x1="1102" y1="504" x2="1102" y2="792" stroke="#6cb6ff" stroke-opacity="0.7" stroke-width="2" marker-end="url(#aDb)"/>
+  </g>
+
+  <!-- The application's own database (ADR-014). A second cylinder rather than a second full
+       panel: the account split and the denial between the two are in its hover, and
+       guardrails.html is the frame that argues them. -->
+  <g class="dimmable" data-key="finished chart">
+    <line x1="1660" y1="504" x2="1660" y2="792" stroke="#ffb86c" stroke-opacity="0.6" stroke-width="2" marker-end="url(#aStore)"/>
+    <path d="M1540,822 v76 a120,22 0 0 0 240,0 v-76" fill="#ffb86c" fill-opacity="0.07" stroke="#ffb86c" stroke-opacity="0.45" stroke-width="2"/>
+    <ellipse cx="1660" cy="822" rx="120" ry="22" fill="#ffb86c" fill-opacity="0.11" stroke="#ffb86c" stroke-opacity="0.45" stroke-width="2"/>
+    <text class="nt" x="1660" y="866" text-anchor="middle">the chat history</text>
+    <text class="ns" x="1660" y="894" text-anchor="middle">saved chats and per-turn cost</text>
+  </g>
+
+  <g class="dimmable" data-key="execute database">
+    <path d="M952,822 v82 a150,26 0 0 0 300,0 v-82" fill="#6cb6ff" fill-opacity="0.08" stroke="#6cb6ff" stroke-opacity="0.5" stroke-width="2"/>
+    <ellipse cx="1102" cy="822" rx="150" ry="26" fill="#6cb6ff" fill-opacity="0.12" stroke="#6cb6ff" stroke-opacity="0.5" stroke-width="2"/>
+    <text class="nt" x="1102" y="868" text-anchor="middle">PostgreSQL 18</text>
+    <text class="ns" x="1102" y="898" text-anchor="middle">five tables</text>
+  </g>
+
+  <!-- Footer -->
+  <g class="dimmable">
+    <rect x="80" y="984" width="18" height="18" rx="4" fill="#c4a3ff" fill-opacity="0.35" stroke="#c4a3ff" stroke-opacity="0.7"/>
+    <text class="lg" x="108" y="1000">agent call</text>
+    <rect x="240" y="984" width="18" height="18" rx="4" fill="#6fd3a3" fill-opacity="0.35" stroke="#6fd3a3" stroke-opacity="0.7"/>
+    <text class="lg" x="268" y="1000">ordinary code</text>
+    <rect x="424" y="984" width="18" height="18" rx="4" fill="#6cb6ff" fill-opacity="0.35" stroke="#6cb6ff" stroke-opacity="0.7"/>
+    <text class="lg" x="452" y="1000">the data being asked about</text>
+    <rect x="700" y="984" width="18" height="18" rx="4" fill="#ffb86c" fill-opacity="0.35" stroke="#ffb86c" stroke-opacity="0.7"/>
+    <text class="lg" x="728" y="1000">the app's own state</text>
+    <text class="lg" x="1860" y="1000" text-anchor="end">Five agents. Four calls answer a question: Classifier, SQL Author, Explainer, Summariser.</text>
+    <text class="fn" x="80" y="1040" fill="#61748a">the SQL Author Agent is claude-sonnet-5. Every other agent is claude-haiku-4-5. A follow-up adds the Rewriter, a retry adds two. Hover any box for the detail.</text>
+  </g>
+
+  <!-- Empty in the resting frame, and empty in any screenshot of it. Filled only while the
+       pointer rests on a box, so the beat this file was drawn for never shows it. -->
+  <g id="panel"></g>
+
+  <!-- Hover targets, last so they sit above everything and nothing else steals the pointer. -->
+  <rect class="hit" data-hit="rewrite"   x="80"   y="248" width="300" height="116"/>
+  <rect class="hit" data-hit="schema"    x="400"  y="248" width="340" height="116"/>
+  <rect class="hit" data-hit="reading"   x="990"  y="248" width="400" height="116"/>
+  <rect class="hit" data-hit="classify"  x="132"  y="392" width="212" height="120"/>
+  <rect class="hit" data-hit="generate"  x="420"  y="392" width="212" height="120"/>
+  <rect class="hit" data-hit="validate"  x="708"  y="392" width="212" height="120"/>
+  <rect class="hit" data-hit="execute"   x="996"  y="392" width="212" height="120"/>
+  <rect class="hit" data-hit="summarise" x="1284" y="392" width="212" height="120"/>
+  <rect class="hit" data-hit="chart"     x="1572" y="392" width="212" height="120"/>
+  <rect class="hit" data-hit="finished"  x="1540" y="796" width="240" height="112"/>
+  <rect class="hit" data-hit="database"  x="952"  y="796" width="300" height="112"/>
+</svg>
+
+<script>
+/* Every line below was on the resting frame before this file gained a hover, and moved
+   behind one because the beat it was drawn for is eighteen seconds long. The claims come
+   from src/config.py (row_cap 500, statement_timeout_ms 5000), src/charts.py, src/agent.py
+   (the retry trigger), src/validator.py (the whole-tree walk), ARCHITECTURE.md §8 (the layer
+   ranking, including layer 3 being written on the assumption that it will be defeated),
+   ADR-011, ADR-013 and ADR-014. Changing one here without changing it at the source is a
+   defect. */
+const DETAIL = {
+  schema: { title: "the schema", kick: "THE DATA BEING ASKED ABOUT", accent: "#6cb6ff", lines: [
+    "Read from the live database at startup, then injected into every generation prompt.",
+    "A column added to the database changes what the model is handed, with no prompt edit."
+  ]},
+  reading: { title: "the reading", kick: "AGENT CALL · verify · ADR-013", accent: "#c4a3ff", lines: [
+    "A second model says, in one sentence, what the query measures. On screen it is the",
+    "\"What was measured:\" line, collected by a code node called review.",
+    "It hangs off the same edge as execute rather than sitting in front of it, and it is given",
+    "the question and the SQL but never the returned rows. It describes; it does not decide."
+  ]},
+  classify: { title: "classify", kick: "AGENT CALL · LAYER 3", accent: "#c4a3ff", lines: [
+    "Answerable, ambiguous, or out of scope, decided before any SQL has been written.",
+    "Ambiguous asks back rather than guessing. Out of scope refuses, having spent almost nothing.",
+    "Those two are terminal: clarify and refuse, both reached before any SQL exists."
+  ]},
+  rewrite: { title: "the rewrite", kick: "AGENT CALL · contextualize · ADR-011", accent: "#c4a3ff", lines: [
+    "\"And Rotterdam?\" becomes a standalone question, and the screen shows what it resolved to",
+    "as the \"Interpreted as:\" line. A resolution the user cannot see cannot be corrected.",
+    "It is given earlier questions and the SQL they produced, never the answer and never rows,",
+    "because rows are the second-order injection channel and this prompt outlives the turn."
+  ]},
+  generate: { title: "generate SQL", kick: "AGENT CALL", accent: "#c4a3ff", lines: [
+    "Exactly one SELECT statement, written against the schema introspected at startup.",
+    "This is the only step where a model chooses what the query actually says.",
+    "One retry lands back here, on a database error or a bad result shape. Then it stops."
+  ]},
+  validate: { title: "validate", kick: "ORDINARY CODE · LAYER 2", accent: "#6fd3a3", lines: [
+    "The gate is code, not a model. It parses the statement and walks the whole tree,",
+    "so a delete hidden inside a sub-query is refused as readily as a bare one.",
+    "Rejected SQL never runs, and is never retried."
+  ]},
+  execute: { title: "execute", kick: "ORDINARY CODE · LAYER 1", accent: "#6fd3a3", lines: [
+    "A five second statement timeout, and five hundred rows at most.",
+    "Permissions, not prompting: the account it connects with holds CONNECT, USAGE and SELECT.",
+    "No write grant exists on it, so there is none to revoke and none to steal.",
+    "A database error here is what spends the one retry, back at generate SQL."
+  ]},
+  summarise: { title: "summarise", kick: "AGENT CALL", accent: "#c4a3ff", lines: [
+    "Phrased only from the rows that came back.",
+    "It is not given the schema, and not given anything it did not just receive."
+  ]},
+  chart: { title: "pick chart", kick: "ORDINARY CODE · ADR-005", accent: "#6fd3a3", lines: [
+    "Chosen from the shape of the result, not from the words in the question.",
+    "One row and one number is a metric. A time column and a number is a line.",
+    "Categories and a number is a bar, up to twelve of them. Anything else is a table."
+  ]},
+  finished: { title: "the finished turn", kick: "THE APP'S OWN STATE · ADR-014", accent: "#ffb86c", lines: [
+    "Saved by ordinary code with fixed SQL, to a second database on the same container.",
+    "A different account owns it, and the query account cannot open a session there at all."
+  ]},
+  database: { title: "the analytics database", kick: "LAYER 1, BELOW THE PROCESS", accent: "#6cb6ff", lines: [
+    "PostgreSQL 18, five tables, reached only through analyst_ro: CONNECT, USAGE, SELECT.",
+    "Layer 1 is enforced by PostgreSQL rather than by anything in this diagram.",
+    "Layer 3 is written assuming it will be defeated, so the argument rests on 1 and 2."
+  ]}
+};
+
+const SVG_NS   = "http://www.w3.org/2000/svg";
+/* The quadrant below the boundary and left of the analytics cylinder, which the resting
+   frame leaves empty on purpose. It moved here when the refuse and reject boxes took the
+   band under the spine. Width stops at 930 so the panel never touches the cylinder, whose
+   body starts at x=952. */
+const PANEL_X  = 80;
+const PANEL_W  = 850;
+/* A four-line panel ends at 942, which clears the legend baseline at 1000. Raising the line
+   count without moving this paints over the legend. */
+const PANEL_Y  = 770;
+const ROW_STEP = 28;
+/* A cursor crossing the board on its way to the tab bar should not open a panel.
+   Only a deliberate rest on a box does. */
+const DWELL_MS = 180;
+
+const board = document.getElementById("board");
+const panel = document.getElementById("panel");
+let timer = null;
+
+function el(name, attrs, text) {
+  const node = document.createElementNS(SVG_NS, name);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function show(name) {
+  const d = DETAIL[name];
+  if (!d) return;
+
+  for (const g of board.querySelectorAll(".dimmable")) {
+    g.classList.toggle("lit", (g.dataset.key || "").split(" ").includes(name));
+  }
+  board.classList.add("focus");
+
+  const h = 60 + d.lines.length * ROW_STEP;
+  panel.replaceChildren();
+  panel.appendChild(el("rect", {
+    class: "pan-bg", x: PANEL_X, y: PANEL_Y, width: PANEL_W, height: h, rx: 14,
+    stroke: d.accent, "stroke-opacity": 0.45
+  }));
+  panel.appendChild(el("text", { class: "pan-t", x: PANEL_X + 22, y: PANEL_Y + 40, fill: d.accent }, d.title));
+  panel.appendChild(el("text", {
+    class: "pan-k", x: PANEL_X + PANEL_W - 22, y: PANEL_Y + 40, "text-anchor": "end"
+  }, d.kick));
+
+  d.lines.forEach((line, i) => {
+    panel.appendChild(el("text", { class: "pan-b", x: PANEL_X + 22, y: PANEL_Y + 80 + i * ROW_STEP }, line));
+  });
+}
+
+function hide() {
+  clearTimeout(timer);
+  board.classList.remove("focus");
+  for (const g of board.querySelectorAll(".lit")) g.classList.remove("lit");
+  panel.replaceChildren();
+}
+
+for (const hit of board.querySelectorAll(".hit")) {
+  hit.addEventListener("pointerenter", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => show(hit.dataset.hit), DWELL_MS);
+  });
+  hit.addEventListener("pointerleave", hide);
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
+</script>
+</body>
+</html>

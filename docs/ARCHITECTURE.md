@@ -580,11 +580,10 @@ and the eval harness scores a failure rather than crashing on it.
 
 The table above says what each node is for. This says how it does it, in pipeline order.
 
-**About the spoken paragraphs.** Each node carries one, and they are not additions to the
-script. [docs/video.md](video.md) gives the whole pipeline eighteen seconds, which is five
-sentences for thirteen nodes, so these are the answer to give if a reviewer asks about that
-specific node, in interview or in a follow-up call. Read end to end they run several minutes,
-which is why the video says four things and lets the frame carry the rest.
+**About the per-node paragraphs.** Each node carries one. They are written to be read on
+demand rather than in sequence: a walkthrough of the pipeline covers four or five points,
+and these are the detail behind any one of them. Read end to end they run several minutes,
+which is why a summary names a few and lets the diagram carry the rest.
 
 ---
 
@@ -849,8 +848,8 @@ on the routing alone.
 **How it works.** Six rules over the shape of the result set, with no model call
 ([§10](#10-chart-selection)). Once the SQL has run, the result fully determines which
 encodings are valid, so no linguistic judgement is left for a model to contribute. Every
-`ChartSpec` carries the name of the rule that fired, which is shown in the UI and asserted in
-tests.
+`ChartSpec` carries the name of the rule that fired, which is shown in the UI. Its content is
+asserted for only some of the rules; [§10](#10-chart-selection) says which.
 
 > "The chart type is chosen by rules in code, from the shape of the result, not from the
 > words in the question. A time series becomes a line, a ranking becomes bars, a single figure
@@ -1121,6 +1120,10 @@ is what makes the single retry useful, because the model can see exactly what it
 
 ## 10. Chart Selection
 
+> The detailed reference is [CHARTS.md](CHARTS.md): the rules with their guards, which questions
+> produce which chart, the metric card's number formatting, and where the rules are wrong. This
+> section places chart selection in the pipeline.
+
 Pure code, no LLM call ([ADR-005](ADR/ADR-005-deterministic-chart-selection.md)). Chart choice
 is a function of the **shape** of the result set, not of the language in the question: once
 the SQL has run, the result fully determines which encodings are valid. No linguistic
@@ -1141,11 +1144,14 @@ judgement remains, so there is nothing for a language model to contribute.
 The `>1 row` guards on rules 3, 4 and 5 are not decoration. A superlative question ("which
 terminal has the longest berth wait?") returns one row holding a label and a measure, which
 before this guard fell through to rule 4 and drew a bar chart of exactly one bar stretched
-across the full container. Four gold questions produced it, including the first example
-button in the UI. See ADR-005.
+across the full container. Nine answerable gold questions produce that shape, including the
+first example button in the UI. See ADR-005 and
+[CHARTS.md §8](CHARTS.md#8-three-guards-and-how-each-was-found).
 
-Every `ChartSpec` carries a `reason` naming the rule that fired; it is shown in the UI and
-asserted in tests, so the behaviour is inspectable rather than magic.
+Every `ChartSpec` carries a `reason` naming the rule that fired, because the field is required
+rather than optional, and it is shown in the UI, so the behaviour is inspectable rather than
+magic. Its *content* is asserted for rule 1, rule 2 and rule 4's over-the-limit table branch
+only; see [CHARTS.md §10](CHARTS.md#10-what-is-tested-and-what-is-not).
 
 ### Two things found by running it, not by predicting it
 
@@ -1196,7 +1202,7 @@ recognisable star-ish shape, which is what a real analytics database looks like.
 
 ### Why this domain, and not e-commerce
 
-The brief allows any input data, so the choice needed a reason. It was not thematic.
+The requirements allow any input data, so the choice needed a reason. It was not thematic.
 
 The **strongest reason is methodological: the default alternative
 (customers/orders/products/order_items) is massively over-represented in LLM training data,
@@ -1226,8 +1232,8 @@ splitting:
 Alternatives considered and rejected: a **public real-world dataset** (download and licensing
 friction in a repo promising a two-command start, and signal cannot be planted in it),
 **more tables** (8 to 10 would grow prompt size and SQL error surface without testing
-anything the brief asks about), and **the bare minimum of four** (meets the letter of the
-brief with no margin).
+anything the requirements ask about), and **the bare minimum of four** (meets the letter of the
+requirements with no margin).
 
 ### Planted signal, not noise
 
@@ -1268,7 +1274,7 @@ column was added.
 Every port currently has exactly one terminal, which makes `port_name` effectively redundant
 and removes a natural port → terminal hierarchy. Cosmetic rather than functional; fixing it
 requires re-seeding and re-baselining the characterization digests for no gain in what the
-brief assesses.
+project sets out to show.
 
 ---
 
@@ -1629,7 +1635,7 @@ rather than a rewrite.
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers.
 │                               `runNN.json` the records, `runNN.meta.json` their provenance
-├── tests/                      989 tests
+├── tests/                      990 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Fourteen decision records
@@ -1649,7 +1655,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 989 tests
+### Test suite: 990 tests
 
 | File                               | Tests | Scope                                                                                                                                                                               |
 | ---------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1676,7 +1682,7 @@ streamlit run app.py
 | `test_store.py`                  | 17    | Conversation persistence: round trip, ordering, cascade delete, concurrency                                                                                                         |
 | `test_store_isolation.py`        | 6     | That the agent's role cannot connect to the store (ADR-014)                                                                                                                         |
 | `test_store_titles.py`           | 5     | Deriving a chat title from its first question                                                                                                                                       |
-| `test_repo_hygiene.py`           | 4     | That no document is both untracked and unignored, so preparation material cannot ship by accident                                                                                   |
+| `test_repo_hygiene.py`           | 5     | That no document is both untracked and unignored, so preparation material cannot ship by accident                                                                                   |
 | `test_visuals.py`                | 14    | That the presentation frame's schema claims match `db/01_schema.sql`: columns, declared types, key roles and join paths                                                              |
 | `test_seed_characterization.py`  | 7     | Data digests, planted patterns, crane/terminal invariant                                                                                                                            |
 | `test_second_order_injection.py` | 5     | Injection arriving through query results                                                                                                                                            |
@@ -1686,7 +1692,7 @@ streamlit run app.py
 Integration tests are marked, so unit tests run without a database:
 
 ```bash
-pytest -m "not integration"   # 775 unit tests, no database, no network
+pytest -m "not integration"   # 776 unit tests, no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
 python eval/run_eval.py                                # shipped config, 10 to 15 min
@@ -1719,7 +1725,7 @@ consequences visible in the suite:
 | **Authentication**      | One implicit user. Identity is a precondition for row-level security, which is why it heads the production path rather than being a UI feature |
 | **Caching**             | Would cut cost and latency, but optimises a system whose correctness is not yet established. Correctness first                                 |
 | **Streaming**           | Perceived latency, not latency. With four calls, three of them sequential, the honest fix is fewer or faster calls                             |
-| **Deployment**          | Runs locally. Containerising demonstrates a skill this brief does not assess                                                                   |
+| **Deployment**          | Runs locally. Containerising demonstrates a skill this project does not set out to show                                                                   |
 | **Async / concurrency** | Single-user by design; Streamlit's rerun model would not scale to concurrent users anyway                                                      |
 | **Semantic layer**      | The most consequential omission; see below                                                                                                     |
 

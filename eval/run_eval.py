@@ -1,6 +1,6 @@
 """Evaluation harness: turns "the SQL is correct" into a number (ADR-006).
 
-Scores the behaviours the brief names, because a system that answers well but cannot say
+Scores the behaviours the requirements name, because a system that answers well but cannot say
 no is not deployable:
 
 * **execution accuracy** — the agent's SQL returns the same rows as the reference

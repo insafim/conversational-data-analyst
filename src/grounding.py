@@ -65,7 +65,7 @@ def check_groundedness(
 ) -> GroundingCheck:
     """Verify the answer's figures actually came from the returned rows.
 
-    The brief names groundedness as an evaluated behaviour, and the failure that matters
+    The requirements name groundedness as an evaluated behaviour, and the failure that matters
     is a model *inventing* a number: a plausible figure that never appeared in the data
     is far more damaging than a visibly wrong one, because it survives review.
 

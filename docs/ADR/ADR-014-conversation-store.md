@@ -113,8 +113,9 @@ keys, no transactions, and no `GROUP BY` for the aggregates the observability pa
 It is not built, and the reason is not only scope. Retrieving past **answer text** by
 similarity would pull row data back into prompts on a fuzzy path, reopening precisely the
 channel [ADR-011](ADR-011-bounded-multi-turn.md) closed by carrying question and SQL only.
-Prompt injection is one of the three areas `docs/problem.md` names as assessed, so this
-would trade an assessed strength for an unrequested feature. If it is ever wanted, that
+Injection resistance is a property this system holds deliberately and verifies
+([GUARDRAILS.md](../GUARDRAILS.md)), so this would trade a demonstrated strength for an
+unrequested feature. If it is ever wanted, that
 trade is the decision to make first, not the storage.
 
 ## Consequences
@@ -143,8 +144,8 @@ trade is the decision to make first, not the storage.
 - `db/03_app_store.sql` runs only on the container's first boot, so an existing data
   volume needs `docker compose down -v`. The store detects the missing database and says
   so, naming the remedy.
-- Chat history itself is not something `docs/problem.md` asks for. The store is justified
-  by the observability page, since latency is assessed and had to move out of the chat
+- Chat history itself is not something the requirements ask for. The store is justified
+  by the observability page, since latency is reported and had to move out of the chat
   pane; saved conversations are the same rows rendered differently, which is why they cost
   little more than the store already did.
 

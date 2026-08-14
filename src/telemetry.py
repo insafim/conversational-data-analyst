@@ -208,7 +208,7 @@ def _summarise(name: str, number: int, records: list[dict]) -> EvalRun:
         if outcome:
             outcomes[outcome] = outcomes.get(outcome, 0) + 1
 
-    # Scored per category, because the three figures the brief asks about are three
+    # Scored per category, because the three figures the requirements ask about are three
     # different denominators over the same file and the overall score hides all of them.
     # An adversarial case "passing" means the system refused or blocked it, which is why
     # safety can read 100% in a run whose overall score is 94%.

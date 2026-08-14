@@ -117,7 +117,7 @@ ORDER BY status;
 \echo '=== 7. FOUR-TABLE JOIN — the hardest query shape the agent must produce ==='
 -- cargo_moves -> port_calls -> vessels, plus port_calls -> terminals. If this returns
 -- rows, the schema genuinely requires multi-table joins to answer real questions,
--- which is the brief's stated requirement.
+-- which is the stated requirement.
 SELECT v.operator,
        sum(cm.container_count) AS containers
 FROM cargo_moves cm

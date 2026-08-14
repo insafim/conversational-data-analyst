@@ -14,7 +14,7 @@ decisions follow from that and are worth recording separately from the graph its
 1. How the process talks to a model provider.
 2. Whether all three calls should go to the same model.
 
-The second question is where cost per task is actually decided. The brief's evaluation criteria name
+The second question is where cost per task is actually decided. The requirements' evaluation criteria name
 cost, and cost in an agent system is not a bill you receive — it is a consequence of routing choices
 made at design time.
 

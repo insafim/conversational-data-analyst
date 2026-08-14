@@ -257,9 +257,9 @@ def coverage_sentence(cov: AuditCoverage | None = None) -> str:
 #:
 #: Deliberately still narrow, and narrower than `COVERAGE_PATTERN`'s subject list. Widening
 #: this to "reference SQL" was tried on 2026-08-14 and reverted: it fires on navigational
-#: prose such as README's "GOLD_AUDIT.md is the audit of the reference SQL that method
-#: measures against", which discusses the audit's existence rather than its extent and has
-#: no figure to state. A topic detector that demands a figure from a sentence making no
+#: prose of the form "X is the audit of the reference SQL that this method measures
+#: against", which discusses the audit's existence rather than its extent and has no
+#: figure to state. A topic detector that demands a figure from a sentence making no
 #: quantitative claim trains the reader to add meaningless numbers. Quantified claims are
 #: caught by subject breadth in `COVERAGE_PATTERN` instead, where a number is already
 #: present and can simply be checked.

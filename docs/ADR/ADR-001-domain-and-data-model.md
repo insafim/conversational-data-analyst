@@ -7,7 +7,7 @@
 
 ## Context
 
-The brief requires a database with "a minimum of 4 tables that require joins to answer
+The requirements call for a database with "a minimum of 4 tables that require joins to answer
 questions", using input data of our choice, synthetic where appropriate. The dataset is not
 incidental: it determines whether the demo produces *findings* or *noise*, and it sets the
 ceiling on how interesting the natural-language questions can be.
@@ -43,7 +43,7 @@ cargo_moves  (move_id PK, port_call_id FK→port_calls, crane_id FK→cranes,
 ```
 
 Two dimension tables (`vessels`, `terminals`), one equipment dimension (`cranes`), and two fact
-tables at different grains (`port_calls` per visit, `cargo_moves` per crane operation). This is a
+tables at different grains (`port_calls` per visit, `cargo_moves` per crane work batch). This is a
 recognisable star-ish shape, which is what a real analytics database looks like.
 
 ### Join depth is structural
@@ -101,9 +101,9 @@ demo becomes hostage to whatever the data happens to contain.
 
 **More tables (8–10) for a richer schema.** Rejected as overbuilding. Five tables already force
 four-table joins. Additional tables would increase prompt size and SQL error surface without
-testing anything the brief asks about.
+testing anything the requirements ask about.
 
-**Fewer tables (the minimum 4).** Rejected. It meets the letter of the brief with no margin. Five
+**Fewer tables (the minimum 4).** Rejected. It meets the letter of the requirements with no margin. Five
 gives one more join path at negligible cost.
 
 ## Where this model stops holding
@@ -162,7 +162,7 @@ than extended, and the fixed-window reproducibility argument above has to be re-
 a dataset that moves.
 
 Both thresholds are a long way from where this prototype sits, and building for either one here
-would be the overbuilding the brief warns against. They are recorded because the boundary of a
+would be the overbuilding the requirements warn against. They are recorded because the boundary of a
 design is part of the design, and because the first question asked of any prototype is what it
 costs to make it real.
 
@@ -179,7 +179,7 @@ costs to make it real.
 **Negative / accepted**
 
 - Synthetic data cannot demonstrate handling of real-world dirt (nulls, duplicates, inconsistent
-  encodings). Accepted: the brief explicitly permits synthetic data, and data cleaning is not on
+  encodings). Accepted: the requirements explicitly permit synthetic data, and data cleaning is not on
   the scored list.
 - The fixed window means the demo must be framed in terms of the data's own range. Handled by
   injecting the range into the prompt and surfacing it in the UI.

@@ -7,7 +7,7 @@
 
 ## Context
 
-The brief asks for "an agent". That word covers a wide range of designs, from a fully autonomous
+The requirements ask for "an agent". That word covers a wide range of designs, from a fully autonomous
 tool-calling loop that decides its own next step, to a fixed pipeline where a model fills in
 specific slots. The choice is the central architectural decision in this build, and it determines
 whether the security and latency properties are guarantees or merely tendencies.
@@ -140,7 +140,7 @@ hidden.
 
 - A dependency heavier than this node count justifies. Accepted knowingly.
 - Fixed topology cannot handle questions requiring genuinely multi-step exploration (e.g. "find
-  anomalies, then investigate the biggest one"). Out of scope for this brief; would need either a
+  anomalies, then investigate the biggest one"). Out of scope for this project; would need either a
   planner node or a supervised loop.
 - Three sequential LLM calls set a latency floor that a single call would not have. Mitigated by
   routing two of the three to a fast, cheap model tier ([ADR-007](ADR-007-llm-provider-and-tiering.md)).

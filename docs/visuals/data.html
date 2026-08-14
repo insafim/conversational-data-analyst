@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The data</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0f14; }
+  svg { display: block; width: 100vw; height: 100vh; }
+  .h1    { font: 700 52px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .sub   { font: 400 26px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .intro { font: 400 22px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #a9b8c7; }
+  .em    { font-weight: 600; fill: #e8eef4; }
+  .tbl   { font: 600 24px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #e8eef4; }
+  .num   { font: 600 34px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .ns    { font: 400 15.5px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .key   { font: 400 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #7e8fa1; }
+  .note  { font: 400 17px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #7e8fa1; }
+  .hd    { font: 600 21px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .bd    { font: 400 17px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .kick  { font: 600 13px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #61748a; letter-spacing: 1.7px; }
+  .lg    { font: 400 18px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+
+  /* Hover reveal. Everything fades except the hovered table and the joins it takes
+     part in, so the column panel can sit over the lower band without collision. */
+  .dimmable        { transition: opacity 180ms ease; }
+  svg.focus .dimmable      { opacity: 0.18; }
+  svg.focus .dimmable.lit  { opacity: 1; }
+  .hit             { fill: transparent; cursor: default; }
+  #panel           { pointer-events: none; }
+  .pan-bg { fill: #0f1520; stroke-width: 1.5; }
+  .pan-t  { font: 600 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .pan-h  { font: 600 11px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #61748a; letter-spacing: 1.4px; }
+  .pan-c  { font: 400 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #cbd7e3; }
+  .pan-ty { font: 400 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #7e8fa1; }
+  .pan-k  { font: 600 11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.6px; }
+</style>
+</head>
+<body>
+<svg id="board" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Concave back, so the head reads as an arrow rather than as a kite at video scale. -->
+    <marker id="aDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 L2.6,5 z" fill="#61748a"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1920" height="1080" fill="#0b0f14"/>
+
+  <!-- Header. Kept left of x=1400 so a top-right webcam bubble covers nothing. -->
+  <g class="dimmable">
+    <text class="h1" x="80" y="112">The data</text>
+    <text class="sub" x="80" y="160">Port and terminal operations. Five tables, fully synthetic, generated from a fixed seed.</text>
+
+    <!-- Domain primer. Spoken over, roughly the first ten seconds of this beat. The five
+         emphasised terms are the ones every metric below is built from. -->
+    <text class="intro" x="80" y="222">A container terminal is a stretch of quay wall where ships dock and containers are lifted on and off. Ships do not dock on arrival:</text>
+    <text class="intro" x="80" y="254">a terminal has a fixed number of <tspan class="em">berths</tspan>, and when all of them are taken an arriving ship waits offshore at <tspan class="em">anchorage</tspan> until one</text>
+    <text class="intro" x="80" y="286">frees up. Once it has a berth, the terminal's <tspan class="em">quay cranes</tspan> work it, each lifting containers off the ship (a <tspan class="em">discharge</tspan>) and others</text>
+    <text class="intro" x="80" y="318">on (a <tspan class="em">load</tspan>), for hours, until the exchange is done. The ship then departs and the berth passes to the next one waiting.</text>
+  </g>
+
+  <!-- terminals -->
+  <g class="dimmable" data-box="terminals">
+    <rect x="115" y="390" width="250" height="170" rx="16" fill="#6cb6ff" fill-opacity="0.08" stroke="#6cb6ff" stroke-opacity="0.5"/>
+    <text class="tbl" x="137" y="436">terminals</text>
+    <text class="num" x="137" y="484" fill="#6cb6ff">6</text>
+    <text class="ns" x="137" y="516">one container terminal,</text>
+    <text class="ns" x="137" y="538">with its port and berths</text>
+  </g>
+
+  <!-- cranes -->
+  <g class="dimmable" data-box="cranes">
+    <rect x="475" y="390" width="250" height="170" rx="16" fill="#6cb6ff" fill-opacity="0.08" stroke="#6cb6ff" stroke-opacity="0.5"/>
+    <text class="tbl" x="497" y="436">cranes</text>
+    <text class="num" x="497" y="484" fill="#6cb6ff">25</text>
+    <text class="ns" x="497" y="516">one quay crane, owned</text>
+    <text class="ns" x="497" y="538">by exactly one terminal</text>
+  </g>
+
+  <!-- cargo_moves -->
+  <g class="dimmable" data-box="cargo_moves">
+    <rect x="835" y="390" width="250" height="170" rx="16" fill="#f2b880" fill-opacity="0.10" stroke="#f2b880" stroke-opacity="0.55"/>
+    <text class="tbl" x="857" y="436">cargo_moves</text>
+    <text class="num" x="857" y="484" fill="#f2b880">6,577</text>
+    <text class="ns" x="857" y="516">one batch of moves, by</text>
+    <text class="ns" x="857" y="538">one crane, in one visit</text>
+  </g>
+
+  <!-- port_calls -->
+  <g class="dimmable" data-box="port_calls">
+    <rect x="1195" y="390" width="250" height="170" rx="16" fill="#f2b880" fill-opacity="0.10" stroke="#f2b880" stroke-opacity="0.55"/>
+    <text class="tbl" x="1217" y="436">port_calls</text>
+    <text class="num" x="1217" y="484" fill="#f2b880">1,500</text>
+    <text class="ns" x="1217" y="516">one visit of one vessel</text>
+    <text class="ns" x="1217" y="538">to one terminal</text>
+  </g>
+
+  <!-- vessels -->
+  <g class="dimmable" data-box="vessels">
+    <rect x="1555" y="390" width="250" height="170" rx="16" fill="#6cb6ff" fill-opacity="0.08" stroke="#6cb6ff" stroke-opacity="0.5"/>
+    <text class="tbl" x="1577" y="436">vessels</text>
+    <text class="num" x="1577" y="484" fill="#6cb6ff">40</text>
+    <text class="ns" x="1577" y="516">one ship, carrying its</text>
+    <text class="ns" x="1577" y="538">operator and capacity</text>
+  </g>
+
+  <!-- Join paths. The head lands on the table holding the foreign key, so which side owns
+       the relationship is readable off the picture without the DDL. -->
+  <g class="dimmable" data-join="terminals cranes">
+    <line x1="365" y1="484" x2="467" y2="484" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <text class="key" x="416" y="468" text-anchor="middle">terminal_id</text>
+  </g>
+  <g class="dimmable" data-join="cranes cargo_moves">
+    <line x1="725" y1="484" x2="827" y2="484" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <text class="key" x="776" y="468" text-anchor="middle">crane_id</text>
+  </g>
+  <g class="dimmable" data-join="port_calls cargo_moves">
+    <line x1="1195" y1="484" x2="1093" y2="484" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <text class="key" x="1144" y="468" text-anchor="middle">port_call_id</text>
+  </g>
+  <g class="dimmable" data-join="vessels port_calls">
+    <line x1="1555" y1="484" x2="1453" y2="484" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <text class="key" x="1504" y="468" text-anchor="middle">vessel_id</text>
+  </g>
+
+  <!-- The fifth join path, terminals to port_calls, routed under the row. Orthogonal
+       rather than a single sweep, so the last 40px are genuinely vertical and the head
+       points along the stroke it terminates. -->
+  <g class="dimmable" data-join="terminals port_calls">
+    <path d="M240,560 V612 Q240,636 264,636 H1296 Q1320,636 1320,612 V570"
+          fill="none" stroke="#61748a" stroke-width="2" stroke-opacity="0.85" marker-end="url(#aDim)"/>
+    <text class="key" x="780" y="662" text-anchor="middle">terminal_id</text>
+  </g>
+
+  <g class="dimmable">
+    <text class="note" x="960" y="716" text-anchor="middle">Five join paths, and every question is some combination of them. Join depth falls out of the questions rather than out of the schema: average berth wait by terminal joins two tables, top operators at Jebel Ali joins four.</text>
+  </g>
+
+  <!-- Two claims, at different weights. Both boxes print more than a reader needs at a
+       glance, which is deliberate: the detail rewards a second look. The left one is a
+       property of the shipped data and carries the planted figure from DATA.md section 7.
+       The right one is a note on an alternative that was rejected (DATA.md, "What was
+       rejected, and why"), which is why it is set as an aside. -->
+  <g class="dimmable">
+    <text class="hd" x="80" y="800">Generated, and deterministic</text>
+    <text class="bd" x="80" y="836">Seeded at 42 and regenerated identically on every run, so the eval's reference SQL stays valid.</text>
+    <text class="bd" x="80" y="864">Four patterns are planted in the distributions: Jebel Ali waits 17.46 hours against roughly 5.7 elsewhere.</text>
+  </g>
+
+  <g class="dimmable">
+    <line x1="1080" y1="782" x2="1080" y2="884" stroke="#2a3646" stroke-width="2"/>
+    <text class="kick" x="1116" y="800">WHY NOT CUSTOMERS AND ORDERS</text>
+    <text class="note" x="1116" y="834">The canonical SQL teaching schema, so its query patterns are highly</text>
+    <text class="note" x="1116" y="858">familiar. A model could score well by resemblance rather than by reasoning</text>
+    <text class="note" x="1116" y="882">over the schema, making the eval less diagnostic.</text>
+  </g>
+
+  <!-- Footer -->
+  <g class="dimmable">
+    <rect x="80" y="984" width="18" height="18" rx="4" fill="#6cb6ff" fill-opacity="0.35" stroke="#6cb6ff" stroke-opacity="0.7"/>
+    <text class="lg" x="108" y="1000">dimension</text>
+    <rect x="240" y="984" width="18" height="18" rx="4" fill="#f2b880" fill-opacity="0.35" stroke="#f2b880" stroke-opacity="0.7"/>
+    <text class="lg" x="268" y="1000">fact</text>
+    <text class="lg" x="360" y="1000">Hover any table for its columns.</text>
+    <text class="lg" x="1860" y="1000" text-anchor="end">341,608 containers moved, over a fixed window from 2025-01-01 to 2026-06-30.</text>
+  </g>
+
+  <!-- Empty in the resting frame, and empty in any screenshot of it. Filled only while the
+       pointer rests on a table, so the beat this file was drawn for never shows it. -->
+  <g id="panel"></g>
+
+  <!-- Hover targets, last so they sit above everything and nothing else steals the pointer. -->
+  <rect class="hit" data-hit="terminals"   x="115"  y="390" width="250" height="170"/>
+  <rect class="hit" data-hit="cranes"      x="475"  y="390" width="250" height="170"/>
+  <rect class="hit" data-hit="cargo_moves" x="835"  y="390" width="250" height="170"/>
+  <rect class="hit" data-hit="port_calls"  x="1195" y="390" width="250" height="170"/>
+  <rect class="hit" data-hit="vessels"     x="1555" y="390" width="250" height="170"/>
+</svg>
+
+<script>
+/* Columns are the declared shape of db/01_schema.sql, in declared order.
+   tests/test_visuals.py parses both and fails if they drift apart. */
+const TABLES = {
+  terminals: { x: 115, accent: "#6cb6ff", columns: [
+    ["terminal_id", "integer", "PK"],
+    ["terminal_name", "text", ""],
+    ["port_name", "text", ""],
+    ["country", "text", ""],
+    ["berth_count", "smallint", ""],
+    ["opened_year", "smallint", ""]
+  ]},
+  cranes: { x: 475, accent: "#6cb6ff", columns: [
+    ["crane_id", "integer", "PK"],
+    ["terminal_id", "integer", "FK"],
+    ["crane_code", "text", ""],
+    ["model", "text", ""],
+    ["commissioned_date", "date", ""],
+    ["max_lift_tonnes", "smallint", ""],
+    ["status", "text", ""]
+  ]},
+  cargo_moves: { x: 835, accent: "#f2b880", columns: [
+    ["move_id", "integer", "PK"],
+    ["port_call_id", "integer", "FK"],
+    ["crane_id", "integer", "FK"],
+    ["move_type", "text", ""],
+    ["container_count", "integer", ""],
+    ["move_ts", "timestamp", ""],
+    ["duration_minutes", "smallint", ""]
+  ]},
+  port_calls: { x: 1195, accent: "#f2b880", columns: [
+    ["port_call_id", "integer", "PK"],
+    ["vessel_id", "integer", "FK"],
+    ["terminal_id", "integer", "FK"],
+    ["arrival_ts", "timestamp", ""],
+    ["berth_ts", "timestamp", ""],
+    ["departure_ts", "timestamp", ""],
+    ["status", "text", ""],
+    ["remarks", "text", ""],
+    ["berth_wait_hours", "numeric(10,2)", ""]
+  ]},
+  vessels: { x: 1555, accent: "#6cb6ff", columns: [
+    ["vessel_id", "integer", "PK"],
+    ["vessel_name", "text", ""],
+    ["imo_number", "char(7)", ""],
+    ["vessel_type", "text", ""],
+    ["capacity_teu", "integer", ""],
+    ["operator", "text", ""],
+    ["flag_country", "text", ""],
+    ["year_built", "smallint", ""]
+  ]}
+};
+
+const SVG_NS   = "http://www.w3.org/2000/svg";
+const PANEL_W  = 330;
+/* Below the under-row join route at y=636, so a panel never paints over a join path
+   that the same hover has just lit. The tallest panel (port_calls, 9 columns) ends at
+   940, clear of the footer. */
+const PANEL_Y  = 656;
+const ROW_STEP = 26;
+/* A cursor crossing the board on its way to the tab bar should not open a panel.
+   Only a deliberate rest on a table does. */
+const DWELL_MS = 180;
+
+const board = document.getElementById("board");
+const panel = document.getElementById("panel");
+let timer = null;
+
+function el(name, attrs, text) {
+  const node = document.createElementNS(SVG_NS, name);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function show(name) {
+  const t = TABLES[name];
+  if (!t) return;
+
+  for (const g of board.querySelectorAll(".dimmable")) {
+    const isBox  = g.dataset.box === name;
+    const isJoin = (g.dataset.join || "").split(" ").includes(name);
+    g.classList.toggle("lit", isBox || isJoin);
+  }
+  board.classList.add("focus");
+
+  const n = t.columns.length;
+  const x = Math.min(t.x, 1920 - 60 - PANEL_W);
+  const h = 76 + (n - 1) * ROW_STEP;
+
+  panel.replaceChildren();
+  panel.appendChild(el("rect", {
+    class: "pan-bg", x, y: PANEL_Y, width: PANEL_W, height: h, rx: 14,
+    stroke: t.accent, "stroke-opacity": 0.45
+  }));
+  panel.appendChild(el("text", { class: "pan-t", x: x + 16, y: PANEL_Y + 32, fill: t.accent }, name));
+  panel.appendChild(el("text", { class: "pan-h", x: x + PANEL_W - 16, y: PANEL_Y + 32, "text-anchor": "end" },
+    n + (n === 1 ? " COLUMN" : " COLUMNS")));
+
+  t.columns.forEach(([col, type, key], i) => {
+    const y = PANEL_Y + 62 + i * ROW_STEP;
+    panel.appendChild(el("text", { class: "pan-c", x: x + 16, y }, col));
+    if (key) {
+      panel.appendChild(el("text", {
+        class: "pan-k", x: x + 176, y, fill: key === "PK" ? t.accent : "#8fa1b3"
+      }, key));
+    }
+    panel.appendChild(el("text", { class: "pan-ty", x: x + PANEL_W - 18, y, "text-anchor": "end" }, type));
+  });
+}
+
+function hide() {
+  clearTimeout(timer);
+  board.classList.remove("focus");
+  for (const g of board.querySelectorAll(".lit")) g.classList.remove("lit");
+  panel.replaceChildren();
+}
+
+for (const hit of board.querySelectorAll(".hit")) {
+  hit.addEventListener("pointerenter", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => show(hit.dataset.hit), DWELL_MS);
+  });
+  hit.addEventListener("pointerleave", hide);
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
+</script>
+</body>
+</html>

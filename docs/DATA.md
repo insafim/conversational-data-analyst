@@ -86,7 +86,9 @@ speed as anywhere else.
 
 ### The vocabulary
 
-Every domain term this document uses, and the column it corresponds to. None of it is needed
+Every domain term this document uses that a reader outside shipping would have to look up, and
+the column it corresponds to. Terms whose meaning is plain from the words themselves, such as
+the `Container Ship` and `Tanker` vessel types, are not listed. None of it is needed
 to run the demo. It is here so that a reader who has never touched port data can read
 [§5](#5-verified-data-profile) and [§7](#7-the-planted-signal) as findings rather than as
 numbers.
@@ -100,6 +102,7 @@ numbers.
 | **Time at berth**, dwell            | Berth to departure. Cargo work, so it reads as efficiency                                               | derived from `departure_ts - berth_ts`              |
 | **Quay crane**, ship-to-shore crane | The rail-mounted crane on the quay that lifts containers between ship and shore                         | one row of `cranes`, one per physical crane         |
 | **Move**                            | One crane lifting one container                                                                         | counted in batches by `cargo_moves.container_count` |
+| **Batch**                           | One crane working one ship for one stretch, in one direction. The unit this data records instead of individual lifts    | one row of `cargo_moves`; its size is `container_count`, its length is `duration_minutes` |
 | **Load** / **discharge**      | Putting a container onto the ship / taking one off it                                                   | `cargo_moves.move_type`                            |
 | **Throughput**                      | Containers handled over some period                                                                     | `SUM(cargo_moves.container_count)`                 |
 | **Crane productivity**              | Containers handled per crane per hour                                                                   | `container_count / (duration_minutes / 60.0)`      |
@@ -112,7 +115,7 @@ numbers.
 
 ### Why this domain and not another
 
-The brief asked for a database with "a minimum of 4 tables that require joins to answer
+The requirements asked for a database with "a minimum of 4 tables that require joins to answer
 questions", with input data of our choice and synthetic where appropriate. That phrasing
 makes the dataset sound incidental. It is not. The dataset decides three things that
 nothing downstream can fix:
@@ -163,8 +166,8 @@ cannot be made to contain a finding on demand.
 | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Generic e-commerce** (customers / orders / products / order_items) | The canonical SQL teaching schema, and its query patterns are correspondingly familiar. A model can then score well because the structure closely resembles common examples rather than because it reasoned over an unfamiliar one, which makes the eval less diagnostic of the capability being measured. |
 | **A public real-world dataset**                                      | Adds download, size and licensing friction to a repo whose README promises a two-command start. More importantly, signal cannot be planted in it, so the demo becomes hostage to whatever the data happens to contain.                                                                                     |
-| **8 to 10 tables for a "richer" schema**                               | Overbuilding. Five already force four-table joins. More tables mean a longer schema prompt and more SQL error surface, testing nothing extra that the brief asks about.                                                                                                                                    |
-| **The minimum 4 tables**                                             | Meets the letter of the brief with zero margin. The fifth table costs nothing and buys an extra join path.                                                                                                                                                                                                 |
+| **8 to 10 tables for a "richer" schema**                               | Overbuilding. Five already force four-table joins. More tables mean a longer schema prompt and more SQL error surface, testing nothing extra that the requirements ask about.                                                                                                                                    |
+| **The minimum 4 tables**                                             | Meets the letter of the requirements with zero margin. The fifth table costs nothing and buys an extra join path.                                                                                                                                                                                                 |
 
 Full decision record with consequences: [ADR-001](ADR/ADR-001-domain-and-data-model.md).
 
@@ -1005,10 +1008,8 @@ answerable items exercise window functions (`q26` to `q28`, `q60` to `q62`), amo
 `RANK()` partitioned by quarter, a running total with an explicit `ROWS` frame, and a `LAG`
 for period-over-period change. It is
 worth reading as a question menu in its own right; each entry carries a note explaining what
-it is designed to test. The reference SQL is a human artefact and inherits human error, so
-which cases have been independently audited, and by what method, is recorded in
-[eval/gold_audit.yaml](../eval/gold_audit.yaml) rather than assumed. Method and measured
-results: [ADR-006](ADR/ADR-006-eval-execution-accuracy.md) and the README.
+it is designed to test. The reference SQL is a human artefact and inherits human error. Method
+and measured results: [ADR-006](ADR/ADR-006-eval-execution-accuracy.md) and the README.
 
 ---
 
@@ -1018,7 +1019,7 @@ Stated plainly, so the limits are documented rather than discovered mid-demo.
 
 **No real-world dirt.** No nulls where they are not designed, no duplicate entities, no
 inconsistent encodings, no "SINGAPORE" vs "Singapore". Synthetic data cannot demonstrate
-data cleaning. Accepted: the brief explicitly permits synthetic data and cleaning is not on
+data cleaning. Accepted: the requirements explicitly permit synthetic data and cleaning is not on
 the scored list.
 
 **No cargo-carried column.** `capacity_teu` is the ship's maximum, not what it carried on a
@@ -1036,6 +1037,16 @@ it as an insight.
 against it (2 retired cranes account for 497 batches and 26,346 containers). This is
 defensible — the crane worked, and was retired later — but there is no
 retirement date, so "how much did we lose when that crane retired?" cannot be answered.
+
+**A batch samples crane work, it does not fully account for it.** The generator gives each
+completed call 3 to 6 batches with independently drawn start offsets, so they neither tile the
+berth window nor exclude each other (827 pairs of rows put one crane on two batches at the same
+instant, and batches cover 8.5 of the average 23.7 berth hours). No scored answer is affected:
+of the 22 gold questions that touch `cargo_moves`, 21 aggregate, the exception `q56` is an
+existence check, and the only one that sums `duration_minutes` (`q06`) uses it as the
+denominator of a rate per recorded crane-hour rather than as elapsed time. A batch is therefore
+the grain this dataset chose rather than a real operational event, and a question that treats it
+as one, such as "was the ship worked continuously?", measures the sample rather than the work.
 
 **No costs, no revenue, no customers, no staff.** The domain covers operations only. Any
 commercial question is out of scope by design.

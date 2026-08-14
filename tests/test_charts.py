@@ -78,6 +78,10 @@ def test_category_with_measure_produces_a_bar_chart() -> None:
     ))
     assert spec.kind == ChartKind.BAR
     assert spec.x == "operator"
+    # The measure matters as much as the label. Asserting only `kind` and `x` left
+    # `y=roles.numeric` free to be emptied or swapped for the label column, which draws a
+    # bar chart of nothing while the whole suite stays green.
+    assert spec.y == ["vessel_count"]
 
 
 def test_too_many_categories_falls_back_to_a_table() -> None:
@@ -101,6 +105,10 @@ def test_two_measures_produce_a_scatter() -> None:
         [[14000, Decimal("4.2")], [18000, Decimal("6.1")]],
     ))
     assert spec.kind == ChartKind.SCATTER
+    # Both axes, for the reason given on the bar test. A scatter carries no label column,
+    # so reversing x and y is silent: the chart still draws, against the wrong axes.
+    assert spec.x == "capacity_teu"
+    assert spec.y == ["avg_wait"]
 
 
 def test_wide_result_falls_back_to_a_table() -> None:
@@ -171,8 +179,10 @@ def test_genuine_two_dimensional_breakdown_stays_a_table() -> None:
 # Single-row results. A superlative question ("which terminal waits longest?") returns
 # one row holding a label and a measure. That shape used to reach the bar rule and draw
 # a single bar stretched across the full width of the container — the answer rendered as
-# a wall. It affected four of the gold questions including the first example button in
-# the UI, so it was the most likely chart to appear on camera.
+# a wall. It reaches the first example button in the sidebar, so it was the most likely
+# chart to appear on camera. No count is stated here on purpose: the gold set grows, and
+# a number repeated in a comment is a third place for it to go stale. CHARTS.md section 8
+# carries the current figure, and section 11 the command that reproduces it.
 # ---------------------------------------------------------------------------------
 
 

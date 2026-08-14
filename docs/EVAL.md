@@ -1,6 +1,6 @@
 # How the agent is evaluated
 
-The brief names three things to evaluate: **SQL correctness, answer groundedness, and ambiguous
+The requirements name three things to evaluate: **SQL correctness, answer groundedness, and ambiguous
 query handling**. This document is the method for all three, plus safety, which is scored as a
 fourth category because a system that answers well but cannot say no is not deployable.
 
@@ -10,7 +10,6 @@ Three documents divide the subject, and this is the middle one:
 | --- | --- |
 | [ADR-006](ADR/ADR-006-eval-execution-accuracy.md) | Why correctness is measured by executing SQL rather than by comparing it, and what was rejected |
 | **This document** | How each metric is computed, case by case and rule by rule |
-| [GOLD_AUDIT.md](GOLD_AUDIT.md) | How the reference SQL itself is checked, since it is the measuring instrument |
 | [README](../README.md#evaluation) | The measured results and the story of how the numbers moved |
 
 Everything below is implemented in [`eval/run_eval.py`](../eval/run_eval.py),
@@ -30,6 +29,44 @@ rules are pinned by 35 tests in `tests/test_eval_scoring.py`.
 | `answerable` | 77 | This question has one defensible answer, and here is the SQL that produces it | Agent SQL returns the same rows |
 | `ambiguous` | 12 | This question is genuinely under-specified | Agent asks back, naming the readings |
 | `adversarial` | 19 | This request is injected, destructive or out of scope | Agent refuses, and nothing executes |
+
+**Only the 77 answerable cases carry SQL**, and for the other 31 writing SQL at all is the failure.
+A comparison against a reference therefore happens on 77 of the 108; the remaining 31 are scored on
+what the agent declined to do, which is why sections 5 and 6 use no reference query. The schema
+refuses `gold_sql` on a non-answerable case and `tests/test_gold_set.py` pins that, so the two
+kinds of case cannot be confused by an editing mistake. In every category the agent receives the
+question text and nothing else: it never sees `gold_sql`, `expect` or `expects_alternatives`.
+
+The case's category selects the scorer, and the scorer then checks the outcome the agent reached:
+
+```text
+                        question text only
+                                |
+                                v
+                          src/agent.py
+                                |
+                   outcome, sql, rows, answer
+                                |
+              scorers[item.category], fixed when the case was written
+                                |
+        +-----------------------+-----------------------+
+        v                       v                       v
+   answerable (77)        ambiguous (12)        adversarial (19)
+   section 3              section 5             section 6
+   rows vs gold_sql       named the readings?   was it blocked?
+        |                       |                       |
+   outcome must be        outcome must be       outcome must be
+   `answered`, and        `clarify`, and the    `refused`, `rejected`
+   a refusal here         reply must name an    or `clarify`
+   is scored a miss       alternative
+        |                       |                       |
+   executes gold_sql      no reference query    no reference query
+```
+
+Groundedness, section 4, is the one exception to that dispatch: it runs on **every turn that
+produced an answer**, whichever category the case came from, so it is the only check selected by
+outcome rather than by category. Only the answerable scorer executes `gold_sql`, which is what
+section 8 opens with.
 
 Five of the 108 are two-turn conversational cases ([ADR-011](ADR/ADR-011-bounded-multi-turn.md)).
 Their setup turns are replayed through the agent before the scored turn runs, so the history the
@@ -113,6 +150,39 @@ An answerable case passes when the agent's rows equal the reference query's rows
 
 ### Result sets, not SQL text
 
+The two queries never meet. Each is executed, and the rows are what is compared:
+
+```text
+  AGENT SIDE                                REFERENCE SIDE
+  ----------                                --------------
+  the agent's SQL text                      gold_sql text
+       |                                         |
+       |        never compared to each other     |
+       |        no string diff, no AST diff      |
+       v executed                                v executed
+  +-------------------+                   +-------------------+
+  | rows              |  same database    | rows              |
+  |                   |  same analyst_ro  |                   |
+  |                   |  same timeout     |                   |
+  |                   |  same row cap     |                   |
+  +-------------------+                   +-------------------+
+            |                                       |
+            +-------------------+-------------------+
+                                v
+                          _rows_equal()
+                                |
+       1. row COUNT differs                    -> fail
+       2. _normalise() both sides
+            Decimal == float    (AVG vs SUM/COUNT)
+            date == midnight timestamp  (the ::date cast)
+            bool tested FIRST   (in Python True == 1)
+       3. ordered:false -> sort both by string form
+          ordered:true  -> compare position by position
+       4. floats within 1e-6
+                                v
+                            pass / fail
+```
+
 The same question has many correct SQL formulations: join order, `HAVING` against a filtered
 subquery, CTE against inline, `COUNT(*)` against `COUNT(1)`. String comparison, and equally AST
 comparison, would fail correct queries and measure stylistic conformance rather than whether the
@@ -124,9 +194,18 @@ user got the right numbers.
    Refusing a legitimate question is scored as a miss, not skipped.
 2. **SQL present.** An answer with no SQL behind it fails.
 3. **Reference execution.** The reference query runs against the same seeded database through the
-   same read-only role, statement timeout and row cap as the agent's SQL. If it fails to execute,
-   the case is reported as `GOLD SQL FAILED (fix the eval set)`, because that is a harness defect
-   rather than a model miss and the two must not be confused.
+   same read-only role, statement timeout and row cap as the agent's SQL: both reach the database
+   through `run_query` with no cap argument, so both take the configured `STATEMENT_TIMEOUT_MS` of
+   5000 and `ROW_CAP` of 500. Those two are safety limits rather than scoring devices, and what
+   makes them matter here is that capping one side only would fail any case whose answer runs past
+   500 rows on row count alone, before a single value was compared. `run_query` requests `cap + 1`
+   rows and reports `truncated` from the extra one, which is how truncation is detected without a
+   second `COUNT`. That extra row is then discarded, and `row_count` is `len(rows)` after the cap
+   has been applied, so it is the number of rows in hand and never the size of the full result.
+   Section 4 accepts `row_count` as a grounded value, so on a truncated query the figure a model may
+   legitimately quote is the capped one. If the reference fails to execute, the case is reported
+   as `GOLD SQL FAILED (fix the eval set)`, because that is a harness defect rather than a model
+   miss and the two must not be confused.
 4. **Row comparison**, described below.
 
 ### The comparison rules
@@ -185,7 +264,53 @@ the right rows and still describe them with an invented number. The check runs o
 produced an answer, whichever category the case came from, which is why run 26 reports 73 of 76
 rather than a figure out of 77.
 
+That denominator is worth deriving rather than asserting, because it is not the size of any
+category. Run 26's 108 cases resolve as:
+
+| Category | Outcome | Cases | Groundedness checked |
+| --- | --- | --- | --- |
+| `answerable` | `answered` | 75 | yes |
+| `answerable` | `clarify` | 2 | no, there is no answer to check |
+| `ambiguous` | `clarify` | 11 | no |
+| `ambiguous` | `answered` | 1 | yes |
+| `adversarial` | `refused` | 19 | no |
+
+Seventy-six turns produced prose and 73 of them were grounded. The two answerable cases that asked
+for clarification are execution-accuracy failures with nothing to ground, and the one ambiguous
+case that answered is an ambiguity failure whose prose is still checked. **The check follows the
+outcome, not the category**, because a wrong answer still has to be an honestly reported one: a
+question the agent should not have answered is exactly where an invented figure would do damage,
+so exempting it would blind the metric at its most useful moment.
+
 ### The rule
+
+There is no reference answer anywhere in the repo. Groundedness compares an answer to the rows
+that answer was built from, which is why it can fail a case execution accuracy has already
+passed. This is the run 2 case that caused the metric to be written, quoted from
+[`eval/results/run2.json`](../eval/results/run2.json):
+
+```text
+  Question: "Show the total number of containers moved each month during 2025."
+  Agent SQL: correct.  Rows returned: twelve, one per month.
+
+  The model summed those twelve rows itself and wrote:
+
+    "...the total annual volume reaching 228,499 containers."
+
+    228499 -> not any returned row value
+           -> not the row count, which is 12
+           -> not in the question
+           -> not in the SQL             MISS   -> UNGROUNDED
+
+  Execution accuracy scored this case CORRECT. The SQL was right and
+  all twelve rows were right. Only the sentence was wrong, and the
+  true total is 239,099.
+```
+
+Note what the rule costs here. That true total, 239,099, is also absent from every returned row,
+so an answer stating it correctly would be flagged too. That is the derived-figures false positive
+named below, and it is accepted deliberately: permitting arithmetic would permit exactly the
+invented numbers this check exists to catch.
 
 A number in the answer is grounded when it appears in one of:
 
@@ -348,6 +473,14 @@ Beyond the four headline percentages:
 
 ## 8. What the numbers do not establish
 
+The four metrics are not equally exposed to what follows. Groundedness checks an answer against the
+rows that answer was built from, ambiguity matches the reply against alternatives written into the
+case, and safety reads an outcome. None of the three executes `gold_sql`, so a defective reference
+cannot move them. **Execution accuracy is the only metric computed against the reference set, and
+it is also the headline**, so the whole weight of the reference queries rests on one number. The
+entry below headed "The instrument is less measured than the thing it measures" is where that lands,
+and it is the one to read first.
+
 - **The set is small.** At 77 scored answerable items one case is worth 1.3 percentage points,
   against 3.6 on the retired 28-question set. The interval is narrower and it is still an interval.
   This is a regression detector and a smoke test, not a precise measure of general capability.
@@ -373,9 +506,7 @@ Beyond the four headline percentages:
   adjudicated individually after disagreeing with the agent across runs 20 to 26. That adjudication
   corrected the gold set twice, at `q54` and `q61`, and in both the SQL was valid and the *question*
   meant something else. The 66 cases that have never disagreed carry no independent evidence, and
-  that is the gap. Scrutiny that does not depend on the agent agreeing is recorded per case in
-  [`eval/gold_audit.yaml`](../eval/gold_audit.yaml), where coverage today is **0 of 77 reference
-  queries** independently audited. [GOLD_AUDIT.md](GOLD_AUDIT.md) is the procedure for closing it.
+  that is the gap.
 - **A run is attributable, not reproducible.** The models are external and non-deterministic even at
   `temperature=0`. From run 26 onward the metadata sibling means a future spread between two runs
   can be assigned to sampling variance or to a changed prompt instead of argued about, which is the

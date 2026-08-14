@@ -6,13 +6,11 @@ the first test would fail every time anyone created any file anywhere before dec
 commit it, which is too noisy to survive. The cost of that scope is stated rather than
 hidden: **a prep file written outside `docs/` is not covered by anything here.**
 
-This exists because of a near miss. On 2026-08-13 two files were found sitting untracked
-AND unmatched by `.gitignore`: `docs/important_things_to_add.md`, which is rehearsed answers
-to interview questions plus session ids from the tooling that wrote it, and
-`docs/my_narration.md`, a spoken cut of the demo script. Each had a sibling of its own
-category already excluded, the Q&A scripts for the first and `docs/video.md` for the second,
-which is what made the omission easy to miss: the categories were handled, these two files
-were not. A single `git add -A` before submission would have shipped both to the reviewer.
+This exists because of a near miss. On 2026-08-13 two working documents were found sitting
+untracked AND unmatched by `.gitignore`, one of them carrying session ids from the tooling
+that wrote it. Each had a sibling of its own category already excluded, which is what made
+the omission easy to miss: the categories were handled, these two files were not. A single
+`git add -A` would have published both.
 
 **Why the obvious test is the wrong one.** Pinning the current list of ignored filenames
 against `git check-ignore` guards only against someone deleting a line that already exists.
@@ -23,8 +21,10 @@ one.
 
 So the invariant is the general one: **nothing under `docs/` may be both untracked and
 unignored.** Every file there is either a deliverable, in which case it belongs in git, or
-it is preparation, in which case it belongs in `.gitignore`. The state in between is the
-only dangerous one, and it is the state a forgotten file sits in.
+it is working material, in which case it belongs in `.gitignore`. The state in between is
+the only dangerous one, and it is the state a forgotten file sits in. `.gitignore` now
+resolves it by default: `docs/` is an allowlist, so a new name is excluded until someone
+decides otherwise.
 
 This is deliberately a test that can fail while you are working, in the window between
 creating a document and deciding what it is. That window IS the risk, so being told about
@@ -44,11 +44,22 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 
-# The only things under `docs/` that ship. Everything else there is preparation material.
-# `docs/ADR/` is the reasoning record and is the most load-bearing part of the deliverable,
-# which is why the ignore rules are written as exact paths rather than as a `docs/*` sweep
-# with exceptions: a sweep that went wrong would silently drop the ADRs.
-DELIVERABLE_DOCS = {"DATA.md", "ARCHITECTURE.md"}
+# The only things under `docs/` that ship. Everything else there is working material.
+# `.gitignore` is now an allowlist (`docs/*` then named exceptions), so this set is the
+# other half of that statement and the two are asserted against each other below. The
+# earlier arrangement was a denylist, which failed twice in the way denylists do: a file
+# arrived under a name no rule anticipated and sat untracked AND unignored.
+DELIVERABLE_DOCS = {
+    "docs/ARCHITECTURE.md",
+    "docs/DATA.md",
+    "docs/EVAL.md",
+    "docs/GUARDRAILS.md",
+    "docs/CHARTS.md",
+    "docs/visuals/data.html",
+    "docs/visuals/eval.html",
+    "docs/visuals/guardrails.html",
+    "docs/visuals/pipeline.html",
+}
 
 
 def _git(*arguments: str) -> subprocess.CompletedProcess:
@@ -99,7 +110,7 @@ def test_the_deliverable_docs_are_tracked_and_not_ignored(in_a_work_tree) -> Non
     """
     tracked = _git("ls-files", "docs/")
     assert tracked.returncode == 0, tracked.stderr
-    tracked_names = {Path(line).name for line in tracked.stdout.splitlines() if line.strip()}
+    tracked_names = {line.strip() for line in tracked.stdout.splitlines() if line.strip()}
 
     missing = DELIVERABLE_DOCS - tracked_names
     assert not missing, f"{missing} are deliverables but are not tracked"
@@ -111,61 +122,57 @@ def test_the_deliverable_docs_are_tracked_and_not_ignored(in_a_work_tree) -> Non
     )
 
 
-def test_the_preparation_material_is_actually_excluded(in_a_work_tree) -> None:
-    """Named files, because these are the ones whose exposure has a specific cost.
+def test_docs_defaults_to_excluded_for_a_name_no_rule_anticipated(in_a_work_tree) -> None:
+    """The property an allowlist has and a denylist cannot have.
 
-    The general invariant above already covers them while they exist on disk. This pins
-    them by name so that removing an ignore line fails immediately rather than at the
-    moment someone runs `git add -A`, and so the list reads as a statement of what must
-    never ship.
+    The failure this replaces was never a deleted ignore line. Twice it was a NEW working
+    document, in a category the list could not have anticipated, sitting untracked AND
+    unignored, which is the one state where `git add -A` publishes it. A denylist cannot
+    be tested against that, because the test would have to name the file nobody has
+    written yet.
 
-    **Two assertions, because `check-ignore` alone gives a false all-clear.**
-    `--no-index` makes the question purely about the patterns, so it answers "would git
-    exclude this" for a path that is not on this machine, which is what lets the list name
-    files a given checkout may not have. The cost is that it is blind to whether the path
-    is already tracked. Measured on 2026-08-13 in a scratch repository: for a file that
-    matches an ignore pattern AND is in the index, `check-ignore --no-index` exits 0,
-    reporting it ignored, while the index-aware form exits 1. So a prep file that had been
-    committed would satisfy the pattern check and ship anyway.
-
-    The second assertion closes that, the same way the unrelated-project test below does:
-    it asks the index directly. An ignore rule is a statement about what git will add,
-    never about what git has already added.
+    An allowlist can: the question becomes whether an arbitrary new name under `docs/` is
+    excluded by default, and that is answerable today. `--no-index` keeps the question
+    purely about the patterns, so these paths need not exist on this machine.
     """
-    must_not_ship = [
-        "docs/problem.md",
-        "docs/repo.md",
-        "docs/video.md",
-        "docs/deck.md",
-        "docs/presentation.md",
-        "docs/drill_brief.md",
-        "docs/sql_study_guide.md",
-        "docs/interview_qa.md",
-        "docs/prep_card.md",
-        "docs/important_things_to_add.md",
-        "docs/my_narration.md",
-        # Everything under `docs/visuals/`, not a representative of it. One directory rule
-        # covers all three, so naming a subset would leave the rest unpinned if that rule
-        # were ever narrowed to a per-file list. Listing two of the three was the first
-        # attempt and was caught for exactly the reason the sentence above gives.
-        "docs/visuals/pipeline.html",
-        "docs/visuals/data.html",
-        "docs/visuals/README.md",
+    invented = [
+        "docs/some-note-nobody-has-written-yet.md",
+        "docs/scratch/notes.md",
+        "docs/visuals/an-extra-frame.html",
+        "docs/ADR-draft.md",
     ]
-
     exposed = [
         path
-        for path in must_not_ship
+        for path in invented
         if _git("check-ignore", "--no-index", "--quiet", path).returncode != 0
     ]
-    assert not exposed, f"{exposed} are no longer excluded by .gitignore"
+    assert not exposed, (
+        f"{exposed} would not be excluded, so `docs/` is no longer default-deny. A new "
+        "working document under any of these names would ship on the next `git add -A`."
+    )
 
-    tracked = _git("ls-files", "--", *must_not_ship)
+
+def test_nothing_under_docs_is_tracked_outside_the_allowlist(in_a_work_tree) -> None:
+    """The other direction, and the one that catches an accident that already happened.
+
+    `check-ignore` answers what git WILL add. It says nothing about what git has already
+    added, and an ignore rule does not untrack a file: that needs `git rm --cached`. So a
+    document committed before the rule existed stays in the index, ships, and satisfies
+    every pattern assertion in this file. Asking the index directly is what closes it.
+    """
+    tracked = _git("ls-files", "docs/")
     assert tracked.returncode == 0, tracked.stderr
-    assert not tracked.stdout.strip(), (
-        f"these are in the index despite matching an ignore rule, so they ship: "
-        f"{tracked.stdout.split()}. Removing them needs `git rm --cached`, and if they "
-        "have been pushed, the ignore rule does nothing for the copies already out there."
+    paths = {line.strip() for line in tracked.stdout.splitlines() if line.strip()}
+
+    unexpected = {
+        path
+        for path in paths
+        if path not in DELIVERABLE_DOCS and not path.startswith("docs/ADR/")
+    }
+    assert not unexpected, (
+        f"{sorted(unexpected)} are tracked under docs/ but are not deliverables. Either add "
+        "them to DELIVERABLE_DOCS and to the allowlist in .gitignore, or remove them from "
+        "the index with `git rm --cached`, which an ignore rule alone will not do."
     )
 
 

@@ -1,7 +1,7 @@
 """Entrypoint. Sets the page config and hands off to the two pages (ADR-008).
 
 The UI is deliberately thin and stayed that way as it grew. It exists to serve what the
-brief actually assesses:
+requirements actually cover:
 
 * **auditability**: the SQL is one click away on every answer, because a client analyst
   must be able to check the agent's work rather than trust it;

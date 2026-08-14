@@ -135,7 +135,13 @@ class ChartSpec(BaseModel):
     kind: ChartKind
     x: str | None = None
     y: list[str] = Field(default_factory=list)
-    reason: str = Field(description="Which rule fired. Surfaced in the UI and asserted in tests.")
+    reason: str = Field(
+        description=(
+            "Which rule fired. Surfaced in the UI. Required rather than optional, so a spec "
+            "cannot omit it; what the tests assert about its content is narrower, and "
+            "docs/CHARTS.md section 10 states exactly how much."
+        )
+    )
 
 
 class AgentResult(BaseModel):

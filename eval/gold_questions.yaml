@@ -352,8 +352,11 @@
   question: For each distinct vessel capacity in TEU, what is the average berth wait in hours?
   ordered: true
   note: >-
-    Two numeric columns and no category or time axis: the only gold case that exercises
-    the SCATTER chart rule end to end. REWORDED after the original phrasing ('is there a
+    Two numeric columns and no category or time axis: the case added to exercise the
+    SCATTER chart rule end to end. It is not the only one that reaches it, which was the
+    earlier claim here: q73 also renders a scatter, because EXTRACT(dow) returns an
+    integer that classifies as a measure (docs/CHARTS.md §9).
+    REWORDED after the original phrasing ('is there a
     relationship between vessel capacity and berth wait?') failed for a reason that was
     the eval set's fault, not the agent's: the agent bucketed capacity into ranges and
     averaged per bucket, which is arguably better analysis than the reference SQL's
@@ -571,7 +574,7 @@
 
 # --- expansion of 2026-08-10 (ADR-010) ---------------------------------------------
 # 64 cases added to reach 100. Two orthogonal tags per case: `topics` maps to the
-# 75-topic SQL syllabus ids used in docs/sql_study_guide.md section 1; `behaviour`
+# ids of a 75-topic SQL syllabus; `behaviour`
 # names how the question is asked, vocabulary defined in eval/gold.py. Every gold_sql
 # below was executed against the seeded database on 2026-08-10 and its output recorded
 # before the case was added. LIMIT queries were checked for ties at the cut boundary.

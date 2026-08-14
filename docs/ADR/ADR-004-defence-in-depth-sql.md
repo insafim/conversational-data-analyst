@@ -7,7 +7,7 @@
 
 ## Context
 
-The system hands model-generated SQL to a production-shaped database. The brief names read-only
+The system hands model-generated SQL to a production-shaped database. The requirements name read-only
 enforcement, destructive queries, and injection as assessed criteria, so the question is not
 whether there is a guardrail but **where the guardrail sits relative to the model.**
 

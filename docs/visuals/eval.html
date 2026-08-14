@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent Evaluation</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0f14; }
+  svg { display: block; width: 100vw; height: 100vh; }
+  .h1   { font: 700 52px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .sub  { font: 400 26px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .nt   { font: 600 21px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .pt   { font: 600 20px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .ps   { font: 400 16px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .note { font: 400 16px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #7e8fa1; }
+  .big  { font: 700 30px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .num  { font: 700 56px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .axis { font: 600 14px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; letter-spacing: 1.4px; }
+  .fn   { font: 400 13.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* Resting state is the whole frame at full strength. A deliberate rest on one
+     panel dims everything else, so the detail that opens has the board to itself. */
+  #board .dimmable { transition: opacity 120ms ease; }
+  #board.focus .dimmable { opacity: 0.14; }
+  #board.focus .dimmable.lit { opacity: 1; }
+
+  .hit { fill: transparent; pointer-events: all; cursor: default; }
+
+  .pan-bg { fill: #121821; }
+  .pan-b  { font: 400 17px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #b9c6d4; }
+  .pan-f  { font: 400 13.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #7e8fa1; }
+</style>
+</head>
+<body>
+<svg viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="aDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#61748a"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1920" height="1080" fill="#0b0f14"/>
+
+<g id="board">
+  <!-- Header. Kept left of x=1400 so a top-right webcam bubble covers nothing. -->
+  <g class="dimmable">
+    <text class="h1" x="80" y="130">Agent Evaluation</text>
+  </g>
+
+  <!-- Three panels were removed from the bottom of this board. The remaining rows were
+       enlarged rather than left at their old coordinates, because keeping them stranded
+       the title against the top edge with a third of the frame empty under the tiles. -->
+
+  <!-- ======================= THE INPUT ======================= -->
+  <g class="dimmable" data-panel="gold">
+    <rect x="70" y="270" width="890" height="150" rx="14" fill="#6cb6ff" fill-opacity="0.08" stroke="#6cb6ff" stroke-opacity="0.45"/>
+    <text class="pt" x="100" y="314">the gold set</text>
+    <text class="big" x="100" y="378">108 questions</text>
+    <text class="nt" x="368" y="378">77 answerable &#183; 12 ambiguous &#183; 19 adversarial</text>
+  </g>
+
+  <g class="dimmable" data-panel="harness">
+    <rect x="972" y="270" width="878" height="150" rx="14" fill="#c4a3ff" fill-opacity="0.08" stroke="#c4a3ff" stroke-opacity="0.45"/>
+    <text class="pt" x="1002" y="314">one at a time, through the agent</text>
+    <text class="ps" x="1002" y="354">Every question ends in one outcome: answered, clarify, refused or rejected.</text>
+    <text class="ps" x="1002" y="382">The outcome decides which scorer judges it.</text>
+  </g>
+
+  <g class="dimmable">
+    <line x1="283"  y1="428" x2="283"  y2="458" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <line x1="734"  y1="428" x2="734"  y2="458" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <line x1="1185" y1="428" x2="1185" y2="458" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <line x1="1636" y1="428" x2="1636" y2="458" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+  </g>
+
+  <!-- ======================= THE FOUR NUMBERS ======================= -->
+  <g class="dimmable" data-panel="accuracy">
+    <rect x="70" y="470" width="427" height="380" rx="14" fill="#7ee2a8" fill-opacity="0.07" stroke="#7ee2a8" stroke-opacity="0.45"/>
+    <text class="axis" x="98" y="520" fill="#7ee2a8">SQL CORRECTNESS</text>
+    <text class="num" x="98" y="620" fill="#7ee2a8">93.5%</text>
+    <text class="nt" x="98" y="700">Execution accuracy</text>
+    <text class="ps" x="98" y="744">Result sets compared, never the</text>
+    <text class="ps" x="98" y="774">SQL text.</text>
+  </g>
+
+  <g class="dimmable" data-panel="grounding">
+    <rect x="521" y="470" width="427" height="380" rx="14" fill="#7ee2a8" fill-opacity="0.07" stroke="#7ee2a8" stroke-opacity="0.45"/>
+    <text class="axis" x="549" y="520" fill="#7ee2a8">ANSWER GROUNDEDNESS</text>
+    <text class="num" x="549" y="620" fill="#7ee2a8">96.1%</text>
+    <text class="nt" x="549" y="700">Every figure traced to the data</text>
+    <text class="ps" x="549" y="744">Each number in the answer must</text>
+    <text class="ps" x="549" y="774">appear in what the query returned.</text>
+  </g>
+
+  <g class="dimmable" data-panel="ambiguity">
+    <rect x="972" y="470" width="427" height="380" rx="14" fill="#7ee2a8" fill-opacity="0.07" stroke="#7ee2a8" stroke-opacity="0.45"/>
+    <text class="axis" x="1000" y="520" fill="#7ee2a8">AMBIGUOUS QUERIES</text>
+    <text class="num" x="1000" y="620" fill="#7ee2a8">11 of 12</text>
+    <text class="nt" x="1000" y="700">Asking back, and naming the choice</text>
+    <text class="ps" x="1000" y="744">It must name the readings of the</text>
+    <text class="ps" x="1000" y="774">question asked, not be a generic one.</text>
+  </g>
+
+  <g class="dimmable" data-panel="guardrails">
+    <rect x="1423" y="470" width="427" height="380" rx="14" fill="#ffb86c" fill-opacity="0.07" stroke="#ffb86c" stroke-opacity="0.45"/>
+    <text class="axis" x="1451" y="520" fill="#ffb86c">GUARDRAILS</text>
+    <text class="num" x="1451" y="620" fill="#ffb86c">19 of 19</text>
+    <text class="nt" x="1451" y="700">Refused before any SQL exists</text>
+    <text class="ps" x="1451" y="744">A separate axis, kept out of the</text>
+    <text class="ps" x="1451" y="774">accuracy figures.</text>
+  </g>
+
+  <!-- Empty in the resting frame, and empty in any screenshot of it. Filled only while
+       the pointer rests on a panel, so the beat this file was drawn for never shows it. -->
+  <g id="panel"></g>
+
+  <!-- Hover targets, last so they sit above everything and nothing else steals the pointer. -->
+  <rect class="hit" data-hit="gold"       x="70"   y="270" width="890" height="150"/>
+  <rect class="hit" data-hit="harness"    x="972"  y="270" width="878" height="150"/>
+  <rect class="hit" data-hit="accuracy"   x="70"   y="470" width="427" height="380"/>
+  <rect class="hit" data-hit="grounding"  x="521"  y="470" width="427" height="380"/>
+  <rect class="hit" data-hit="ambiguity"  x="972"  y="470" width="427" height="380"/>
+  <rect class="hit" data-hit="guardrails" x="1423" y="470" width="427" height="380"/>
+</g>
+</svg>
+
+<script>
+/* Every line below was on the resting frame before this file became interactive. The
+   board now carries the claim; the panel carries the reason for it.
+
+   All four figures on the board are run 26, from eval/results/run26.log, because the
+   Observability page shown earlier in the same beat reports its newest committed run
+   and the terminal shot after it is run26.log. A board quoting the runs 21/23/25 range
+   put ~95% on screen beside the app's own 93.5% for the same metric, which reads as a
+   slide flattering the product. The three-run spread is in the accuracy panel and is
+   spoken, not drawn. */
+const PANELS = {
+  gold: {
+    accent: "#6cb6ff",
+    body: [
+      "Each answerable case carries a reference query. 5 cases are two-turn, so the",
+      "setup turn is replayed through the agent first, and the history the follow-up",
+      "resolves against holds SQL the agent wrote.",
+      "",
+      "The file is parsed into typed models before the run starts, so a bad case fails",
+      "at load, not halfway through a run already partly paid for. A misspelled key",
+      "matters most: it silently weakens the check it belongs to."
+    ],
+    foot: "eval/gold_questions.yaml, schema in eval/gold.py"
+  },
+  harness: {
+    accent: "#c4a3ff",
+    body: [
+      "The harness calls the agent directly, so the suite runs in CI without a UI.",
+      "",
+      "Every question ends in one of four outcomes, and the outcome decides which",
+      "scorer judges it. Refusing a fair question counts as a miss rather than being",
+      "quietly skipped."
+    ],
+    foot: "eval/run_eval.py calls src/agent.py :: ask()"
+  },
+  accuracy: {
+    accent: "#7ee2a8",
+    body: [
+      "The reference query runs against the same database, through the same read-only",
+      "role. The two result sets are compared, never the SQL text, because one question",
+      "has many correct queries.",
+      "",
+      "Order counts only where the question implies a ranking.",
+      "",
+      "72 of 77 in run 26, the configuration that ships, which is the run the app and",
+      "the log on screen also report. Three runs of the earlier both-off baseline gave",
+      "93.5, 94.8 and 93.5: one case is worth 1.3 points, so that spread is sampling",
+      "rather than a change in the system, and the best of the three is never quoted."
+    ],
+    foot: "run 26 &#183; decision: ADR-006"
+  },
+  grounding: {
+    accent: "#7ee2a8",
+    body: [
+      "Each number in the answer must appear in the returned rows, the row count, the",
+      "question, or the SQL.",
+      "",
+      "Scored separately from accuracy, because an answer can carry the right rows and",
+      "still describe them with a number nobody returned. It caught a summed 228,499",
+      "against a true 239,099.",
+      "",
+      "73 of 76 in run 26. The denominator is turns that produced an answer, not the",
+      "77 answerable cases: two of those asked for clarification instead, and one",
+      "ambiguous case answered when it should have asked back."
+    ],
+    foot: "run 26"
+  },
+  ambiguity: {
+    accent: "#7ee2a8",
+    body: [
+      "Reaching the clarify outcome is not enough. The reply has to name one of the",
+      "readings the case lists, or a generic “could you be more specific” would score",
+      "as a pass and help nobody."
+    ],
+    foot: ""
+  },
+  guardrails: {
+    accent: "#ffb86c",
+    body: [
+      "Injection, DDL, DML, multi-statement and catalog probing.",
+      "",
+      "In 1,745 case results not one reached the validator, so this number measures the",
+      "classifier. Permissions are proven by test.",
+      "",
+      "Kept in its own colour because it is its own criterion, and a",
+      "board that blurred the two would answer one bullet twice."
+    ],
+    foot: ""
+  }
+};
+
+const SVG_NS   = "http://www.w3.org/2000/svg";
+const PANEL_W  = 740;
+const LINE_H   = 27;
+const PAD      = 28;
+/* A cursor crossing the board on its way to the tab bar should not open a panel.
+   Only a deliberate rest on one does. */
+const DWELL_MS = 180;
+
+const board = document.getElementById("board");
+const panel = document.getElementById("panel");
+let timer = null;
+
+function el(name, attrs, text) {
+  const node = document.createElementNS(SVG_NS, name);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function show(hit) {
+  const key = hit.dataset.hit;
+  const p = PANELS[key];
+  if (!p) return;
+
+  for (const g of board.querySelectorAll(".dimmable")) {
+    g.classList.toggle("lit", g.dataset.panel === key);
+  }
+  board.classList.add("focus");
+
+  const hx = +hit.getAttribute("x");
+  const hy = +hit.getAttribute("y");
+  const hh = +hit.getAttribute("height");
+  /* The panel carries no heading of its own. The one panel left undimmed is its
+     heading, and it is always the neighbour the panel opens against. */
+  const h  = 40 + (p.body.length - 1) * LINE_H + (p.foot ? 30 : 0) + 24;
+
+  /* 70 is the board's own left and right margin, so a clamped panel still lines
+     up with the column it belongs to. */
+  const x = Math.max(70, Math.min(hx, 1920 - 70 - PANEL_W));
+  /* The tile row now sits low enough that a panel opening below it would run off
+     the canvas, so anything starting past the midline opens upward instead. */
+  const below = hy + hh + 18;
+  const y = (below + h > 1080 - 40) ? hy - h - 18 : below;
+
+  panel.replaceChildren();
+  panel.appendChild(el("rect", {
+    class: "pan-bg", x, y, width: PANEL_W, height: h, rx: 14,
+    stroke: p.accent, "stroke-opacity": 0.55
+  }));
+
+  p.body.forEach((line, i) => {
+    if (!line) return;
+    panel.appendChild(el("text", { class: "pan-b", x: x + PAD, y: y + 40 + i * LINE_H }, line));
+  });
+
+  if (p.foot) {
+    panel.appendChild(el("text", {
+      class: "pan-f", x: x + PAD, y: y + h - 24, fill: p.accent, "fill-opacity": 0.85
+    }, p.foot));
+  }
+}
+
+function hide() {
+  clearTimeout(timer);
+  board.classList.remove("focus");
+  for (const g of board.querySelectorAll(".lit")) g.classList.remove("lit");
+  panel.replaceChildren();
+}
+
+for (const hit of board.querySelectorAll(".hit")) {
+  hit.addEventListener("pointerenter", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => show(hit), DWELL_MS);
+  });
+  hit.addEventListener("pointerleave", hide);
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
+</script>
+</body>
+</html>

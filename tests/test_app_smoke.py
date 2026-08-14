@@ -342,7 +342,7 @@ def test_the_observability_page_lists_the_committed_eval_runs(app, store) -> Non
 
 
 def test_the_observability_page_scores_the_newest_run_by_category(app, store) -> None:
-    """The three figures the brief's eval section asks for, on screen rather than in a
+    """The three figures the requirements' eval section asks for, on screen rather than in a
     file. Pinned to run 26, the configuration that ships, because the tiles read the
     newest committed run and a reviewer will read these aloud.
 

@@ -7,7 +7,7 @@
 
 ## Context
 
-The brief asks for a conversational interface and allows a few hours. Interface work expands to fill
+The requirements ask for a conversational interface and allow a few hours. Interface work expands to fill
 whatever time it is given, and none of that expansion is scored here. The interesting question is
 therefore not which UI framework, but **how little UI can be built while still demonstrating every
 assessed behaviour** — and, having drawn that line, whether the things left outside it were left out
@@ -77,7 +77,7 @@ latency, not latency; with a three-call pipeline the honest fix is fewer or fast
 feel shorter.
 
 **Deployment.** Runs locally via Docker Compose and `streamlit run`. Containerising and deploying
-demonstrates infrastructure competence that this brief does not assess.
+demonstrates infrastructure competence that this project does not set out to show.
 
 **Semantic layer.** No governed metric definitions. This is the most consequential omission and the
 one to raise before a reviewer does: without agreed definitions, "utilisation" resolves to whatever
@@ -90,8 +90,8 @@ deployments stall.
 ## Alternatives considered
 
 **React front end with a FastAPI backend.** The right architecture for a product and the wrong one
-for a take-home. It would consume a large share of the time budget to demonstrate a skill the brief
-does not assess, at the direct expense of the eval harness — which is the component that actually
+for a project this size. It would consume a large share of the time budget to demonstrate a skill this
+project does not set out to show, at the direct expense of the eval harness — which is the component that actually
 differentiates.
 
 **Command-line interface only.** Cheapest, and it would satisfy "conversational" on a technicality.
@@ -154,8 +154,8 @@ rename and delete. The store behind it, and the reasoning for putting it in its 
 database, are [ADR-014](ADR-014-conversation-store.md); this addendum records only what
 reached the interface and what it cost.
 
-**Why this is not a breach of the scope boundary this ADR exists to defend.** The brief
-asks for a chat, and a chat that forgets everything when the tab is closed demonstrates a
+**Why this is not a breach of the scope boundary this ADR exists to defend.** The requirements
+ask for a chat, and a chat that forgets everything when the tab is closed demonstrates a
 chat rather than being one. The same argument [ADR-011](ADR-011-bounded-multi-turn.md) made
 about multi-turn applies here, and the work is wiring a store that was already built and
 already justified, not a new capability. The boundary that still holds is the one in the

@@ -2,8 +2,8 @@
 
 `docs/visuals/data.html` gained a hover interaction: resting on a table reveals its
 columns, types and key roles. That copied 37 column names out of `db/01_schema.sql` and
-into a slide, which creates the one failure mode `docs/visuals/README.md` already names for
-the numbers on these frames: **the source changes and the frame does not.**
+into a frame, which creates the one failure mode that matters for any figure copied onto
+these boards: **the source changes and the frame does not.**
 
 A stale row count is embarrassing. A stale column list is worse, because the frame is shown
 to a reviewer as a description of the schema the model is handed at query time, and a column

@@ -10,7 +10,7 @@
 [ADR-008](ADR-008-ui-and-scope-boundary.md) deferred multi-turn memory and, in its
 consequences section, named its own exposure: single-turn is the omission a live demo is
 most likely to reveal, because a reviewer's natural second question is a follow-up. That
-deferral was scope control against a few-hours brief. Both premises have since changed: the remaining
+deferral was scope control against a few-hours budget. Both premises have since changed: the remaining
 deliverable is a demo video, which is the predicted exposure scenario, and the build
 window was deliberately extended (direction of 2026-08-10) with the instruction that
 logically explained design evolution is wanted, not scope freeze.
@@ -139,9 +139,9 @@ than a memory system:
    answer as "Interpreted as: ...", so a misreading is visible to the only person who can
    correct it.
 
-**On whether multi-turn was in scope at all.** `docs/problem.md` says "a simple chat
-interface is fine". It does not say single-turn and it does not say multi-turn: it leaves
-the interface open and asks for a chat. A chat that cannot take a follow-up is a question
+**On whether multi-turn was in scope at all.** The requirements say a simple chat
+interface is fine. They do not say single-turn and they do not say multi-turn: they leave
+the interface open and ask for a chat. A chat that cannot take a follow-up is a question
 box, so implementing the interface properly is not scope creep. What would have been scope
 creep is an unbounded memory feature, which is precisely what the window, the
 questions-and-SQL rule and the visible rewrite exist to prevent.

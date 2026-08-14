@@ -4,7 +4,7 @@ Ask questions about port and terminal operations in plain English. The agent tra
 question to SQL, checks it, runs it read-only against PostgreSQL, answers in natural language, and
 picks a chart when one helps.
 
-Built as a take-home exercise. Three things it tries to do properly rather than broadly:
+A portfolio project. Three things it tries to do properly rather than broadly:
 
 - **Safety is structural, not prompted.** The agent connects as a PostgreSQL role holding `SELECT`
   and nothing else. A fully jailbroken model still cannot write: [verified, not
@@ -23,9 +23,10 @@ Built as a take-home exercise. Three things it tries to do properly rather than 
 > and **what you can ask it**, with a value inventory and a question catalogue.
 > [docs/GUARDRAILS.md](docs/GUARDRAILS.md) is the security reference, organised by threat
 > rather than by layer, and section 14 gives the commands that reproduce every claim in it.
-> [docs/EVAL.md](docs/EVAL.md) is the evaluation method, and
-> [docs/GOLD_AUDIT.md](docs/GOLD_AUDIT.md) is the audit of the reference SQL that method
-> measures against. [docs/ADR/](docs/ADR/) holds the fourteen decision records behind them.
+> [docs/EVAL.md](docs/EVAL.md) is the evaluation method.
+> [docs/CHARTS.md](docs/CHARTS.md) is the charting reference: the six rules,
+> which questions produce which chart, and where the rules are wrong.
+> [docs/ADR/](docs/ADR/) holds the fourteen decision records behind them.
 
 ---
 
@@ -84,7 +85,7 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 738 unit tests, no database or network needed
+pytest -m "not integration"   # 776 unit tests, no database or network needed
 pytest                        # all 952; needs the seeded database, and 7 of them
                               # call the live model, so they also need a funded API key
 # The two configurations the published figures were measured on, named explicitly.
@@ -102,7 +103,7 @@ python eval/run_eval.py                                  # $1.26, 12.6 min (run 
 
 One caveat on reproduction, stated rather than buried: `uv.lock` was refreshed on 2026-08-11 and
 moves ten packages relative to the environment the runs in `eval/results/` were recorded on,
-including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 989 tests pass on the
+including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 990 tests pass on the
 pinned set, which is what establishes that the SQL validator behaves identically. The eval scores
 are model-driven and are quoted as ranges across repeated runs for that reason.
 
@@ -281,7 +282,8 @@ because running the system found what predicting it did not. A superlative quest
 widened to two columns, which rendering the gold set found. And `to_char(ts, 'YYYY-MM')` returns
 text, which classified the commonest time series as categorical until an anchored ISO-8601 check was
 added beside the declared type, which running that query against the real database found.
-([ADR-005](docs/ADR/ADR-005-deterministic-chart-selection.md))
+([ADR-005](docs/ADR/ADR-005-deterministic-chart-selection.md),
+[docs/CHARTS.md](docs/CHARTS.md))
 
 **Latency.** Run 26 measured a median of **6.91s** per turn across all 108 cases, 7.60s across the
 76 it answered, and 2.22s for a refusal or a clarification, which never reaches SQL. The split is
@@ -377,8 +379,7 @@ See [ADR-004](docs/ADR/ADR-004-defence-in-depth-sql.md), "The case where layer 1
 
 This section is the results and how they moved. The method behind them is
 [docs/EVAL.md](docs/EVAL.md): what each metric counts, the comparison rules, and what each one
-cannot see. The reference SQL those figures are computed against is itself audited, and
-[docs/GOLD_AUDIT.md](docs/GOLD_AUDIT.md) is that procedure.
+cannot see.
 
 <!-- EVAL_RESULTS_START -->
 **This block is history, measured on the retired 28-question set.** The current figures are the
@@ -515,7 +516,7 @@ The true total is **239,099**. The model had summed the twelve returned rows its
 wrong by 10,600 containers, fluently, without hedging. **Execution accuracy scored that answer
 100% correct**, because the rows *were* correct. Only the sentence describing them was false.
 
-That is the whole argument for scoring groundedness separately, and it is why the brief lists it as
+That is the whole argument for scoring groundedness separately, and it is why the requirements list it as
 its own criterion. The root cause was a gap in the summariser prompt: it forbade *inventing*
 numbers but never forbade *computing* them. It now prohibits arithmetic across rows outright:
 selections ("the highest is X") are allowed, new numbers are not, because a computed figure is
@@ -702,10 +703,9 @@ SQL is wrong, and the agent agreeing with it is weak evidence against that, beca
 not independent: both encode the same reading of the same question against the same schema. What
 the harness does establish is narrower. Every reference query executes against deterministically
 seeded data on every run and passes the same validator as the agent's SQL, and eleven of the 77
-answerable cases have been adjudicated individually after disagreeing with the agent. Scrutiny
-that does not depend on the agent agreeing is recorded separately in
-[eval/gold_audit.yaml](eval/gold_audit.yaml): **0 of 77 reference queries** independently audited
-so far. ([ADR-006](docs/ADR/ADR-006-eval-execution-accuracy.md))
+answerable cases have been adjudicated individually after disagreeing with the agent. The 66 that
+have never disagreed carry no evidence independent of the agent, and that is the limitation these
+figures should be read against. ([ADR-006](docs/ADR/ADR-006-eval-execution-accuracy.md))
 
 `run_eval.py` exits non-zero if any **safety** case fails, so in CI a safety regression breaks the
 build even when overall accuracy still looks fine.
@@ -721,7 +721,7 @@ One line of reasoning each, because "not built" and "not considered" are differe
 | **Authentication** | One implicit user. Identity is a precondition for row-level security, which is why it heads the production path rather than being a UI feature. |
 | **Caching** | Would cut cost and latency, but optimises a system whose correctness is not yet established. Correctness first. |
 | **Streaming** | Perceived latency, not latency. With four calls, three of them sequential, the honest fix is fewer or faster calls. |
-| **Deployment** | Runs locally. Containerising demonstrates a skill this brief does not assess. |
+| **Deployment** | Runs locally. Containerising demonstrates a skill this project does not set out to show. |
 | **Semantic layer** | The most consequential omission. See below. |
 | **Exported traces and alerting** | Cost and latency are stored per turn and aggregated on the Observability page, but nothing exports them and nothing pages anyone. |
 
@@ -819,14 +819,14 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output, evidence for the numbers above.
 │                             `runNN.json` is the records, `runNN.meta.json` what produced them
-└── tests/                  989 tests
+└── tests/                  990 tests
 ```
 
 ---
 
 ## Testing
 
-989 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+990 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
@@ -854,7 +854,7 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_store.py` | 17 | Conversation persistence: round trip, ordering, cascade delete, concurrent appends |
 | `test_store_isolation.py` | 6 | That the agent's role cannot connect to the conversation store (ADR-014) |
 | `test_store_titles.py` | 5 | Deriving a chat title from its first question |
-| `test_repo_hygiene.py` | 4 | That no document is both untracked and unignored, so preparation material cannot be shipped by accident |
+| `test_repo_hygiene.py` | 5 | That no document is both untracked and unignored, so preparation material cannot be shipped by accident |
 | `test_visuals.py` | 14 | That the presentation frame's schema claims match `db/01_schema.sql`: columns, declared types, key roles and join paths, so a slide cannot describe a column the database does not have |
 | `test_seed_characterization.py` | 7 | Data digests, planted patterns, the crane/terminal invariant |
 | `test_second_order_injection.py` | 5 | Injection arriving through query results, not the chat box. Two of the five call a live model and skip without an API key |
