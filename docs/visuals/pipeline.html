@@ -7,7 +7,6 @@
   html, body { margin: 0; height: 100%; background: #0b0f14; }
   svg { display: block; width: 100vw; height: 100vh; }
   .h1   { font: 700 52px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
-  .sub  { font: 400 26px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
   .nt   { font: 600 26px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
   .pt   { font: 600 21px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
   .ps   { font: 400 16px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
@@ -52,10 +51,10 @@
   <!-- Header. Kept left of x=1400 so a top-right webcam bubble covers nothing. -->
   <g class="dimmable">
     <text class="h1" x="80" y="112">The Agentic Pipeline</text>
-    <text class="sub" x="80" y="160">A fixed path, not an agent loop. The model decides content. The graph decides flow.</text>
   </g>
 
-  <!-- The two pills the narration names. Everything else that used to sit at this level
+  <!-- The three pills above the spine: the rewrite, the schema and the reading, which is what
+       docs/video.md tells the presenter to read. Everything else that used to sit at this level
        is now behind a hover, because eighteen seconds cannot spend attention on it. -->
   <!-- contextualize. A node in its own right (ARCHITECTURE.md §6), not a detail of classify:
        it is the fifth agent, it is a separate cheap-tier call, and it is what puts the
@@ -136,15 +135,24 @@
     <text class="note" x="1843" y="410" text-anchor="middle">answered</text>
   </g>
 
-  <!-- Two of the four terminal outcomes (ARCHITECTURE.md §6). Only these two are drawn,
-       because they are the pair §6 keeps distinct to show which layer did the work: refuse is
-       layer 3 at classification time, reject is layer 2 at the gate. `clarify` is demonstrated
-       live in the demo, and `ERROR` §6 files under failure containment rather than here. -->
+  <!-- All four terminal outcomes (ARCHITECTURE.md §6) are now on the board: `answered` is the
+       endpoint at the right, and these three hang below the node that reaches them. classify
+       has two exits of its own, ambiguous and out of scope, so it gets a drop rail with two
+       branches rather than a single arrow; a second box placed in the row beside refuse would
+       sit under generate SQL and read as an exit from it. refuse and reject stay distinct
+       because §6 keeps them distinct to show which layer did the work: refuse is layer 3 at
+       classification time, reject is layer 2 at the gate. `ERROR` is the one outcome not drawn,
+       and §6 files it under failure containment rather than among the four. -->
   <g class="dimmable" data-key="classify">
-    <line x1="238" y1="504" x2="238" y2="530" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
-    <rect x="140" y="534" width="240" height="62" rx="12" fill="#8fa1b3" fill-opacity="0.07" stroke="#8fa1b3" stroke-opacity="0.4"/>
-    <text class="pt" x="158" y="562">refuse</text>
-    <text class="ps" x="158" y="584">before it has spent anything</text>
+    <line x1="238" y1="504" x2="238" y2="649" stroke="#61748a" stroke-width="2"/>
+    <line x1="238" y1="565" x2="270" y2="565" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <rect x="278" y="534" width="290" height="62" rx="12" fill="#8fa1b3" fill-opacity="0.07" stroke="#8fa1b3" stroke-opacity="0.4"/>
+    <text class="pt" x="296" y="562">clarify</text>
+    <text class="ps" x="296" y="584">it asks back instead of guessing</text>
+    <line x1="238" y1="649" x2="270" y2="649" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <rect x="278" y="618" width="290" height="62" rx="12" fill="#8fa1b3" fill-opacity="0.07" stroke="#8fa1b3" stroke-opacity="0.4"/>
+    <text class="pt" x="296" y="646">refuse</text>
+    <text class="ps" x="296" y="668">one model call, not four</text>
   </g>
   <g class="dimmable" data-key="validate">
     <line x1="814" y1="504" x2="814" y2="530" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
@@ -193,8 +201,6 @@
     <text class="lg" x="452" y="1000">the data being asked about</text>
     <rect x="700" y="984" width="18" height="18" rx="4" fill="#ffb86c" fill-opacity="0.35" stroke="#ffb86c" stroke-opacity="0.7"/>
     <text class="lg" x="728" y="1000">the app's own state</text>
-    <text class="lg" x="1860" y="1000" text-anchor="end">Five agents. Four calls answer a question: Classifier, SQL Author, Explainer, Summariser.</text>
-    <text class="fn" x="80" y="1040" fill="#61748a">the SQL Author Agent is claude-sonnet-5. Every other agent is claude-haiku-4-5. A follow-up adds the Rewriter, a retry adds two. Hover any box for the detail.</text>
   </g>
 
   <!-- Empty in the resting frame, and empty in any screenshot of it. Filled only while the
@@ -219,7 +225,8 @@
 /* Every line below was on the resting frame before this file gained a hover, and moved
    behind one because the beat it was drawn for is eighteen seconds long. The claims come
    from src/config.py (row_cap 500, statement_timeout_ms 5000), src/charts.py, src/agent.py
-   (the retry trigger), src/validator.py (the whole-tree walk), ARCHITECTURE.md §8 (the layer
+   (the retry trigger, and the classifier defaulting to answerable on output it cannot parse,
+   which ARCHITECTURE.md §6 argues), src/validator.py (the whole-tree walk), §8 (the layer
    ranking, including layer 3 being written on the assumption that it will be defeated),
    ADR-011, ADR-013 and ADR-014. Changing one here without changing it at the source is a
    defect. */
@@ -236,8 +243,8 @@ const DETAIL = {
   ]},
   classify: { title: "classify", kick: "AGENT CALL · LAYER 3", accent: "#c4a3ff", lines: [
     "Answerable, ambiguous, or out of scope, decided before any SQL has been written.",
-    "Ambiguous asks back rather than guessing. Out of scope refuses, having spent almost nothing.",
-    "Those two are terminal: clarify and refuse, both reached before any SQL exists."
+    "JSON it cannot parse is routed to answerable rather than to a refusal, because the code",
+    "gate and the read-only account still stand between this node and the data."
   ]},
   rewrite: { title: "the rewrite", kick: "AGENT CALL · contextualize · ADR-011", accent: "#c4a3ff", lines: [
     "\"And Rotterdam?\" becomes a standalone question, and the screen shows what it resolved to",
@@ -248,7 +255,8 @@ const DETAIL = {
   generate: { title: "generate SQL", kick: "AGENT CALL", accent: "#c4a3ff", lines: [
     "Exactly one SELECT statement, written against the schema introspected at startup.",
     "This is the only step where a model chooses what the query actually says.",
-    "One retry lands back here, on a database error or a bad result shape. Then it stops."
+    "One retry lands back here, on a database error from execute. Then it stops.",
+    "The other two causes ADR-012 defines need runtime verification, which ships off."
   ]},
   validate: { title: "validate", kick: "ORDINARY CODE · LAYER 2", accent: "#6fd3a3", lines: [
     "The gate is code, not a model. It parses the statement and walks the whole tree,",
@@ -283,9 +291,10 @@ const DETAIL = {
 
 const SVG_NS   = "http://www.w3.org/2000/svg";
 /* The quadrant below the boundary and left of the analytics cylinder, which the resting
-   frame leaves empty on purpose. It moved here when the refuse and reject boxes took the
-   band under the spine. Width stops at 930 so the panel never touches the cylinder, whose
-   body starts at x=952. */
+   frame leaves empty on purpose. It moved here when the outcome boxes took the band under
+   the spine. Width stops at 930 so the panel never touches the cylinder, whose body starts
+   at x=952. The lowest of those boxes ends at y=680, so this band is still clear; a third
+   row of outcomes would not be. */
 const PANEL_X  = 80;
 const PANEL_W  = 850;
 /* A four-line panel ends at 942, which clears the legend baseline at 1000. Raising the line
