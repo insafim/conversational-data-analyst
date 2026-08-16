@@ -419,8 +419,11 @@ flowchart TD
 **The five nodes carrying an agent name are the model calls, in purple. The green boxes are
 ordinary code.** That division is what the diagram exists to show, and it uses the same two
 colour values as the presentation frame at `docs/visuals/pipeline.html`, so the two can be
-read against each other. That frame is a demo-video asset which this repository deliberately
-does not track, so the path resolves in a working copy rather than on GitHub. The rounded
+read against each other. That frame is tracked and ships with the repository: `.gitignore` lifts
+the blanket exclusion on `docs/visuals/`, excludes everything inside it, then re-includes the
+four frames by name, so the path resolves on GitHub as well as in a working copy. It said the
+opposite here until 2026-08-16, a sentence left standing when the repository was published and
+the allowlist changed under it. The rounded
 pills are the graph's entry and exit states rather than work, which is why `validate`,
 `execute` and `pick_chart` carry no agent name and why no colour is spent on `answered`.
 
