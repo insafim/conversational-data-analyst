@@ -101,7 +101,12 @@ def render_chart(result, chart) -> None:
     frame = to_dataframe(result)
 
     if chart.kind == ChartKind.LINE:
-        st.line_chart(frame, x=chart.x, y=chart.y)
+        # `color` is the column whose values become one line each, chosen in charts.py.
+        # It is None for every single-series result, and None is the parameter's own
+        # default, so this stays one call rather than a branch.
+        # Source: `inspect.signature(st.line_chart)` on streamlit 1.61.1 gives
+        # `color: 'str | Color | list[Color] | None' = None` - Verified: 2026-08-16.
+        st.line_chart(frame, x=chart.x, y=chart.y, color=chart.series)
     elif chart.kind == ChartKind.BAR:
         st.bar_chart(frame, x=chart.x, y=chart.y)
     elif chart.kind == ChartKind.SCATTER:

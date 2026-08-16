@@ -85,8 +85,8 @@ with `command not found`.
 Then, to reproduce the numbers below:
 
 ```bash
-pytest -m "not integration"   # 776 unit tests, no database or network needed
-pytest                        # all 952; needs the seeded database, and 7 of them
+pytest -m "not integration"   # 789 unit tests, no database or network needed
+pytest                        # all 1,005; needs the seeded database, and 7 of them
                               # call the live model, so they also need a funded API key
 # The two configurations the published figures were measured on, named explicitly.
 # --no-reading is needed for the BASELINE only: ADR-013's reading defaults on and also
@@ -103,7 +103,7 @@ python eval/run_eval.py                                  # $1.26, 12.6 min (run 
 
 One caveat on reproduction, stated rather than buried: `uv.lock` was refreshed on 2026-08-11 and
 moves ten packages relative to the environment the runs in `eval/results/` were recorded on,
-including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 990 tests pass on the
+including `sqlglot` 30.14.0 to 30.16.0 and `litellm` 1.95.0 to 1.96.0. All 1,005 tests pass on the
 pinned set, which is what establishes that the SQL validator behaves identically. The eval scores
 are model-driven and are quoted as ranges across repeated runs for that reason.
 
@@ -269,19 +269,24 @@ table metadata earns its place at hundreds of tables, not five.
 **Chart selection.** In code, from the *shape* of the result set rather than from the wording of
 the question, so the same rows always draw the same chart and every rule is testable at its
 boundary. Six rules, first match wins: no rows draws nothing; one row carrying one measure is a
-metric card; a time axis with a measure is a line; a label column with a measure is bars, up to
-twelve distinct categories, beyond which a bar chart is an unreadable table with extra steps; two
-measures and nothing to group by is a scatter; anything else is a table. Executing the 77 answerable
-`gold_sql` queries and passing each result to `pick_chart` gives **32 metrics, 22 bars, 10 tables,
-9 lines, 2 scatters and 2 empty results**, so every rule is exercised by the gold set and not only
-by its unit tests. That count is a measurement rather than a stored artefact: it is reproduced by
+metric card; a time axis with a measure is a line, one per category where the rows are a breakdown
+and up to ten of them, that being the length of the colour palette; a label column with a measure
+is bars, up to twelve distinct categories, beyond which a bar chart is an unreadable table with
+extra steps; two measures and nothing to group by is a scatter; anything else is a table.
+Executing the 77 answerable `gold_sql` queries and passing each result to `pick_chart` gives
+**32 metrics, 22 bars, 11 tables, 8 lines, 2 scatters and 2 empty results**, so every rule is
+exercised by the gold set and not only by its unit tests. That count is a measurement rather than a
+stored artefact: it is reproduced by
 running `src.executor.run_query` over the queries in `eval/gold_questions.yaml` and tallying
-`src.charts.pick_chart`, which needs the seeded database and no model. Two of those rules exist
+`src.charts.pick_chart`, which needs the seeded database and no model. Three of those rules exist
 because running the system found what predicting it did not. A superlative question returns a label
 *and* a measure, so it drew a single bar stretched across the container until the metric rule was
-widened to two columns, which rendering the gold set found. And `to_char(ts, 'YYYY-MM')` returns
+widened to two columns, which rendering the gold set found. `to_char(ts, 'YYYY-MM')` returns
 text, which classified the commonest time series as categorical until an anchored ISO-8601 check was
-added beside the declared type, which running that query against the real database found.
+added beside the declared type, which running that query against the real database found. And a
+breakdown over time, `month, operator, total_containers`, drew every row as one line that jumped
+between the operators inside each month, until the category was given the colour channel, which a
+user asking a follow-up in the running app found: no gold question has that shape.
 ([ADR-005](docs/ADR/ADR-005-deterministic-chart-selection.md),
 [docs/CHARTS.md](docs/CHARTS.md))
 
@@ -819,14 +824,14 @@ Every non-obvious choice is recorded with its alternatives and its trade-offs.
 │   ├── run_eval.py           The harness
 │   └── results/              Committed raw output, evidence for the numbers above.
 │                             `runNN.json` is the records, `runNN.meta.json` what produced them
-└── tests/                  990 tests
+└── tests/                  1,005 tests
 ```
 
 ---
 
 ## Testing
 
-990 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
+1,005 tests. They exist to catch regressions, not to raise a coverage number, so the suite is
 weighted heavily toward the parts where a silent failure would be expensive.
 
 | File | Tests | What it protects |
@@ -835,7 +840,7 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_gold_audit.py` | 78 | The audit of the gold set itself: that a documented coverage figure cannot outrun the ledger behind it |
 | `test_validator.py` | 93 | The security gate: the write-blocking rules, their evasions, and fail-closed parsing |
 | `test_eval_scoring.py` | 35 | The comparison logic, i.e. the definition of "correct" |
-| `test_charts.py` | 30 | Every chart rule, at its boundaries |
+| `test_charts.py` | 43 | Every chart rule, at its boundaries, including the four a line chart refuses |
 | `test_provenance.py` | 37 | That a run records what produced it, and that no DSN password reaches the committed artefact |
 | `test_quality_triggers.py` | 28 | The code-detected result-shape triggers (ADR-012), weighted toward the cases that must NOT fire |
 | `test_agent_routing.py` | 25 | Graph topology with a stubbed LLM: unskippable validation, bounded retry |
@@ -850,8 +855,8 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_notices.py` | 23 | Which captions and warnings sit beside an answer, the order they arrive in, and what one turn cost |
 | `test_telemetry.py` | 30 | What the Observability page aggregates: the SQL over stored turns, the committed eval runs, their per-category scores, and how a cost is written |
 | `test_conversations.py` | 31 | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one |
-| `test_app_smoke.py` | 16 | Both pages rendered headlessly: that a saved chat reopens with its table and chart, that a missing store degrades to a caption, and that the panel's figures and category tiles match the artefacts |
-| `test_store.py` | 17 | Conversation persistence: round trip, ordering, cascade delete, concurrent appends |
+| `test_app_smoke.py` | 17 | Both pages rendered headlessly: that a saved chat reopens with its table and chart, that a missing store degrades to a caption, and that the panel's figures and category tiles match the artefacts |
+| `test_store.py` | 18 | Conversation persistence: round trip, ordering, cascade delete, concurrent appends |
 | `test_store_isolation.py` | 6 | That the agent's role cannot connect to the conversation store (ADR-014) |
 | `test_store_titles.py` | 5 | Deriving a chat title from its first question |
 | `test_repo_hygiene.py` | 5 | That no document is both untracked and unignored, so preparation material cannot be shipped by accident |

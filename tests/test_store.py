@@ -93,6 +93,58 @@ def test_the_telemetry_fields_survive_because_the_panel_reads_the_same_row(store
     assert restored.llm_calls == 4 and restored.cost_usd == 0.0142
 
 
+def test_a_turn_saved_before_the_series_field_existed_still_rehydrates(store) -> None:
+    """Every chart in the store predates `ChartSpec.series`, added 2026-08-16.
+
+    Turns are stored as whole JSON documents, so a new field is a schema change to rows
+    already written. It is safe in both directions here and this test is what makes that
+    claim checkable rather than asserted: the field defaults to None, so an old document
+    loads and renders exactly as before, and `ChartSpec` sets no `extra="forbid"`, so a
+    rollback to code without the field ignores the extra key rather than raising.
+    """
+    legacy = ChartSpec(
+        kind=ChartKind.LINE, x="month", y=["total_containers"], reason="a time axis"
+    ).model_dump()
+    del legacy["series"]
+    assert ChartSpec.model_validate(legacy).series is None, (
+        "a chart saved before the field existed must rehydrate as a single-series line"
+    )
+
+    # The rollback direction. Code without the field must not choke on a document that has
+    # it, which holds because `ChartSpec` does not set `extra="forbid"`.
+    assert ChartSpec.model_validate(
+        {**legacy, "a_field_this_model_does_not_have": "operator"}
+    ).kind is ChartKind.LINE
+
+    # And the field itself survives the jsonb round trip, which is what the chart needs.
+    conversation = store.create_conversation("Monthly volume by operator")
+    store.append_turn(
+        conversation,
+        "Show its monthly container volume for 2025",
+        _answer(chart=ChartSpec(
+            kind=ChartKind.LINE, x="month", y=["total_containers"], series="operator",
+            reason="one line per operator",
+        )),
+    )
+    restored = store.load_conversation(conversation)[0].result
+    assert restored.chart is not None and restored.chart.series == "operator"
+
+    # Finally the backward direction through the real database rather than through the
+    # model alone: strip the key from the stored document, exactly as every row written
+    # before 2026-08-16 looks, and load it back through the store's own path. Asserting on
+    # `model_validate` in isolation would leave the store's row shaping untested, which is
+    # where a rehydration actually breaks.
+    store._run(lambda c: c.execute(
+        "UPDATE turn SET result = jsonb_set(result, '{chart}', (result->'chart') - 'series')"
+        " WHERE conversation_id = %s",
+        (conversation,),
+    ))
+    legacy_turn = store.load_conversation(conversation)[0].result
+    assert legacy_turn.chart is not None
+    assert legacy_turn.chart.series is None, "a pre-existing row must still load"
+    assert legacy_turn.chart.kind is ChartKind.LINE
+
+
 def test_a_refusal_round_trips_even_though_it_has_no_sql_or_rows(store) -> None:
     """Not every turn is an answer. A store that assumed one would fail on the first
     injection attempt a reviewer types."""

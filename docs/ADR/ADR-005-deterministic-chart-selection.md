@@ -25,7 +25,9 @@ The rules, applied in order, first match wins:
 | --- | --- | --- |
 | 1 | Zero rows | No chart — the answer states that nothing matched |
 | 2 | Exactly one row, exactly one numeric column, at most two columns | **Metric card** — a single number needs no axes; the second column, if present, labels it |
-| 3 | A temporal column present, plus ≥1 numeric column, **and more than one row** | **Line chart** — time on x, ordered chronologically |
+| 3 | A temporal column present, plus ≥1 numeric column, **and more than one row** | **Line chart** — time on x, ordered chronologically, one line per measure |
+| 3b | ...and a categorical column, where the temporal column **repeats**, with ≤ 10 distinct categories | **Line chart** — one line per category, carried as colour |
+| 3c | ...but with more than one measure, a hidden third dimension, more than 10 categories, or no category holding two rows | **Table** — no honest line can be drawn |
 | 4 | A leading categorical label with ≤ 12 distinct values, plus ≥1 numeric, **and more than one row** | **Bar chart** |
 | 4b | Several categorical columns where the first does **not** uniquely label each row | **Table** — a single-axis bar chart would silently collapse a dimension |
 | 5 | Exactly two numeric columns, nothing temporal or categorical, **and more than one row** | **Scatter chart** |
@@ -42,7 +44,7 @@ the container. Four gold questions produced it when the defect was found, includ
 example in the UI sidebar, so it was the chart most likely to be seen first. The gold set has
 grown since, and nine answerable cases produce the shape today. **Four is left standing in this
 paragraph deliberately**, because an ADR records what was true when the decision was taken. The
-current figure is in [CHARTS.md §8](../CHARTS.md#8-three-guards-and-how-each-was-found), and the
+current figure is in [CHARTS.md §8](../CHARTS.md#8-four-guards-and-how-each-was-found), and the
 command that reproduces it in
 [CHARTS.md §11](../CHARTS.md#11-verify-it-yourself). Rule 2 now admits the label-plus-measure shape and
 carries the label through as the metric's caption; Rules 3, 4 and 5 refuse single-row results
@@ -63,6 +65,18 @@ first one already identifies each row uniquely — that is, when it is a label a
 attributes of it. When the first column repeats, the rows are a genuine multi-dimensional
 breakdown and a single-axis bar chart would hide a dimension, so those fall to a table. Observed
 on the first live query, not anticipated.
+
+**Rows 3b and 3c are a fourth exception, added 2026-08-16, and they are the same idea as 4b
+applied one rule earlier.** Rule 3 had no multi-dimensional refusal at all. A follow-up question
+asked in the running app returned `month, operator, total_containers`, 33 rows of twelve months by
+three operators, and the rule kept the time axis and the measure and dropped the operator, so
+`st.line_chart` joined all 33 rows in row order and drew a sawtooth: inside each month the line
+jumped between the three operators' values. It was a known limitation with a written rationale,
+and the rationale was measured against the only two gold cases of the shape, neither of which is a
+breakdown. Where 4b refuses, 3b encodes: the category becomes colour and the chart draws one line
+per value. 3c is the refusal for the shapes where that cannot be done honestly. Found by a user
+using the app, which is a fourth discovery route alongside rendering the gold set, running one
+query against the real database, and auditing the rule table as a set.
 
 Column classification comes from the PostgreSQL type codes returned with the cursor description —
 that is, from the database's own declared types, not from guessing from column names.
@@ -135,4 +149,10 @@ rules that fit in a table.
   rules cannot know that "share of total" is what the numbers mean. A semantic layer would supply
   that; see [ADR-003](ADR-003-schema-introspection.md).
 - The 12-category threshold is a judgement call, not a derived constant. Documented as such rather
-  than presented as principled.
+  than presented as principled. The 10-series threshold in row 3b is the opposite case and the two
+  must not be reconciled: it is the length of Streamlit's default categorical palette, past which
+  colours repeat and two lines become the same colour, so it is a property of the encoding rather
+  than a preference.
+- **Part-of-whole is still invisible on the bar path.** Row 3b gives the line rule a colour
+  channel; row 4b still refuses rather than stacking, because a stacked bar asserts that the
+  numbers are shares of a total and nothing in the result set says so.

@@ -41,6 +41,20 @@ from .models import ChartKind, ChartSpec, QueryResult
 # not a derived constant (ADR-005).
 MAX_BAR_CATEGORIES = 12
 
+# Maximum lines worth drawing on one time axis. Unlike the bar limit above this one is
+# DERIVED, and the two must not be reconciled: 12 is a judgement about how many labels an
+# axis can carry, 10 is the length of Streamlit's default categorical palette, whose own
+# description states that colours "repeat cyclically if there are more categories than
+# colors". At eleven series two lines are drawn in the same colour and the legend stops
+# being a key, which is a failure of the encoding rather than a matter of taste.
+# Source: streamlit/config.py, `theme.chartCategoricalColors` - Verified: 2026-08-16 by
+# reading the installed 1.61.1 package, which lists ten light and ten dark defaults.
+#
+# It is the DEFAULT palette. A `.streamlit/config.toml` setting a longer one would move
+# the true limit, and this module deliberately does not read UI config: a rule that did
+# would stop being a function of the result shape alone (ADR-005).
+MAX_LINE_SERIES = 10
+
 _TEMPORAL_TYPES = frozenset({
     "date", "timestamp", "timestamptz", "time", "timetz",
 })
@@ -114,6 +128,115 @@ def classify_columns(result: QueryResult) -> ColumnRoles:
             categorical.append(name)
 
     return ColumnRoles(temporal=temporal, numeric=numeric, categorical=categorical)
+
+
+def _line_or_table(result: QueryResult, roles: ColumnRoles) -> ChartSpec:
+    """Rule 3: a time axis and a measure, split into one line per category where the rows
+    are a breakdown, or a table when no honest line can be drawn.
+
+    The defect this exists for was seen in the running app, not in the gold set. A
+    follow-up question returned `month, operator, total_containers`, 33 rows of twelve
+    months by three operators, and the rule as written kept `x` and every measure and
+    dropped the category. `st.line_chart` then joined all 33 rows in row order, so inside
+    each month the line jumped between the three operators' values and the chart read as a
+    sawtooth. Rule 4 has refused that shape since the first live queries; this rule did
+    not, which `docs/CHARTS.md` section 9 recorded as an accepted limitation.
+
+    The uniqueness test below is on the column that becomes **x**, exactly as
+    `_bar_or_table` tests the column that becomes x there. That is the whole rule, not an
+    analogy to it: the rendered defect is literally two y values at one x, so asking
+    whether x repeats asks whether the defect is present. Testing the *category* for
+    uniqueness instead is the plausible wrong edit, and it silently breaks `q60`, whose
+    six terminal names are unique across six rows and would therefore be read as
+    descriptive companions.
+    """
+    x = roles.temporal[0]
+    unchanged = ChartSpec(
+        kind=ChartKind.LINE, x=x, y=roles.numeric,
+        reason=f"'{x}' is a time axis, so the trend renders as a line chart.",
+    )
+
+    # Nothing to split by.
+    if not roles.categorical:
+        return unchanged
+
+    # One row per period, so the categorical columns describe the row rather than divide
+    # it: `q26` answers with the winning terminal beside each quarter. Connecting the
+    # points in x order is monotonic in x and the chart is a legitimate reading of the
+    # rows, which is what it has always drawn. First among the categorical branches for
+    # the same reason the companion relaxation comes first in `_bar_or_table`, and the
+    # reason string is deliberately left unchanged: that helper does not announce its
+    # relaxation either.
+    x_values = [row[result.columns.index(x)] for row in result.rows]
+    if len(set(x_values)) == result.row_count:
+        return unchanged
+
+    # From here the rows are a genuine breakdown over time. The series is the first
+    # categorical column, matching Rule 4's convention rather than searching for the
+    # column that would work best; see docs/CHARTS.md section 9 for what that costs.
+    series = roles.categorical[0]
+    series_values = [row[result.columns.index(series)] for row in result.rows]
+    distinct = len(set(series_values))
+
+    # A property of the columns, so it is tested before anything about the rows: colour is
+    # one channel and two measures would both need it.
+    if len(roles.numeric) > 1:
+        return ChartSpec(
+            kind=ChartKind.TABLE,
+            reason=(
+                f"'{series}' splits the rows into series and {len(roles.numeric)} measures "
+                f"would need the same colour, so this is shown as a table."
+            ),
+        )
+
+    # The mirror of Rule 4's multi-dimensional refusal, and it precedes the series limit
+    # for the same reason that one precedes the category limit: when both fire, a hidden
+    # dimension is the truer account than too many lines.
+    if len(set(zip(x_values, series_values))) != result.row_count:
+        return ChartSpec(
+            kind=ChartKind.TABLE,
+            reason=(
+                f"'{x}' and '{series}' do not identify each row, so a third dimension "
+                f"would be hidden and this is shown as a table."
+            ),
+        )
+
+    if distinct > MAX_LINE_SERIES:
+        return ChartSpec(
+            kind=ChartKind.TABLE,
+            reason=(
+                f"'{series}' has {distinct} distinct values, above the {MAX_LINE_SERIES}-series "
+                f"limit for a readable line chart."
+            ),
+        )
+
+    # Last, because it is the most data-dependent guard and only worth asking once the
+    # series column has been accepted. "Invisible" is a measured fact rather than a
+    # flourish: Streamlit renders a line chart as three layers, and both point layers are
+    # hover-only (the second has `opacity: 0`, the third carries
+    # `transform: [{"filter": {"param": "param_1", "empty": false}}]`), so a series holding
+    # one row draws a zero-length line and nothing else. `q60` is exactly this shape, six
+    # terminals each with one worst quarter.
+    # Source: the spec `st.line_chart` emits, read via
+    # `json.loads(AppTest.from_string(...).run().get("vega_lite_chart")[0].proto.spec)` on
+    # streamlit 1.61.1 - Verified: 2026-08-16. Not from documentation, which does not
+    # describe the layering.
+    if max(series_values.count(value) for value in set(series_values)) < 2:
+        return ChartSpec(
+            kind=ChartKind.TABLE,
+            reason=(
+                f"Every value of '{series}' appears in one row, so each line would be a "
+                f"single invisible point and this is shown as a table."
+            ),
+        )
+
+    return ChartSpec(
+        kind=ChartKind.LINE, x=x, y=[roles.numeric[0]], series=series,
+        reason=(
+            f"'{x}' is a time axis split into {distinct} series by '{series}', so the "
+            f"trend renders as one line per series."
+        ),
+    )
 
 
 def _bar_or_table(result: QueryResult, roles: ColumnRoles) -> ChartSpec:
@@ -282,11 +405,11 @@ def pick_chart(result: QueryResult) -> ChartSpec:
     # left to the metric rule above or falls through to a table. This guard is preventive,
     # unlike the Rule 2 widening above: no gold question produced a one-point line, but the
     # same shape reaches it whenever a time filter narrows to a single period.
+    #
+    # See `_line_or_table` for when a category column becomes one line per value and when
+    # it forces a table instead.
     if temporal and numeric and result.row_count > 1:
-        return ChartSpec(
-            kind=ChartKind.LINE, x=temporal[0], y=numeric,
-            reason=f"'{temporal[0]}' is a time axis, so the trend renders as a line chart.",
-        )
+        return _line_or_table(result, roles)
 
     # Rule 4 — a label column plus a measure. See `_bar_or_table` for why extra
     # categorical columns are sometimes tolerated and sometimes force a table.

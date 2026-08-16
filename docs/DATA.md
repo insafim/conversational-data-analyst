@@ -32,7 +32,6 @@
    - [Why this domain and not another](#why-this-domain-and-not-another)
 2. [The schema at a glance](#2-the-schema-at-a-glance)
    - [What a schema is](#what-a-schema-is)
-   - [Every table and every column](#every-table-and-every-column)
    - [How the tables connect](#how-the-tables-connect)
 3. [Column reference](#3-column-reference)
 4. [Value inventory](#4-value-inventory)
@@ -997,6 +996,7 @@ the chart:
 | "How many port calls are in the database?"                                           | a metric card, one number                                |
 | "How many vessels does each operator run?"                                           | a bar chart, few categories                              |
 | "Show total containers moved each month in 2025"                                     | a line chart, a time axis                                |
+| "Show the monthly container volume for the three operators that moved the most at Jebel Ali in 2025" | a line chart, one coloured line per operator |
 | "For each distinct vessel capacity in TEU, what is the average berth wait in hours?" | a scatter plot — two numeric columns, no category or time |
 | "Which terminals are in the Netherlands?"                                            | a table, a single text column charts nothing             |
 

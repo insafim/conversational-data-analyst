@@ -135,6 +135,16 @@ class ChartSpec(BaseModel):
     kind: ChartKind
     x: str | None = None
     y: list[str] = Field(default_factory=list)
+    series: str | None = Field(
+        default=None,
+        description=(
+            "Column whose values split the rows into one line per value, set only by the "
+            "line rule. Named for the role it plays in the data rather than for the channel "
+            "it reaches, like `x` and `y`; the view passes it to `st.line_chart(color=...)`. "
+            "Optional with a None default so turns saved before the field existed rehydrate "
+            "unchanged."
+        ),
+    )
     reason: str = Field(
         description=(
             "Which rule fired. Surfaced in the UI. Required rather than optional, so a spec "

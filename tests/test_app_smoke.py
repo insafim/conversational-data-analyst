@@ -169,8 +169,64 @@ def test_a_saved_chat_is_listed_and_reopens_with_its_table_and_chart(app, store)
     captions = " ".join(c.value for c in at.caption)
     # AppTest 1.61.1 exposes no accessor for st.bar_chart, so the rendered proxy for the
     # chart is the rule caption app.py emits beside it. A rehydration that lost the
-    # ChartSpec would drop this line, which is what makes it worth asserting.
+    # ChartSpec would drop this line, which is what makes it worth asserting. There is no
+    # accessor, but there IS a spec: the element arrives as `vega_lite_chart`, which is the
+    # surface `test_a_breakdown_over_time_reaches_the_chart_as_a_colour_encoding` asserts
+    # on below and the stage chart on the Observability page asserts on too.
     assert "Chart chosen by rule: 2 categories" in captions, "the chart did not survive reopening"
+
+
+def test_a_breakdown_over_time_reaches_the_chart_as_a_colour_encoding(app, store) -> None:
+    """The series column must survive as far as the rendered spec, not just the ChartSpec.
+
+    This is the test the original defect needed and did not have. `pick_chart` returning
+    the right object proves nothing about the picture: the category was dropped in the one
+    step no unit test could see, the call in `views/chat.py` that turns a spec into a
+    chart. A rendered line chart with no colour encoding is the sawtooth, and it is
+    indistinguishable from a correct one at the ChartSpec level.
+    """
+    conversation = store.create_conversation("Monthly volume by operator")
+    store.append_turn(
+        conversation,
+        "Show its monthly container volume for 2025",
+        _answered(
+            answer="Meridian Lines peaked in August, at 2,107 containers.",
+            sql="SELECT month, operator, total_containers FROM moves",
+            result=QueryResult(
+                columns=["month", "operator", "total_containers"],
+                column_types=["date", "text", "int8"],
+                rows=[["2025-01-01", "Meridian Lines", 232],
+                      ["2025-01-01", "Halcyon Freight", 141],
+                      ["2025-02-01", "Meridian Lines", 458],
+                      ["2025-02-01", "Halcyon Freight", 258]],
+                row_count=4,
+                elapsed_s=0.02,
+            ),
+            chart=ChartSpec(
+                kind=ChartKind.LINE, x="month", y=["total_containers"], series="operator",
+                reason="'month' is a time axis split into 2 series by 'operator'.",
+            ),
+        ),
+    )
+
+    at = app.run()
+    at = [b for b in at.sidebar.button if b.label == "Monthly volume by operator"][0].click().run()
+    assert not at.exception, at.exception
+
+    charts = at.get("vega_lite_chart")
+    assert charts, "the line chart did not render at all"
+    spec = json.loads(charts[0].proto.spec)
+
+    # A line chart is a THREE-layer spec in Streamlit 1.61.1 (the line, a transparent point
+    # layer, and a hover-filtered point layer), so unlike the single-layer bar chart on the
+    # Observability page there is no top-level `spec["encoding"]` to index. Searching the
+    # layers rather than taking `layer[0]` means a layer reorder in a future Streamlit
+    # fails this test loudly instead of quietly asserting nothing.
+    colours = [layer.get("encoding", {}).get("color", {}).get("field")
+               for layer in spec.get("layer", [])]
+    assert "operator" in colours, (
+        f"the series column never reached the chart, so all rows draw as one line: {colours}"
+    )
 
     # Telemetry is beside the answer again, and COLLAPSED, which is the whole of the
     # distinction. It was an always-visible caption until 2026-08-12, removed because a

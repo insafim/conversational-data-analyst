@@ -1135,7 +1135,9 @@ judgement remains, so there is nothing for a language model to contribute.
 | -- | ------------------------------------------------------------------------------ | -------------------------------------------------------- |
 | 1  | Zero rows                                                                      | **No chart** (the answer says nothing matched)     |
 | 2  | One row, one numeric column, at most two columns                               | **Metric** (a second column labels the figure)     |
-| 3  | A temporal column + ≥1 numeric, **>1 row**                               | **Line**                                           |
+| 3  | A temporal column + ≥1 numeric, **>1 row**                               | **Line** (one per measure)                         |
+| 3b | ...and a category column, with the temporal column repeating, ≤10 distinct | **Line** (one per category, as a colour)           |
+| 3c | ...but >1 measure, or a hidden third dimension, or >10 series, or no series with two rows | **Table**                |
 | 4  | A label column + ≥1 numeric, ≤12 distinct, **>1 row**                   | **Bar**                                            |
 | 4b | Several categoricals without a unique first label                              | **Table** (a bar chart would collapse a dimension) |
 | 5  | Exactly two numerics, nothing else, **>1 row**                            | **Scatter**                                        |
@@ -1146,14 +1148,15 @@ terminal has the longest berth wait?") returns one row holding a label and a mea
 before this guard fell through to rule 4 and drew a bar chart of exactly one bar stretched
 across the full container. Nine answerable gold questions produce that shape, including the
 first example button in the UI. See ADR-005 and
-[CHARTS.md §8](CHARTS.md#8-three-guards-and-how-each-was-found).
+[CHARTS.md §8](CHARTS.md#8-four-guards-and-how-each-was-found).
 
 Every `ChartSpec` carries a `reason` naming the rule that fired, because the field is required
 rather than optional, and it is shown in the UI, so the behaviour is inspectable rather than
-magic. Its *content* is asserted for rule 1, rule 2 and rule 4's over-the-limit table branch
-only; see [CHARTS.md §10](CHARTS.md#10-what-is-tested-and-what-is-not).
+magic. Its *content* is asserted for rule 4's over-the-limit table branch and for all five of
+rule 3's series outcomes; every other reason, rules 1, 2, 5 and 6 among them, is only asserted to
+be non-trivially long; see [CHARTS.md §10](CHARTS.md#10-what-is-tested-and-what-is-not).
 
-### Two things found by running it, not by predicting it
+### Three things found by running it, not by predicting it
 
 - **`to_char(ts, 'YYYY-MM')` returns `text`.** A purely type-driven rule classifies the most
   common time-series result as categorical and draws bars where a line is correct. Fixed in
@@ -1164,6 +1167,13 @@ only; see [CHARTS.md §10](CHARTS.md#10-what-is-tested-and-what-is-not).
   returned `terminal_name, port_name, avg_wait`, so a strict "exactly one categorical" rule
   fell through to a table. Rule 4 now tolerates extra categoricals *only* when the first
   uniquely labels each row.
+- **A breakdown over time was drawn as one line.** A follow-up question in the running app
+  returned `month, operator, total_containers`, 33 rows of twelve months by three operators.
+  Rule 3 dropped the operator and joined every row into a single series, so the line jumped
+  between the three operators inside each month and read as a sawtooth. Rule 3b now sends the
+  category to the colour channel and rule 3c refuses the shapes where no honest line exists.
+  Found by using the app: the gold set contains no question of this shape, so both prior
+  sweeps of the rules passed.
 
 **Known limitation:** explicit user intent is ignored. "Show that as a pie chart" is not
 heard. The fix is a small intent-extraction step feeding an override, which is an increment
@@ -1635,7 +1645,7 @@ rather than a rewrite.
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers.
 │                               `runNN.json` the records, `runNN.meta.json` their provenance
-├── tests/                      990 tests
+├── tests/                      1,005 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Fourteen decision records
@@ -1655,7 +1665,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 990 tests
+### Test suite: 1,005 tests
 
 | File                               | Tests | Scope                                                                                                                                                                               |
 | ---------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1663,7 +1673,7 @@ streamlit run app.py
 | `test_gold_audit.py`             | 78    | The audit ledger for the reference SQL itself: that a documented coverage figure cannot outrun the evidence, and that the triage neither over- nor under-fires                      |
 | `test_validator.py`              | 93    | The security gate: write-blocking rules, evasions, fail-closed parsing                                                                                                              |
 | `test_eval_scoring.py`           | 35    | The comparison logic, i.e. the definition of "correct"                                                                                                                              |
-| `test_charts.py`                 | 30    | Every chart rule, at its boundaries                                                                                                                                                 |
+| `test_charts.py`                 | 43    | Every chart rule, at its boundaries, including the four a line refuses                                                                                                                                               |
 | `test_provenance.py`             | 37    | That a run records what produced it, and that no DSN password reaches the committed artefact                                                                                        |
 | `test_quality_triggers.py`       | 28    | Code-detected result-shape triggers (ADR-012)                                                                                                                                       |
 | `test_agent_routing.py`          | 25    | Graph topology with a stubbed LLM                                                                                                                                                   |
@@ -1678,8 +1688,8 @@ streamlit run app.py
 | `test_notices.py`                | 23    | Which captions and warnings sit beside an answer, their order, and what one turn cost                                                                                               |
 | `test_telemetry.py`              | 30    | The Observability page's arithmetic: SQL aggregates over stored turns, the eval-run reader, per-category scores, and how a cost is written                                          |
 | `test_conversations.py`          | 31    | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one                                                                                    |
-| `test_app_smoke.py`              | 16    | Both pages under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption, the panel's metrics and category tiles match the artefacts |
-| `test_store.py`                  | 17    | Conversation persistence: round trip, ordering, cascade delete, concurrency                                                                                                         |
+| `test_app_smoke.py`              | 17    | Both pages under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption, the panel's metrics and category tiles match the artefacts |
+| `test_store.py`                  | 18    | Conversation persistence: round trip, ordering, cascade delete, concurrency                                                                                                         |
 | `test_store_isolation.py`        | 6     | That the agent's role cannot connect to the store (ADR-014)                                                                                                                         |
 | `test_store_titles.py`           | 5     | Deriving a chat title from its first question                                                                                                                                       |
 | `test_repo_hygiene.py`           | 5     | That no document is both untracked and unignored, so preparation material cannot ship by accident                                                                                   |
