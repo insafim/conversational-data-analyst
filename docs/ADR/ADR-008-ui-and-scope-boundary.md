@@ -326,3 +326,47 @@ listing is the artefact a non-technical user came here to avoid. The count is th
 rather than a separate line so the two cannot disagree, and `column_count` is derived from
 the column list rather than stored beside it so that stays true in code as well as on
 screen.
+
+## Addendum, 2026-08-17: the eval half shows the four figures the board shows
+
+**The "Overall" column is gone, and the addendum above that named it is now history.** That
+addendum recorded renaming the column from "Accuracy" to "Overall" so it could not be read
+as execution accuracy. The rename solved the naming and left the harder problem: the overall
+score is one number over three subsets that pass by different criteria, so a run can read
+94.4% while every one of its nineteen adversarial cases held. The eval table now scores each
+run on the four figures separately, and shows no overall column at all. `EvalRun.pass_rate`
+remains in `src/telemetry.py` because several tests assert the top-line score did not move
+when the per-category split was added, which is a check the page does not need to render.
+
+**Four figures, and one set of names for them.** The headline tiles were three percentages
+labelled by gold-set category. They are now the four the eval board in
+`docs/visuals/eval.html` carries, in its order: SQL correctness, answer groundedness,
+ambiguity handling, guardrails. Three of those are the board's own headings. The third is
+not: the board heads that panel "AMBIGUOUS QUERIES", which names the subset rather than the
+measurement, and `eval/run_eval.py` prints "Ambiguity handling", so the measurement's own
+name wins. `src/telemetry.py` carries that reasoning beside the mapping. Groundedness is the
+addition, and it is not a
+category at all: it is scored per answered case, which is the denominator this ADR's earlier
+addendum records nearly publishing wrong. A reviewer sees the board and the page minutes
+apart, so one figure appearing on the board and not in the application is a reconciliation
+the viewer should not have to do.
+
+The names are defined once in `src/telemetry.py` and feed both the tiles and the table
+columns, so the two cannot drift into calling one figure two things. Execution accuracy is
+kept as the tile's subtitle rather than dropped: it is the name ADR-006 defines and the
+README quotes, and a reader who has only heard one of the two names has to be able to join
+them up.
+
+**The two narrow subsets are counts, not rates.** `11 of 12` and `19 of 19` rather than
+91.7% and 100.0%. A percentage over twelve cases moves in eight-point steps, and 100% over
+two cases and over nineteen are the same number and different amounts of evidence.
+
+**Prose became tooltips.** The paragraph above the table explaining the denominators, and
+the caption naming the deleted "Overall" column, are gone; each column and each tile now
+carries its definition in its own `help`. The reader who wants to know what a column means
+asks that column instead of reading a paragraph before reaching the numbers. Two captions
+that argued rather than showed were removed outright: the observability sidebar's note that
+cost and latency used to be measured per request and discarded, which the 2026-08-12
+addendum above already records, and the chat sidebar's read-only line, whose argument is
+[ADR-004](ADR-004-defence-in-depth-sql.md) and whose evidence is the nineteen adversarial
+cases on the observability page.

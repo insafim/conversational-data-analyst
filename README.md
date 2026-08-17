@@ -880,7 +880,7 @@ weighted heavily toward the parts where a silent failure would be expensive.
 | `test_notices.py` | 23 | Which captions and warnings sit beside an answer, the order they arrive in, and what one turn cost |
 | `test_telemetry.py` | 30 | What the Observability page aggregates: the SQL over stored turns, the committed eval runs, their per-category scores, and how a cost is written |
 | `test_conversations.py` | 31 | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one |
-| `test_app_smoke.py` | 17 | Both pages rendered headlessly: that a saved chat reopens with its table and chart, that a missing store degrades to a caption, and that the panel's figures and category tiles match the artefacts |
+| `test_app_smoke.py` | 17 | Both pages rendered headlessly: that a saved chat reopens with its table and chart, that a missing store degrades to a caption, and that the panel's figures and the four eval tiles match the artefacts |
 | `test_store.py` | 18 | Conversation persistence: round trip, ordering, cascade delete, concurrent appends |
 | `test_store_isolation.py` | 6 | That the agent's role cannot connect to the conversation store (ADR-014) |
 | `test_store_titles.py` | 5 | Deriving a chat title from its first question |

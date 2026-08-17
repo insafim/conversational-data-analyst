@@ -12,6 +12,8 @@ import pytest
 
 from src.models import AgentResult, Outcome, QueryResult, RetryReason
 from src.telemetry import (
+    HEADLINE_CRITERIA,
+    HEADLINE_LABELS,
     OUTCOME_LABELS,
     count_of,
     format_unit_usd,
@@ -205,20 +207,28 @@ def test_a_run_is_scored_per_category_because_the_denominators_differ(tmp_path) 
 
 
 def test_a_category_the_run_never_contained_is_absent_not_zero(tmp_path) -> None:
-    """A run with no adversarial cases has not scored 0% on safety, it has no safety
-    figure at all. Showing zero would report an untested guardrail as a failed one."""
+    """A run with no adversarial cases has not scored 0% on its guardrails, it has no
+    guardrail figure at all. Showing zero would report an untested guardrail as a failed
+    one, so the cell says `n/a` and the tile shows the same string."""
     _write_run(tmp_path, 1, [_case(category="answerable")])
 
     run = load_eval_runs(tmp_path)[0]
 
     assert "adversarial" not in run.categories
-    assert [label for label, _ in run.labelled_categories()] == ["Execution accuracy"]
+    assert run.rate_cell("adversarial") == "n/a"
+    assert run.count_cell("adversarial") == "n/a"
+    assert run.rate_cell("answerable") == "100.0%", "a category that IS present must score"
 
 
-def test_categories_are_labelled_in_a_fixed_order(tmp_path) -> None:
-    """Same three positions for every run, so a reader comparing two runs is not
-    re-reading the labels. The order comes from `CATEGORY_LABELS`, not from whatever
-    order the cases happened to appear in the file."""
+def test_the_headline_figures_are_labelled_in_a_fixed_order(tmp_path) -> None:
+    """Same four positions for every run, so a reader comparing two runs is not re-reading
+    the labels. The order comes from `_HEADLINE_TEXT`, not from whatever order the cases
+    happened to appear in the file.
+
+    The labels themselves are pinned because the run table renders its columns from the
+    same mapping: a tile and a column showing one figure under two names is the confusion
+    this module exists to prevent.
+    """
     _write_run(
         tmp_path,
         1,
@@ -229,9 +239,34 @@ def test_categories_are_labelled_in_a_fixed_order(tmp_path) -> None:
         ],
     )
 
-    labels = [label for label, _ in load_eval_runs(tmp_path)[0].labelled_categories()]
+    tiles = load_eval_runs(tmp_path)[0].headline_tiles()
 
-    assert labels == ["Execution accuracy", "Ambiguity handling", "Safety"]
+    assert [tile.label for tile in tiles] == [
+        "SQL correctness",
+        "Answer groundedness",
+        "Ambiguity handling",
+        "Guardrails",
+    ]
+    assert [tile.label for tile in tiles] == list(HEADLINE_LABELS.values()), (
+        "the tiles and the table columns are no longer taking their names from one place"
+    )
+    # The criteria are a second mapping keyed the same way, and nothing in the code makes
+    # that true: `headline_tiles` reads two of the four keys by literal and the page reads
+    # all four, so a renamed key fails loudly in one place and silently drops a column
+    # tooltip in the other.
+    assert set(HEADLINE_CRITERIA) == set(HEADLINE_LABELS), (
+        "the criteria and the labels are keyed differently, so a column will lose its tooltip"
+    )
+    # The two figures whose tooltip IS the criterion, asserted by content rather than by
+    # presence. These are the strings a reviewer reads to find out what counts as a pass,
+    # and a swap between them puts the guardrail rule under the ambiguity column.
+    assert tiles[2].tooltip == HEADLINE_CRITERIA["ambiguous"]
+    assert tiles[3].tooltip == HEADLINE_CRITERIA["adversarial"]
+    assert "adversarial subset" in tiles[3].tooltip, "the guardrail criterion moved tiles"
+    # Counts where the denominator is small, rates where it is not. The two formats are the
+    # claim each tile is entitled to make, so a swap here is a real defect.
+    assert tiles[0].value == "100.0%"
+    assert tiles[3].value == "1 of 1"
 
 
 def test_a_run_without_categories_at_all_reports_none(tmp_path) -> None:
@@ -242,7 +277,57 @@ def test_a_run_without_categories_at_all_reports_none(tmp_path) -> None:
     run = load_eval_runs(tmp_path)[0]
 
     assert run.categories == {}
-    assert run.labelled_categories() == []
+    assert [tile.value for tile in run.headline_tiles()] == ["n/a", "100.0%", "n/a", "n/a"], (
+        "an artefact with no categories must still render, with the unscored figures blank"
+    )
+    # The tooltip changes with the branch, not just the value. A tile reading `n/a` under a
+    # tooltip that says "0 of 0 answerable cases" would be the arithmetic leaking through
+    # the formatting the value was corrected for.
+    assert run.headline_tiles()[0].tooltip == "This run scored no answerable cases."
+
+
+def test_a_run_that_never_scored_groundedness_reports_it_as_absent(tmp_path) -> None:
+    """`n/a`, not `0.0%`, and this is the branch the whole function exists for.
+
+    `runs 1 to 3` in `eval/results/` predate the groundedness check: their records carry no
+    `grounded` field, so `grounded_scored` is zero and `grounded_rate` divides by nothing
+    and returns 0.0. Rendered as a percentage that reads "not one figure in any answer came
+    from the data", which is the worst thing this table could say about a run and is not a
+    measurement of one. Asserted here rather than left to the page test, which renders those
+    rows and would not notice what they say.
+    """
+    _write_run(tmp_path, 1, [_case(grounded=None), _case(grounded=None)])
+
+    run = load_eval_runs(tmp_path)[0]
+
+    assert run.grounded_scored == 0, "the fixture is not exercising the branch under test"
+    assert run.grounded_rate == 0.0, "the rate itself is still zero; the cell is what fixes it"
+    assert run.grounded_cell() == "n/a"
+    assert run.headline_tiles()[1].value == "n/a", "the tile did not take the corrected cell"
+    assert run.headline_tiles()[1].tooltip == "No case in this run carries a groundedness result."
+
+
+def test_groundedness_is_scored_over_the_cases_that_carry_a_result(tmp_path) -> None:
+    """The other side of the branch above. Two of three cases scored, one of them grounded,
+    reads 50.0% rather than 33.3%: the unscored case leaves the denominator rather than
+    counting against it, which is the denominator ADR-012's figure rests on."""
+    _write_run(
+        tmp_path,
+        1,
+        [
+            _case(grounded=True),
+            _case(grounded=False),
+            _case(grounded=None, outcome="refused"),
+        ],
+    )
+
+    run = load_eval_runs(tmp_path)[0]
+
+    assert run.grounded_cell() == "50.0%"
+    assert run.headline_tiles()[1].tooltip == (
+        "1 of 2 cases where groundedness was scored. A refusal or a clarification has no "
+        "figures to ground, so it is not counted here."
+    )
 
 
 # --- how a measurement is written down -------------------------------------------------
@@ -494,16 +579,32 @@ def test_the_committed_runs_in_this_repository_actually_parse() -> None:
         "groundedness is not 97.4%, which is what the README and ADR-012 report"
     )
 
+    # The claim `grounded_cell` was written for, checked against the artefacts it is about
+    # rather than against a fixture that imitates them. Runs 1 to 3 were made before the
+    # groundedness check existed, so their records carry no `grounded` field, and the table
+    # renders those three rows every time the page loads.
+    for number in (1, 2, 3):
+        early = by_number[number]
+        assert early.grounded_scored == 0, (
+            f"run {number} carries groundedness results, so it is no longer the case that "
+            "the early runs predate the check"
+        )
+        assert early.grounded_cell() == "n/a", "an unscored run is being reported as 0.0%"
+
 
 @pytest.mark.integration
-def test_the_shipped_run_scores_the_three_figures_the_page_puts_on_screen() -> None:
+def test_the_shipped_run_scores_the_four_figures_the_page_puts_on_screen() -> None:
     """Run 26, pinned against the committed artefact.
 
     Run 26 rather than 25, and the distinction is the easiest one in this repository to
     get wrong: runs 21, 23 and 25 are the both-switches-off baseline, runs 20, 22 and 24
     have runtime verification on, and **run 26 is the configuration that actually ships**
-    (verification off, ADR-013's reading on). These three tiles are the first thing on the
+    (verification off, ADR-013's reading on). These four tiles are the first thing on the
     eval half of the page, so they are the figures most likely to be read aloud.
+
+    The same four appear on the eval board in `docs/visuals/eval.html`, which quotes this
+    run. A reviewer who has seen the board and then opens the page is checking one set of
+    numbers against the other, so a drift between them is a defect in both.
     """
     from pathlib import Path
 
@@ -514,14 +615,15 @@ def test_the_shipped_run_scores_the_three_figures_the_page_puts_on_screen() -> N
 
     assert shipped.categories["answerable"] == (72, 77), "execution accuracy is not 72/77"
     assert shipped.categories["ambiguous"] == (11, 12), "ambiguity handling is not 11/12"
-    assert shipped.categories["adversarial"] == (19, 19), "safety is not 19/19"
+    assert shipped.categories["adversarial"] == (19, 19), "guardrails are not 19/19"
 
-    # The rendered strings, because the tiles show percentages and a rate that is right to
-    # four places can still round to the wrong tile.
-    assert [f"{100 * score.rate:.1f}%" for _, score in shipped.labelled_categories()] == [
+    # The rendered strings, because a rate that is right to four places can still round to
+    # the wrong tile. These are the four figures on the eval board, in its order.
+    assert [tile.value for tile in shipped.headline_tiles()] == [
         "93.5%",
-        "91.7%",
-        "100.0%",
+        "96.1%",
+        "11 of 12",
+        "19 of 19",
     ]
 
     # The categories partition the run: every case is in exactly one, so the three

@@ -300,12 +300,6 @@ with st.sidebar:
         if st.button(label, key=f"ex{index}", width="stretch"):
             st.session_state.pending = example
 
-    st.divider()
-    st.caption(
-        "Read-only by construction: the agent connects as a PostgreSQL role holding "
-        "SELECT and nothing else. Prompts can be fooled; permissions cannot."
-    )
-
 # --- chat -------------------------------------------------------------------------
 st.title("Conversational Data Analyst")
 

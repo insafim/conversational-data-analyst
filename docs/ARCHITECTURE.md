@@ -1581,17 +1581,31 @@ question about a trend could be answered.
 live half counts what this application happened to be asked, as tiles for answered,
 clarified, refused, blocked by the validator and errored. On a fresh store every one of them
 is zero, which is honest and proves nothing. The eval half carries the figure that does: the
-newest committed run scored by category, where the adversarial subset passes only by being
-refused before the database or blocked by `validator.py`. Run 26 reads 19 of 19. The live
+newest committed run scored on four figures, where an adversarial case fails by being answered
+and passes by being refused, blocked by `validator.py`, or asked back about
+(`_score_adversarial` in `eval/run_eval.py`). Run 26 reads 19 of 19, and all nineteen were
+refused before any SQL existed, so that figure measures the classifier. The live
 panel points at it rather than borrowing the number into its own section, because the two
 halves are never added together (ADR-010): one is whatever a user typed and the other is a
 fixed 108-case benchmark.
 
-**Per-category scoring is three denominators over one file.** Execution accuracy is the
-answerable subset, ambiguity handling the ambiguous subset, safety the adversarial one, and
-none of them is the overall score. The names live in `src/telemetry.py` rather than in the
-page, because "execution accuracy" is the specific figure ADR-006 defines and a second name
-for it invented at the render layer is how a deck ends up quoting the wrong number.
+**The eval half is four denominators over one file.** SQL correctness is the answerable
+subset, which is the figure ADR-006 calls execution accuracy; answer groundedness is scored
+per answered case rather than per subset, so a refusal is not counted against it; ambiguity
+handling is the ambiguous subset; guardrails is the adversarial one. None of the four is the
+overall score, and the overall score is no longer shown: one number over three subsets that
+pass by different criteria was the figure most likely to be quoted for one of the four.
+
+The two narrow subsets are shown as counts, `11 of 12` and `19 of 19`, rather than as rates.
+Twelve and nineteen cases mean a percentage there moves in steps of eight and five points,
+and 100% over two cases reads the same as 100% over nineteen.
+
+The names live in `src/telemetry.py` rather than in the page, and one mapping feeds both the
+tiles and the table columns, because a figure shown under two names one screen apart is how a
+deck ends up quoting the wrong number. They are the names on the eval board in
+`docs/visuals/eval.html`, which quotes the same run, so the two surfaces can be checked
+against each other; `tests/test_telemetry.py` pins all four rendered values against the
+committed artefact.
 
 **Latency is disclosed twice, deliberately.** Beside the answer it is one turn, collapsed
 into an expander labelled with the outcome and the seconds. On this page it is a median, a
@@ -1691,7 +1705,7 @@ streamlit run app.py
 | `test_notices.py`                | 23    | Which captions and warnings sit beside an answer, their order, and what one turn cost                                                                                               |
 | `test_telemetry.py`              | 30    | The Observability page's arithmetic: SQL aggregates over stored turns, the eval-run reader, per-category scores, and how a cost is written                                          |
 | `test_conversations.py`          | 31    | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one                                                                                    |
-| `test_app_smoke.py`              | 17    | Both pages under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption, the panel's metrics and category tiles match the artefacts |
+| `test_app_smoke.py`              | 17    | Both pages under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption, the panel's metrics and the four eval tiles match the artefacts |
 | `test_store.py`                  | 18    | Conversation persistence: round trip, ordering, cascade delete, concurrency                                                                                                         |
 | `test_store_isolation.py`        | 6     | That the agent's role cannot connect to the store (ADR-014)                                                                                                                         |
 | `test_store_titles.py`           | 5     | Deriving a chat title from its first question                                                                                                                                       |

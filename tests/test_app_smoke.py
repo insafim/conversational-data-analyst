@@ -386,38 +386,48 @@ def test_the_observability_page_lists_the_committed_eval_runs(app, store) -> Non
     row = latest.iloc[0]
     assert row["Cases"] == 108
 
-    # The two rates are pinned and checked against each other, because they are the pair
-    # the columns could be swapped between and the swap would otherwise be invisible.
-    # These are the figures ADR-012 and the README quote for run 25.
-    assert row["Overall"] == "94.4%", "the overall column does not match the artefact"
-    assert row["Grounded"] == "97.4%", (
-        "groundedness is wrong, which usually means it was divided by every case rather "
-        "than by the cases where it was actually scored"
-    )
-    assert row["Overall"] != row["Grounded"], "the two columns are showing the same figure"
+    # Every scored column, pinned against the artefact and checked against each other,
+    # because these are the cells the columns could be swapped between and a swap would
+    # otherwise be invisible. Groundedness is the figure ADR-012 and the README quote for
+    # run 25; a wrong one here usually means it was divided by every case rather than by
+    # the cases where it was actually scored.
+    assert row["SQL correctness"] == "93.5%"
+    assert row["Answer groundedness"] == "97.4%"
+    assert row["Ambiguity handling"] == "11 of 12"
+    assert row["Guardrails"] == "19 of 19"
 
 
 def test_the_observability_page_scores_the_newest_run_by_category(app, store) -> None:
-    """The three figures the requirements' eval section asks for, on screen rather than in a
+    """The four figures the requirements' eval section asks for, on screen rather than in a
     file. Pinned to run 26, the configuration that ships, because the tiles read the
     newest committed run and a reviewer will read these aloud.
 
     Asserted through the page rather than only in `tests/test_telemetry.py` because the
     arithmetic being right and the arithmetic reaching a tile are different claims, and
     the second one is what a demo depends on.
+
+    The values are the ones on the eval board in `docs/visuals/eval.html`, which quotes the
+    same run. The board and this page are shown minutes apart, so they have to agree.
     """
     at = app.switch_page("views/observability.py").run()
 
     assert not at.exception, at.exception
     metrics = {m.label: m.value for m in at.metric}
-    assert metrics["Execution accuracy"] == "93.5%"
-    assert metrics["Ambiguity handling"] == "91.7%"
-    assert metrics["Safety"] == "100.0%", (
+    assert metrics["SQL correctness"] == "93.5%"
+    assert metrics["Answer groundedness"] == "96.1%"
+    assert metrics["Ambiguity handling"] == "11 of 12"
+    assert metrics["Guardrails"] == "19 of 19", (
         "the adversarial subset is not at 19/19, which is the read-only evidence"
     )
-    # Distinct from the overall score in the table below, which is 94.4% for run 25 and
-    # 94.4% for run 26. Two figures both called accuracy is how a deck quotes the wrong one.
-    assert metrics["Execution accuracy"] != _table_with(at, "Run").iloc[0]["Overall"]
+
+    # The tile and the table row for the same run agree, on all four figures rather than a
+    # sample of them. This is the check that catches a page reading its headline from one
+    # run and its top row from another, and a two-of-four version of it would leave the two
+    # columns that are formatted differently from their neighbours unchecked.
+    top = _table_with(at, "Run").iloc[0]
+    assert top["Run"] == "run26"
+    for label in ("SQL correctness", "Answer groundedness", "Ambiguity handling", "Guardrails"):
+        assert top[label] == metrics[label], f"the {label} tile and column disagree"
 
 
 def test_the_stage_chart_is_sorted_and_labelled_the_way_it_is_read(app, store) -> None:
