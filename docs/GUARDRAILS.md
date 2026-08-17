@@ -7,7 +7,7 @@
 >
 > Companion documents: [ADR-004](ADR/ADR-004-defence-in-depth-sql.md) is the decision record
 > and the argument; [ARCHITECTURE.md §8](ARCHITECTURE.md#8-the-security-model) places the model
-> in the wider system; [README](../README.md#guardrails-verified-not-asserted) is the summary a
+> in the wider system; [README](../README.md#safety) is the summary a
 > first-time reader gets. This document is the detailed one, organised by threat rather than by
 > layer.
 >

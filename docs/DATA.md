@@ -1058,8 +1058,8 @@ data* — Q2 2026.
 
 **No row-level security.** The `analyst_ro` role can read every row of every table. That is
 fine for synthetic data and is the first thing that would have to change for real client
-data ([ADR-004](ADR/ADR-004-defence-in-depth-sql.md), and the README's path-to-production
-section).
+data ([ADR-004](ADR/ADR-004-defence-in-depth-sql.md), and
+[ARCHITECTURE.md §8](ARCHITECTURE.md#8-the-security-model)).
 
 **Planted signal is a form of demo staging.** Worth naming directly. It is mitigated by
 keeping the patterns statistical rather than scripted — they are distribution shifts, not

@@ -10,7 +10,7 @@ Three documents divide the subject, and this is the middle one:
 | --- | --- |
 | [ADR-006](ADR/ADR-006-eval-execution-accuracy.md) | Why correctness is measured by executing SQL rather than by comparing it, and what was rejected |
 | **This document** | How each metric is computed, case by case and rule by rule |
-| [README](../README.md#evaluation) | The measured results and the story of how the numbers moved |
+| [README](../README.md#evaluation) | The headline results of the most recent run |
 
 Everything below is implemented in [`eval/run_eval.py`](../eval/run_eval.py),
 [`eval/gold.py`](../eval/gold.py) and [`src/grounding.py`](../src/grounding.py), and the scoring
@@ -492,12 +492,12 @@ and it is the one to read first.
   on the sample, or on the classifier, is the write guarantee: writes are blocked by the read-only
   role's missing grants, which `tests/test_security_boundary.py` proves by disabling the guard above
   them and watching PostgreSQL refuse anyway. The
-  read-side gaps that remain are disclosure and denial of service rather than writes, and the
-  [README](../README.md#residual-risk-stated-plainly) lists them individually.
+  read-side gaps that remain are disclosure and denial of service rather than writes, and
+  [GUARDRAILS.md](GUARDRAILS.md) lists them individually.
 - **A single run cannot be quoted.** Runs 2 and 3 shared identical code and prompts and landed nine
-  points apart at `temperature=0`. Every figure in the README is therefore a range across runs, and
-  reporting the best of three as though it were the score would be the easiest and most dishonest
-  thing available here.
+  points apart at `temperature=0`. Every figure published anywhere in this repository therefore
+  names the run or the range of runs it came from, and reporting the best of three as though it
+  were the score would be the easiest and most dishonest thing available here.
 - **The instrument is less measured than the thing it measures.** Every accuracy figure is computed
   against the reference SQL, so a defective reference produces a confident wrong number. What the
   harness does establish is narrower and worth stating precisely: every reference query executes

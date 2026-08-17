@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Ask questions about operational data in plain English; get grounded answers, SQL you can audit, and a chart."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
+license = { file = "LICENSE" }
 
 # Version floors are set to the releases actually verified during the build (2026-08-04).
 # Upper bounds are set at the next major only where a major bump is known to be breaking,

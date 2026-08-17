@@ -90,8 +90,8 @@ REVOKE EXECUTE ON FUNCTION pg_sleep_until(timestamp with time zone) FROM PUBLIC;
 --
 --    * Read every row of every table in `public`. There is no row-level security and
 --      no column masking — the demo data is synthetic, so this is acceptable here.
---      Real client data would need RLS policies per tenant; see the README's
---      path-to-production section.
+--      Real client data would need RLS policies per tenant; see the path-to-production
+--      list in docs/ARCHITECTURE.md.
 --    * Read system catalogs (pg_catalog, information_schema), i.e. learn the schema.
 --      This is required, because src/schema.py depends on it. pg_authid, which holds
 --      password hashes, remains superuser-only.

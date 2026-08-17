@@ -92,7 +92,7 @@ meant. Against a write, all three layers apply and the bottom one is a `GRANT`, 
 survives a bug in the two above it. Against **disclosure and resource use** the picture is thinner:
 PostgreSQL makes its own catalogs world-readable, so layer 1 concedes those by design, and the
 validator's deny-list is the only control. A deny-list is the weaker construction, and this one is
-known to leak in three places, listed under "Residual risk" in the README. Those routes read
+known to leak in three places, listed individually in [GUARDRAILS.md](../GUARDRAILS.md). Those routes read
 metadata; none of them writes. Stating the asymmetry is the point of the ADR, because a reader who
 takes "three layers" as a blanket claim will trust the read path more than the evidence supports.
 
