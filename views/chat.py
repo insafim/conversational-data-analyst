@@ -20,8 +20,10 @@ and that is the layout decision this file makes. A non-technical reader gets an 
 caveat and a chart; a reviewer gets the rest without either audience paying for the other's
 screen space.
 
-Everything else is default Streamlit. Time spent on theming is time not spent on the
-eval harness.
+Everything else is default Streamlit, with one exception: the sidebar's brand lockup is
+hand-written SVG and HTML, because Streamlit cannot sit an image beside a heading and
+`st.header` silently drops everything after a line break. See `views/brand.py` for the
+measurement. Beyond that, time spent on theming is time not spent on the eval harness.
 
 This file renders and decides nothing. What is said beside an answer, and what one turn
 cost, live in `src/notices.py`; which conversation is open, and the order in which a turn
@@ -39,6 +41,7 @@ from src.models import ChartKind, Outcome
 from src.notices import Level, answer_notices, turn_telemetry
 from src.schema import get_schema_summary
 from src.telemetry import count_of
+from views.brand import brand_lockup
 from views.state import chat_session, data_coverage, store_handle
 
 EXAMPLE_QUESTIONS = [
@@ -252,7 +255,7 @@ _store_error = store_handle()[1]
 
 # --- sidebar ----------------------------------------------------------------------
 with st.sidebar:
-    st.header("Conversational Data Analyst")
+    st.markdown(brand_lockup(), unsafe_allow_html=True)
     st.caption(
         "Ask questions in plain English about port and terminal operations. "
         "The agent writes SQL, checks it, runs it read-only, and explains the result."

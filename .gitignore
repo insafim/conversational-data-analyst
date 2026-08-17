@@ -25,6 +25,13 @@ htmlcov/
 # state paths over time and a per-path list silently stops covering them.
 .claude/
 
+# Streamlit plants `.agents/skills/developing-with-streamlit` on server start, as a
+# SYMLINK into `.venv`. It is generated, it is not ours, and `.venv` is excluded, so a
+# committed copy would be a dangling link in every clone but the one that made it.
+# Excluded at the top level for the same reason as `.claude/`: the set of paths a tool
+# plants is not ours to enumerate.
+.agents/
+
 # Documentation is an allowlist, not a denylist. Everything under `docs/` is excluded and
 # the deliverables are named back in below. A denylist was the first arrangement and it
 # failed twice: a working note lands under a name no existing rule anticipated, sits
