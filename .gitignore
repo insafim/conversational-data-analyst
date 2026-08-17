@@ -55,6 +55,20 @@ docs/visuals/*
 !docs/visuals/guardrails.html
 !docs/visuals/pipeline.html
 
+# The video cuts of three of those frames, used as the source boards for the walkthrough
+# recording. Each is a subtraction from the frame above it, and each subtracts something
+# different: the guardrails and pipeline cuts drop the hover reveal, which a camera never
+# triggers, while the data cut keeps its hover and drops prose the narration says aloud
+# instead. The cut states which in its own header, and the pair must be kept in step by
+# hand, because no test pins either one.
+# Named file by file rather than re-including the directory, for the reason given above: a
+# fourth cut should be excluded until somebody decides otherwise. There is no eval cut.
+!docs/visuals_video/
+docs/visuals_video/*
+!docs/visuals_video/data_video.html
+!docs/visuals_video/guardrails_video.html
+!docs/visuals_video/pipeline_video.html
+
 # Reference material from an unrelated project, used only as a formatting example.
 # It describes a different client's system and must never ship in this deliverable.
 sample/

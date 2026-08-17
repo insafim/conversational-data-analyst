@@ -59,6 +59,14 @@ DELIVERABLE_DOCS = {
     "docs/visuals/eval.html",
     "docs/visuals/guardrails.html",
     "docs/visuals/pipeline.html",
+    # The video cuts of three of those frames. They ship for the same reason the frames do:
+    # they are what the walkthrough recording was made from, so a reviewer who wants to check
+    # a claim in the video against the repository has the board it came from. The `_video`
+    # suffix is load-bearing, because the basename is all an editor tab shows and the cuts
+    # would otherwise be indistinguishable from their parents.
+    "docs/visuals_video/data_video.html",
+    "docs/visuals_video/guardrails_video.html",
+    "docs/visuals_video/pipeline_video.html",
 }
 
 
@@ -139,6 +147,7 @@ def test_docs_defaults_to_excluded_for_a_name_no_rule_anticipated(in_a_work_tree
         "docs/some-note-nobody-has-written-yet.md",
         "docs/scratch/notes.md",
         "docs/visuals/an-extra-frame.html",
+        "docs/visuals_video/an-extra-cut.html",
         "docs/ADR-draft.md",
     ]
     exposed = [

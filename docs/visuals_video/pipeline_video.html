@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Agentic Pipeline (video cut)</title>
+<!--
+  The VIDEO cut of docs/visuals/pipeline.html.
+
+  Identical diagram, identical wording, identical colours: purple is a model call, green is code,
+  and every node carries either its agent name or the file that implements it. The ONLY difference
+  is that the hover reveal is gone, because a video viewer never hovers and roughly a third of the
+  shipped frame's content sits behind a resting cursor where the camera will never see it.
+
+  Removed for this cut, and nothing else: the <script>, the #panel mount, the eleven invisible
+  .hit rectangles, and the CSS that fades the board on focus.
+
+  Everything the shipped frame states at rest is kept, including the clarify outcome, the five
+  agent names, the three source files, and both databases. The footer's call-count sentence was
+  removed from BOTH frames on 2026-08-16: the narration says "an answered question costs four
+  model calls, a refusal costs one" aloud instead, which is the rule this cut follows throughout.
+  Say it, do not print it.
+
+  Keep the two files in step. If a node is renamed in docs/visuals/pipeline.html, rename it here
+  too: no test pins either frame.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0f14; }
+  svg { display: block; width: 100vw; height: 100vh; }
+  .h1   { font: 700 52px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .nt   { font: 600 26px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .pt   { font: 600 21px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #e8eef4; }
+  .ps   { font: 400 16px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .note { font: 400 17px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #7e8fa1; }
+  .ns   { font: 400 15.5px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .lg   { font: 400 18px ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #8fa1b3; }
+  .fn   { font: 400 13.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+</style>
+</head>
+<body>
+<svg id="board" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Concave back, so the head reads as an arrow rather than as a kite at video scale. -->
+    <marker id="aDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 L2.6,5 z" fill="#61748a"/>
+    </marker>
+    <marker id="aModel" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 L2.6,5 z" fill="#c4a3ff"/>
+    </marker>
+    <marker id="aDb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 L2.6,5 z" fill="#6cb6ff"/>
+    </marker>
+    <marker id="aStore" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 L2.6,5 z" fill="#ffb86c"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1920" height="1080" fill="#0b0f14"/>
+
+  <!-- Header. Kept left of x=1400 so a top-right webcam bubble covers nothing. -->
+  <g class="dimmable">
+    <text class="h1" x="80" y="112">The Agentic Pipeline</text>
+  </g>
+
+  <!-- The three pills above the spine: the rewrite, the schema and the reading, which is what
+       the narration names. Everything else that used to sit at this level was dropped rather
+       than hidden, because eighteen seconds cannot spend attention on it and this cut has no
+       hover to hide it behind. -->
+  <!-- contextualize. A node in its own right (ARCHITECTURE.md §6), not a detail of classify:
+       it is the fifth agent, it is a separate cheap-tier call, and it is what puts the
+       "Interpreted as:" line on screen. Drawn above the spine because §6's graph reaches it
+       through a conditional edge, so it is not on the path a first turn takes. -->
+  <g class="dimmable" data-key="rewrite classify">
+    <rect x="80" y="248" width="300" height="116" rx="14" fill="#c4a3ff" fill-opacity="0.08" stroke="#c4a3ff" stroke-opacity="0.45"/>
+    <text class="pt" x="100" y="284">the rewrite</text>
+    <text class="ps" x="100" y="314">on a follow-up turn only</text>
+    <text class="fn" x="100" y="344" fill="#c4a3ff" fill-opacity="0.85">Rewriter Agent</text>
+    <line x1="230" y1="364" x2="230" y2="392" stroke="#c4a3ff" stroke-opacity="0.5" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#aModel)"/>
+  </g>
+
+  <g class="dimmable" data-key="schema generate">
+    <rect x="400" y="248" width="340" height="116" rx="14" fill="#6cb6ff" fill-opacity="0.08" stroke="#6cb6ff" stroke-opacity="0.45"/>
+    <text class="pt" x="420" y="284">the schema</text>
+    <text class="ps" x="420" y="314">introspected from the live database</text>
+    <text class="fn" x="420" y="344" fill="#6cb6ff" fill-opacity="0.8">src/schema.py</text>
+    <line x1="570" y1="364" x2="570" y2="392" stroke="#6cb6ff" stroke-opacity="0.5" stroke-width="2" marker-end="url(#aDb)"/>
+  </g>
+
+  <!-- Named, not just described. This node is called the Explainer Agent rather than
+       "the verifier", so the frame has to show that name. -->
+  <g class="dimmable" data-key="reading execute">
+    <rect x="990" y="248" width="400" height="116" rx="14" fill="#c4a3ff" fill-opacity="0.08" stroke="#c4a3ff" stroke-opacity="0.45"/>
+    <text class="pt" x="1010" y="284">the reading</text>
+    <text class="ps" x="1010" y="314">a second model says what the query measures</text>
+    <text class="fn" x="1010" y="344" fill="#c4a3ff" fill-opacity="0.85">Explainer Agent</text>
+    <line x1="1150" y1="364" x2="1150" y2="392" stroke="#c4a3ff" stroke-opacity="0.5" stroke-width="2" marker-end="url(#aModel)"/>
+  </g>
+
+  <!-- The spine. Six boxes, read left to right, and nothing on them but the name and the
+       thing that implements them. -->
+  <g class="dimmable" data-key="classify">
+    <circle cx="95" cy="452" r="11" fill="#8fa1b3"/>
+    <text class="note" x="95" y="410" text-anchor="middle">question</text>
+    <line x1="112" y1="452" x2="132" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <rect x="140" y="400" width="196" height="104" rx="14" fill="#c4a3ff" fill-opacity="0.10" stroke="#c4a3ff" stroke-opacity="0.55"/>
+    <text class="nt" x="158" y="444">classify</text>
+    <text class="fn" x="158" y="478" fill="#c4a3ff" fill-opacity="0.8">Classifier Agent</text>
+  </g>
+  <g class="dimmable"><line x1="336" y1="452" x2="420" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/></g>
+
+  <g class="dimmable" data-key="generate">
+    <rect x="428" y="400" width="196" height="104" rx="14" fill="#c4a3ff" fill-opacity="0.10" stroke="#c4a3ff" stroke-opacity="0.55"/>
+    <text class="nt" x="446" y="444">generate SQL</text>
+    <text class="fn" x="446" y="478" fill="#c4a3ff" fill-opacity="0.8">SQL Author Agent</text>
+  </g>
+  <g class="dimmable"><line x1="624" y1="452" x2="708" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/></g>
+
+  <g class="dimmable" data-key="validate">
+    <rect x="716" y="400" width="196" height="104" rx="14" fill="#6fd3a3" fill-opacity="0.10" stroke="#6fd3a3" stroke-opacity="0.6"/>
+    <text class="nt" x="734" y="444">validate</text>
+    <text class="fn" x="734" y="478" fill="#6fd3a3" fill-opacity="0.8">src/validator.py</text>
+  </g>
+  <g class="dimmable"><line x1="912" y1="452" x2="996" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/></g>
+
+  <g class="dimmable" data-key="execute">
+    <rect x="1004" y="400" width="196" height="104" rx="14" fill="#6fd3a3" fill-opacity="0.10" stroke="#6fd3a3" stroke-opacity="0.6"/>
+    <text class="nt" x="1022" y="444">execute</text>
+    <text class="fn" x="1022" y="478" fill="#6fd3a3" fill-opacity="0.8">src/executor.py</text>
+  </g>
+  <g class="dimmable"><line x1="1200" y1="452" x2="1284" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/></g>
+
+  <g class="dimmable" data-key="summarise">
+    <rect x="1292" y="400" width="196" height="104" rx="14" fill="#c4a3ff" fill-opacity="0.10" stroke="#c4a3ff" stroke-opacity="0.55"/>
+    <text class="nt" x="1310" y="444">summarise</text>
+    <text class="fn" x="1310" y="478" fill="#c4a3ff" fill-opacity="0.8">Summariser Agent</text>
+  </g>
+  <g class="dimmable"><line x1="1488" y1="452" x2="1572" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/></g>
+
+  <g class="dimmable" data-key="chart">
+    <rect x="1580" y="400" width="196" height="104" rx="14" fill="#6fd3a3" fill-opacity="0.10" stroke="#6fd3a3" stroke-opacity="0.6"/>
+    <text class="nt" x="1598" y="444">pick chart</text>
+    <text class="fn" x="1598" y="478" fill="#6fd3a3" fill-opacity="0.8">src/charts.py</text>
+    <line x1="1776" y1="452" x2="1824" y2="452" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <circle cx="1843" cy="452" r="11" fill="#8fa1b3"/>
+    <text class="note" x="1843" y="410" text-anchor="middle">answered</text>
+  </g>
+
+  <!-- All four terminal outcomes (ARCHITECTURE.md §6) are now on the board: `answered` is the
+       endpoint at the right, and these three hang below the node that reaches them. classify
+       has two exits of its own, ambiguous and out of scope, so it gets a drop rail with two
+       branches rather than a single arrow; a second box placed in the row beside refuse would
+       sit under generate SQL and read as an exit from it. refuse and reject stay distinct
+       because §6 keeps them distinct to show which layer did the work: refuse is layer 3 at
+       classification time, reject is layer 2 at the gate. `ERROR` is the one outcome not drawn,
+       and §6 files it under failure containment rather than among the four. -->
+  <g class="dimmable" data-key="classify">
+    <line x1="238" y1="504" x2="238" y2="649" stroke="#61748a" stroke-width="2"/>
+    <line x1="238" y1="565" x2="270" y2="565" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <rect x="278" y="534" width="290" height="62" rx="12" fill="#8fa1b3" fill-opacity="0.07" stroke="#8fa1b3" stroke-opacity="0.4"/>
+    <text class="pt" x="296" y="562">clarify</text>
+    <text class="ps" x="296" y="584">it asks back instead of guessing</text>
+    <line x1="238" y1="649" x2="270" y2="649" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <rect x="278" y="618" width="290" height="62" rx="12" fill="#8fa1b3" fill-opacity="0.07" stroke="#8fa1b3" stroke-opacity="0.4"/>
+    <text class="pt" x="296" y="646">refuse</text>
+    <text class="ps" x="296" y="668">one model call, not four</text>
+  </g>
+  <g class="dimmable" data-key="validate">
+    <line x1="814" y1="504" x2="814" y2="530" stroke="#61748a" stroke-width="2" marker-end="url(#aDim)"/>
+    <rect x="716" y="534" width="196" height="62" rx="12" fill="#8fa1b3" fill-opacity="0.07" stroke="#8fa1b3" stroke-opacity="0.4"/>
+    <text class="pt" x="734" y="562">reject</text>
+    <text class="ps" x="734" y="584">the SQL never runs</text>
+  </g>
+
+  <!-- The one retry edge, and the only one the shipped configuration can fire. It leaves
+       `execute` and lands back at `generate SQL`, because a database error is a fact about the
+       query that the model can act on. Dashed, like the rewrite pill's edge, since both are
+       conditional edges rather than the path every question takes.
+       Drawn from x=1040 rather than the box centre so it never meets the doorway line at
+       x=1102, and run at y=660, below the reject box (ends 596) and above the boundary (748),
+       because a retry that appeared to cross the boundary would say the graph reaches the data
+       by some route other than validate. The horizontal run clears the refuse box by 32px
+       (that box ends at x=568, y=680); moving either one is what would close that gap.
+       The two other ADR-012 causes are not drawn, and they are not the same case as each other.
+       The quality trigger takes this exact edge: `_route_after_execute` returns `retry` for it
+       too, so disclosing it would mean widening this label rather than adding geometry. The
+       verifier objection is routed from `review`, a node this frame does not draw at all, so it
+       would need a new edge and a new box. Both are gated on runtime verification, which ships
+       off, so neither can fire in what ships. Four loops that could not fire were drawn here
+       once and removed on 2026-08-14 for that reason.
+       The label states the cause and not the count. The bound is one retry, but it is
+       `MAX_SQL_RETRIES` (src/config.py), so it is a configured value rather than a property of
+       the design, and the narration says the count aloud instead. Same rule as the call-count
+       sentence this cut already drops: say it, do not print it. -->
+  <g class="dimmable" data-key="generate execute">
+    <path d="M1040,504 V660 H600 V512" fill="none" stroke="#61748a" stroke-width="2"
+          stroke-dasharray="6 5" marker-end="url(#aDim)"/>
+    <text class="ps" x="820" y="692" text-anchor="middle">retry on a database error</text>
+  </g>
+
+  <!-- The boundary, with two doorways: x=1102 into the analytics data, x=1660 into the store.
+       This line is the last sentence of the spoken beat, so it stays at rest. Both crossings
+       are drawn because the finished turn IS a database write; a store placed above this line
+       would say the app's own state never crosses it, which is false. -->
+  <g class="dimmable" data-key="validate execute database finished">
+    <line x1="60" y1="748" x2="1040" y2="748" stroke="#ff8a80" stroke-opacity="0.5" stroke-width="2" stroke-dasharray="10 9"/>
+    <line x1="1170" y1="748" x2="1600" y2="748" stroke="#ff8a80" stroke-opacity="0.5" stroke-width="2" stroke-dasharray="10 9"/>
+    <line x1="1720" y1="748" x2="1860" y2="748" stroke="#ff8a80" stroke-opacity="0.5" stroke-width="2" stroke-dasharray="10 9"/>
+    <text class="note" x="80" y="734" fill="#ff8a80" fill-opacity="0.85">No path from the graph to the analytics data avoids validate, then execute.</text>
+    <line x1="1102" y1="504" x2="1102" y2="792" stroke="#6cb6ff" stroke-opacity="0.7" stroke-width="2" marker-end="url(#aDb)"/>
+  </g>
+
+  <!-- The application's own database (ADR-014). A second cylinder rather than a second full
+       panel. The account split, and the denial that keeps the agent's role out of this one, are
+       NOT on this cut at all: they are spoken in the narration, and guardrails.html is the frame
+       that argues them. Do not write "see its hover" here; this cut has no hover. -->
+  <g class="dimmable" data-key="finished chart">
+    <line x1="1660" y1="504" x2="1660" y2="792" stroke="#ffb86c" stroke-opacity="0.6" stroke-width="2" marker-end="url(#aStore)"/>
+    <path d="M1540,822 v76 a120,22 0 0 0 240,0 v-76" fill="#ffb86c" fill-opacity="0.07" stroke="#ffb86c" stroke-opacity="0.45" stroke-width="2"/>
+    <ellipse cx="1660" cy="822" rx="120" ry="22" fill="#ffb86c" fill-opacity="0.11" stroke="#ffb86c" stroke-opacity="0.45" stroke-width="2"/>
+    <text class="nt" x="1660" y="866" text-anchor="middle">the chat history</text>
+    <text class="ns" x="1660" y="894" text-anchor="middle">saved chats and per-turn cost</text>
+  </g>
+
+  <g class="dimmable" data-key="execute database">
+    <path d="M952,822 v82 a150,26 0 0 0 300,0 v-82" fill="#6cb6ff" fill-opacity="0.08" stroke="#6cb6ff" stroke-opacity="0.5" stroke-width="2"/>
+    <ellipse cx="1102" cy="822" rx="150" ry="26" fill="#6cb6ff" fill-opacity="0.12" stroke="#6cb6ff" stroke-opacity="0.5" stroke-width="2"/>
+    <text class="nt" x="1102" y="868" text-anchor="middle">PostgreSQL 18</text>
+    <text class="ns" x="1102" y="898" text-anchor="middle">five tables</text>
+  </g>
+
+  <!-- Footer -->
+  <g class="dimmable">
+    <rect x="80" y="984" width="18" height="18" rx="4" fill="#c4a3ff" fill-opacity="0.35" stroke="#c4a3ff" stroke-opacity="0.7"/>
+    <text class="lg" x="108" y="1000">agent call</text>
+    <rect x="240" y="984" width="18" height="18" rx="4" fill="#6fd3a3" fill-opacity="0.35" stroke="#6fd3a3" stroke-opacity="0.7"/>
+    <text class="lg" x="268" y="1000">ordinary code</text>
+    <rect x="424" y="984" width="18" height="18" rx="4" fill="#6cb6ff" fill-opacity="0.35" stroke="#6cb6ff" stroke-opacity="0.7"/>
+    <text class="lg" x="452" y="1000">the data being asked about</text>
+    <rect x="700" y="984" width="18" height="18" rx="4" fill="#ffb86c" fill-opacity="0.35" stroke="#ffb86c" stroke-opacity="0.7"/>
+    <text class="lg" x="728" y="1000">the app's own state</text>
+  </g>
+
+</svg>
+
+</body>
+</html>
