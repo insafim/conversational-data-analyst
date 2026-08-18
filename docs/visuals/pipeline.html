@@ -53,8 +53,8 @@
     <text class="h1" x="80" y="112">The Agentic Pipeline</text>
   </g>
 
-  <!-- The three pills above the spine: the rewrite, the schema and the reading, which is what
-       docs/video.md tells the presenter to read. Everything else that used to sit at this level
+  <!-- The three pills above the spine: the rewrite, the schema and the reading, which are the
+       three the spoken walkthrough calls out. Everything else that used to sit at this level
        is now behind a hover, because eighteen seconds cannot spend attention on it. -->
   <!-- contextualize. A node in its own right (ARCHITECTURE.md §6), not a detail of classify:
        it is the fifth agent, it is a separate cheap-tier call, and it is what puts the
@@ -159,6 +159,33 @@
     <rect x="716" y="534" width="196" height="62" rx="12" fill="#8fa1b3" fill-opacity="0.07" stroke="#8fa1b3" stroke-opacity="0.4"/>
     <text class="pt" x="734" y="562">reject</text>
     <text class="ps" x="734" y="584">the SQL never runs</text>
+  </g>
+
+  <!-- The one retry edge, and the only one the shipped configuration can fire. It leaves
+       `execute` and lands back at `generate SQL`, because a database error is a fact about the
+       query that the model can act on. Dashed, like the rewrite pill's edge, since both are
+       conditional edges rather than the path every question takes.
+       Drawn from x=1040 rather than the box centre so it never meets the doorway line at
+       x=1102, and run at y=660, below the reject box (ends 596) and above the boundary (748),
+       because a retry that appeared to cross the boundary would say the graph reaches the data
+       by some route other than validate. The horizontal run clears the refuse box by 32px
+       (that box ends at x=568, y=680); moving either one is what would close that gap.
+       The two other ADR-012 causes are not drawn, and they are not the same case as each other.
+       The quality trigger takes this exact edge: `_route_after_execute` returns `retry` for it
+       too, so disclosing it would mean widening this label rather than adding geometry. The
+       verifier objection is routed from `review`, a node this frame does not draw at all, so it
+       would need a new edge and a new box. Both are gated on runtime verification, which ships
+       off, so neither can fire in what ships. Four loops that could not fire were drawn here
+       once and removed on 2026-08-14 for that reason.
+       The label states the cause and not the count. The bound is one retry, but it is
+       `MAX_SQL_RETRIES` (src/config.py), so it is a configured value rather than a property of
+       the design, and no test pins a number printed here to the setting it came from. The
+       narration says the count aloud instead. `ERROR` gets no outcome box either, per the note
+       above. -->
+  <g class="dimmable" data-key="generate execute">
+    <path d="M1040,504 V660 H600 V512" fill="none" stroke="#61748a" stroke-width="2"
+          stroke-dasharray="6 5" marker-end="url(#aDim)"/>
+    <text class="ps" x="820" y="692" text-anchor="middle">retry on a database error</text>
   </g>
 
   <!-- The boundary, with two doorways: x=1102 into the analytics data, x=1660 into the store.
@@ -275,8 +302,9 @@ const DETAIL = {
   ]},
   chart: { title: "pick chart", kick: "ORDINARY CODE · ADR-005", accent: "#6fd3a3", lines: [
     "Chosen from the shape of the result, not from the words in the question.",
-    "One row and one number is a metric. A time column and a number is a line.",
-    "Categories and a number is a bar, up to twelve of them. Anything else is a table."
+    "One row and one number is a metric. A time column and a number is a line, one per",
+    "category when the rows are a breakdown, up to ten of them. Categories and a number",
+    "is a bar, up to twelve. Two measures and no category is a scatter, anything else a table."
   ]},
   finished: { title: "the finished turn", kick: "THE APP'S OWN STATE · ADR-014", accent: "#ffb86c", lines: [
     "Saved by ordinary code with fixed SQL, to a second database on the same container.",

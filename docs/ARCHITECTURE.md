@@ -1750,11 +1750,12 @@ consequences visible in the suite:
 | Omitted                       | Why                                                                                                                                            |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Authentication**      | One implicit user. Identity is a precondition for row-level security, which is why it heads the production path rather than being a UI feature |
-| **Caching**             | Would cut cost and latency, but optimises a system whose correctness is not yet established. Correctness first                                 |
+| **Caching**             | A repeated question would cost less and return faster. The first optimisation to reach for once real traffic shows repeats                     |
 | **Streaming**           | Perceived latency, not latency. With four calls, three of them sequential, the honest fix is fewer or faster calls                             |
 | **Deployment**          | Runs locally. Containerising demonstrates a skill this project does not set out to show                                                                   |
 | **Async / concurrency** | Single-user by design; Streamlit's rerun model would not scale to concurrent users anyway                                                      |
-| **Semantic layer**      | The most consequential omission; see below                                                                                                     |
+| **Semantic layer**      | Governed metric definitions; see below                                                                                                        |
+| **Hybrid retrieval over past chats** | Ranking older turns by relevance, lexical and vector together with `pgvector` in the same database ([ADR-014](ADR/ADR-014-conversation-store.md)), would put stored answers back in the prompt, which [ADR-011](ADR/ADR-011-bounded-multi-turn.md) keeps out |
 
 **Multi-turn memory used to be on this list and no longer is.** It was omitted by
 [ADR-008](ADR/ADR-008-ui-and-scope-boundary.md) and built by
