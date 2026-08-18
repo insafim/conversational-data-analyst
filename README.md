@@ -237,19 +237,20 @@ found the hard way:
 
 ## What is not here
 
-Each of these was considered and left out, which is a different claim from not thinking about it.
+Each of these was considered and left out.
 
-- **Authentication.** One implicit user. It is the precondition for row-level security, which is why
-  it heads the production path rather than being a UI feature.
-- **Caching.** It would cut cost and latency, but it optimises a system whose correctness is not yet
-  settled.
-- **Streaming.** That improves perceived latency. With three sequential model calls, the honest fix
-  is fewer or faster calls.
+- **Authentication.** One implicit user. Identity is the precondition for row-level security,
+  which is why it heads the production path rather than sitting in the UI.
+- **Caching.** A repeated question would cost less and return faster. It is the first
+  optimisation to reach for once real traffic shows repeats.
+- **Streaming.** That improves perceived latency. With three sequential model calls, the honest
+  fix is fewer or faster calls.
 - **Deployment.** It runs locally on purpose.
-- **A semantic layer.** The most consequential omission. Without governed metric definitions,
-  "utilisation" means whatever the model infers that day, and the same question gives different
-  numbers across sessions. Column comments are a partial substitute at five tables and are not one
-  at client scale.
+- **Retrieval over past chats.** The follow-up rewrite reads the last three exchanges in order,
+  carrying the questions and the SQL they produced but never the answer text. Ranking older
+  turns by relevance instead, keyword and vector together, would carry more of a long session
+  forward. It is not built because retrieval over stored answers reopens the injection path
+  [ADR-011](docs/ADR/ADR-011-bounded-multi-turn.md) closes by keeping answers out of the prompt.
 
 ## Layout
 
