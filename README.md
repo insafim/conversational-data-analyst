@@ -246,11 +246,13 @@ Each of these was considered and left out.
 - **Streaming.** That improves perceived latency. With three sequential model calls, the honest
   fix is fewer or faster calls.
 - **Deployment.** It runs locally on purpose.
-- **Retrieval over past chats.** The follow-up rewrite reads the last three exchanges in order,
-  carrying the questions and the SQL they produced but never the answer text. Ranking older
-  turns by relevance instead, keyword and vector together, would carry more of a long session
-  forward. It is not built because retrieval over stored answers reopens the injection path
-  [ADR-011](docs/ADR/ADR-011-bounded-multi-turn.md) closes by keeping answers out of the prompt.
+- **Hybrid retrieval over past chats.** The follow-up rewrite reads the last three exchanges in
+  order, carrying the questions and the SQL they produced but never the answer text. Ranking
+  older turns by relevance instead, lexical search and vector similarity together, with
+  `pgvector` in the same PostgreSQL rather than a second store, would carry more of a long
+  session forward. It is not built because retrieval over stored answers reopens the injection
+  path [ADR-011](docs/ADR/ADR-011-bounded-multi-turn.md) closes by keeping answers out of the
+  prompt.
 
 ## Layout
 
