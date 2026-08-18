@@ -108,3 +108,73 @@ worse.
   authentication or bad-request error rather than silently degrading.
 - No fallback if the configured provider is unavailable; the request fails. Correct for a prototype,
   unacceptable for production, and stated rather than hidden.
+
+## Addendum, 2026-08-18: the portability claim, exercised once, and unarchived
+
+This decision argues that changing provider is a configuration change rather than a rewrite, and
+until now nothing in the repository had demonstrated it. It has been run once.
+
+**Read the provenance before the numbers.** The figures below come from an ad hoc four-question
+session on 2026-08-18. They are not an eval run: no `runNN.json`, no `runNN.meta.json`, no log, and
+nothing on disk records the prompt state or the commit that produced them. By the standard this
+project set for itself in
+[ADR-006's 2026-08-12 addendum](ADR-006-eval-execution-accuracy.md), that makes them
+**attributable to nothing**, and the same sentence applies here that applied there: it is probably
+true and it is not checkable, and this document is not entitled to the difference. They are
+recorded because the alternative was to keep asserting portability with no attempt behind it at
+all, and an attempt whose limits are stated is worth more than an assertion. No metadata sibling
+was reconstructed for it, for the reason that addendum gives: a record that is a guess looks like a
+record.
+
+**What was run.** `MODEL_CHEAP=openai/gpt-5-mini` and `MODEL_STRONG=openai/gpt-5.4-mini` against
+the same seeded database, with no change to code or prompts, on four questions also asked of the
+shipped default in the same session. Both identifiers were confirmed present and priced in
+LiteLLM's registry on 2026-08-18, on litellm 1.96.0. That is the same kind of check the defaults
+above record for 2026-08-04, and not the same check: that one ran against whichever version was
+installed then. Two of the four questions are gold cases with known answers; the other two,
+including the crane question discussed below, are not in `eval/gold_questions.yaml`.
+
+**Two variables, not one.** Supplying only the provider key leaves the model strings pointing at
+Anthropic. LiteLLM resolves the provider from the model string rather than from which keys are
+present: `litellm.get_llm_provider("openai/gpt-5-mini")` returns `openai`, and
+`anthropic/claude-haiku-4-5` returns `anthropic`, checked directly on 2026-08-18. A key without the
+matching model strings therefore fails on the curated authentication message in `src/llm.py`, which
+names the model string, so the mismatch is visible in the error itself.
+
+One session, four questions, no artefact:
+
+| | Anthropic, shipped default | OpenAI |
+| --- | --- | --- |
+| Median latency over the four | 8.27s | 16.91s |
+| Range | 6.27s to 14.10s | 11.43s to 18.55s |
+| Mean cost per question | $0.0144 | $0.0032 |
+| Outcomes | 4 answered | 3 answered, 1 clarified |
+
+The cost figures come from `litellm.completion_cost()` against that same registry, so they inherit
+its pricing table and move when it does.
+
+**What transferred unchanged.** Schema introspection, SQL generation, the validator, execution and
+chart selection all ran without modification. Where both providers answered, the answers agreed,
+and on the two gold cases they agreed with the reference answer: 17.46 hours for the longest
+average berth wait, and Cardinal Container Line at 10,952 containers at the head of the top three
+at Jebel Ali. Those two figures are independently checkable against
+`eval/gold_questions.yaml` and [DATA.md](../DATA.md), which is exactly what the latency and cost
+rows above are not.
+
+**What moved.** The divergence was in `classify`, not in the SQL. "Which crane has the lowest
+average moves per hour?" was answered by one provider and returned as a clarifying question by the
+other, which asked whether the average is total containers over total hours or the mean of the
+per-move rates. Both readings are defensible, which is the point: the ambiguity threshold is a
+property of the model, so the ambiguity figure in
+[ADR-006](ADR-006-eval-execution-accuracy.md) belongs to the pair rather than to the graph. That
+question is not in the gold set, so the harness would not have caught this. `summarize` also
+transferred less cleanly, enumerating all twelve rows of a monthly series where the default
+described the range and the peak. Both are grounded in the returned rows.
+
+**Against the consequence this tests.** The Negative bullet above says a prompt tuned against one
+tier may not transfer, and credits the eval suite with making that manageable rather than
+theoretical. This addendum is evidence for the first half and not for the second: the two prompts
+that moved were found by hand, and **the harness has never been pointed at OpenAI**. Doing so costs
+roughly $0.35 at the per-question rate above and would produce the artefact this addendum lacks.
+Until that run exists, the claim supported here is only the narrow one the decision makes, that the
+switch is configuration rather than a rewrite, and nothing about accuracy anywhere except Anthropic.

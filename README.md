@@ -15,7 +15,9 @@ so most real questions need a join or three.
 - **Python 3.12 or newer**, below 3.14.
 - **[uv](https://docs.astral.sh/uv/)** to create the environment.
 - **One LLM API key.** Anthropic by default; any
-  [LiteLLM provider](https://docs.litellm.ai/docs/providers) works by changing two variables.
+  [LiteLLM provider](https://docs.litellm.ai/docs/providers) works by setting its key *and* the two
+  model strings, because the provider is read from the model string rather than from which key is
+  present.
 
 ## Setup
 
@@ -65,7 +67,7 @@ Everything is environment-driven and the defaults work as they are. The ones wor
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | none | Required. Or `OPENAI_API_KEY` / `GEMINI_API_KEY` |
+| `ANTHROPIC_API_KEY` | none | Required. Or `OPENAI_API_KEY` / `GEMINI_API_KEY`, in which case change the two model strings below to match |
 | `MODEL_CHEAP` | `anthropic/claude-haiku-4-5` | Classification, summarising, the reading beside each answer |
 | `MODEL_STRONG` | `anthropic/claude-sonnet-5` | SQL generation, the one task where capability changes the answer |
 | `POSTGRES_PORT` | `55432` | Deliberately not 5432 |
@@ -83,8 +85,10 @@ scripts in `db/`, so renaming one points the app at a role nothing ever created.
 | Symptom | Fix |
 | --- | --- |
 | `port is already allocated` | Set `POSTGRES_PORT` in `.env`, then `docker compose up -d` again |
+| `container name "/cda_postgres" is already in use` | Another copy of this repository has it running. `docker compose down` in that copy, or `docker rm -f cda_postgres`. The name is fixed, so two copies cannot run at once |
 | Sidebar says *"Cannot reach the database"* | Not seeded yet. Run `python db/seed.py` |
 | First question returns an authentication error | The key in `.env` is still the placeholder |
+| Authentication error naming a model you did not choose | The key is for one provider and `MODEL_CHEAP` / `MODEL_STRONG` still name another. The message names the model string, which is the tell |
 | `password authentication failed for user "analyst_ro"` | The two password variables disagree. Fix them, then `docker compose down -v && docker compose up -d --wait` |
 | Model replies *"rejected the request"* | Model IDs get retired. Check `MODEL_CHEAP` and `MODEL_STRONG` against your provider's current list |
 
