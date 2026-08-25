@@ -1,10 +1,22 @@
 """What must not be in `docs/`, asserted rather than remembered.
 
-Scoped to `docs/`, plus `sample/` and `.claude/` in the last test. That is where every piece
-of preparation material in this repository has ever lived, and a repository-wide version of
-the first test would fail every time anyone created any file anywhere before deciding to
-commit it, which is too noisy to survive. The cost of that scope is stated rather than
-hidden: **a prep file written outside `docs/` is not covered by anything here.**
+The untracked-and-unignored invariant below is scoped to `docs/`, because that is where
+every piece of preparation material in this repository has ever lived, and a
+repository-wide version of it would fail every time anyone created any file anywhere before
+deciding to commit it, which is too noisy to survive. The cost of that scope is stated
+rather than hidden: **a prep file written outside `docs/` is not covered by that test.**
+
+Three directories get a narrower check instead, that nothing under them is tracked:
+`sample/` and `.claude/` because they were tracked once and had to be removed from history,
+and `demo/` for an unrelated reason, which is that it holds a large binary rather than
+anything secret.
+
+The other three tests hold the allowlist itself up: that every named deliverable is tracked,
+that a name no rule anticipated defaults to excluded, and that nothing tracked under `docs/`
+sits outside the list. The first of those says nothing about ignore rules, and its own
+docstring explains why claiming otherwise was wrong: an ignore rule never applies to a path
+already in the index. The second of those is the argument below,
+made executable: it invents paths that have never existed and asks git about them.
 
 This exists because of a near miss. On 2026-08-13 two working documents were found sitting
 untracked AND unmatched by `.gitignore`, one of them carrying session ids from the tooling
@@ -198,4 +210,25 @@ def test_nothing_from_the_unrelated_project_is_tracked(in_a_work_tree) -> None:
     assert not tracked.stdout.strip(), (
         f"these are tracked again: {tracked.stdout.split()}. An ignore rule does not "
         "untrack anything already in the index."
+    )
+
+
+def test_the_walkthrough_recording_is_not_tracked(in_a_work_tree) -> None:
+    """`demo/` holds the recording, which ships as an asset on the GitHub release.
+
+    The reason is size and it is one-way. The packed history was 923 KiB when the recording
+    was made and the file is 12 MB, so committing it multiplies a clone by about thirteen,
+    and a second take adds its own 12 MB rather than replacing the first, because git keeps
+    every version of a blob forever. Removing one afterwards means rewriting history, which
+    this repository has already had to do once.
+
+    The `.gitignore` rule stops a future `git add -A`. It does nothing about a `git add -f`
+    or about anything already in the index, which is why the invariant is asserted here
+    rather than assumed there.
+    """
+    tracked = _git("ls-files", "demo/")
+    assert tracked.returncode == 0, tracked.stderr
+    assert not tracked.stdout.strip(), (
+        f"these are tracked under demo/: {tracked.stdout.split()}. The recording belongs on "
+        "the release, not in history: `git rm --cached` it and leave the ignore rule in place."
     )

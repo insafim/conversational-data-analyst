@@ -192,7 +192,10 @@ def _line_or_table(result: QueryResult, roles: ColumnRoles) -> ChartSpec:
     # The mirror of Rule 4's multi-dimensional refusal, and it precedes the series limit
     # for the same reason that one precedes the category limit: when both fire, a hidden
     # dimension is the truer account than too many lines.
-    if len(set(zip(x_values, series_values))) != result.row_count:
+    # `strict=True` states an invariant rather than guarding a real case: both lists are
+    # built by comprehension over the same `result.rows`, one element per row, so they
+    # cannot differ in length unless a later edit gives them different sources.
+    if len(set(zip(x_values, series_values, strict=True))) != result.row_count:
         return ChartSpec(
             kind=ChartKind.TABLE,
             reason=(

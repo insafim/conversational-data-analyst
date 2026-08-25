@@ -7,6 +7,9 @@ chart when one helps.
 The data is synthetic: five tables covering terminals, vessels, cranes, port calls and cargo moves,
 so most real questions need a join or three.
 
+**See it run first:** a walkthrough recording, just under five minutes, is attached to the
+[v1.0.0 release](https://github.com/insafim/conversational-data-analyst/releases/tag/v1.0.0).
+
 ## Stack
 
 - **Python**, packaged with [uv](https://docs.astral.sh/uv/).

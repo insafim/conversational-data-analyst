@@ -69,6 +69,13 @@ docs/visuals_video/*
 !docs/visuals_video/guardrails_video.html
 !docs/visuals_video/pipeline_video.html
 
+# The walkthrough recording. It ships as an asset on the GitHub release rather than as a
+# file here: git keeps every version of a binary forever, so one 12 MB take would make the
+# packed history about thirteen times its current size, measured at 923 KiB on 2026-08-25.
+# A second take would add its own 12 MB rather than replace the first. As a release asset,
+# re-recording replaces what is there and the clone stays where it is.
+demo/
+
 # Reference material from an unrelated project, used only as a formatting example.
 # It describes a different client's system and must never ship in this deliverable.
 sample/

@@ -338,7 +338,9 @@ def test_the_series_limit_is_reported_before_the_invisible_point_refusal() -> No
     ran; the reason can, and the earlier guard is the truer account of the shape.
     """
     rows = [[f"2025-0{i % 2 + 1}-01", f"vessel {i}", i] for i in range(MAX_LINE_SERIES + 1)]
-    spec = pick_chart(result(["month", "vessel_name", "containers"], ["date", "text", "int8"], rows))
+    spec = pick_chart(
+        result(["month", "vessel_name", "containers"], ["date", "text", "int8"], rows)
+    )
     assert spec.kind == ChartKind.TABLE
     assert f"{MAX_LINE_SERIES}-series limit" in spec.reason
     assert "invisible" not in spec.reason
