@@ -7,8 +7,10 @@ chart when one helps.
 The data is synthetic: five tables covering terminals, vessels, cranes, port calls and cargo moves,
 so most real questions need a join or three.
 
-**See it run first:** a walkthrough recording, just under five minutes, is attached to the
-[v1.0.0 release](https://github.com/insafim/conversational-data-analyst/releases/tag/v1.0.0).
+**See it run first:** a [walkthrough on Loom](https://www.loom.com/share/dff6b91e2c8f47de8aff90ffc25dca13),
+just under five minutes. The same recording is attached to the
+[v1.0.0 release](https://github.com/insafim/conversational-data-analyst/releases/tag/v1.0.0)
+if you would rather have the file.
 
 ## Stack
 
