@@ -288,23 +288,51 @@ against, `litellm` 1.96.0, which agrees on all four figures. That agreement is t
 cost numbers in [§14](#14-cost-latency--observability) can be trusted as arithmetic rather
 than as an estimate.
 
-The split follows the consequence of a mistake, which
-[ADR-007](ADR/ADR-007-llm-provider-and-tiering.md) sets out: `generate_sql` is the one node
-where a weaker model produces SQL that parses, passes the validator, executes cleanly and
-returns the wrong numbers, which is the only failure in this system that is silent. Everything
-else either routes between three labels or phrases rows that have already been fetched.
+**One node gets the better model because its mistakes are the hardest to see.** If
+`generate_sql` writes the wrong query, the SQL still parses, still passes the validator, still
+executes, and returns numbers that look exactly like the right ones. In the shipped
+configuration nothing downstream contradicts them: `ground_check` compares the answer against
+the rows that came back, not against the rows that should have, and the one component built to
+object, the verifier's other half, is off by default because measurement showed it cost more
+than it bought ([ADR-012](ADR/ADR-012-runtime-verification.md)). A bad summary, by contrast,
+sits next to the table it was supposed to describe.
 
-**The strong tier costs twice the cheap tier per token, not ten times.** Worth stating plainly,
-because it bounds what the tiering claim is worth: this is not a dramatic saving, and the
-argument for the split is capability where correctness is measured rather than economy.
+`classify` shares some of that invisibility, which is worth saying rather than glossing: a
+question it wrongly routes to `answerable` inherits the same silence. It stays on the cheap
+tier because the eval measures that boundary directly, at 11 of 12 on the ambiguity cases and
+19 of 19 on the adversarial ones in run 26, so the choice has evidence rather than an argument
+behind it. `generate_sql` gets the stronger model because the same harness scores it lowest,
+which is where capability is worth paying for.
+[ADR-007](ADR/ADR-007-llm-provider-and-tiering.md) is where the split was decided.
 
-**The schema is not what separates them either.** Three of the five model-calling nodes
-interpolate it in full, `classify`, `generate_sql` and `verify`, so its roughly 1,500 tokens
-([§7](#7-schema-handling)) are paid three times on an answered question rather than once.
-Rendered against the shipped schema on 2026-08-25, the three prompts measure 7,932, 8,522 and
-8,492 characters with system and user parts together, which puts them within eight percent of
-each other. So the strong tier is not carrying a materially larger prompt; it is carrying the
-one task where being wrong is silent.
+**The strong tier is twice the cheap tier per token, not ten times, and the split is a
+capability decision rather than a cost-saving one.** Running everything on the strong tier is
+a defensible configuration and costs one environment variable; what it buys is nothing, since
+the three cheap-tier tasks are routing between labels, describing a query and phrasing rows
+that have already been fetched. Running everything on the cheap tier is the choice this
+project would argue against, because it puts the weaker model on the one node whose errors
+nothing downstream can see.
+
+**The three schema-carrying prompts are about the same size, which is worth knowing when
+reading the cost figures.** `classify`, `generate_sql` and `verify` each interpolate the schema
+in full, so its roughly 1,500 tokens ([§7](#7-schema-handling)) are paid three times on an
+answered question rather than once. Rendered against the shipped schema on 2026-08-25, the
+three prompts measure 7,932, 8,522 and 8,492 characters with system and user parts together,
+within eight percent of each other. The strong tier is therefore paying for capability on one
+task, not for a larger context, and `tests/test_schema.py` holds that relationship so the
+sentence cannot quietly stop being true.
+
+**Why these two identifiers and not another pair.** Three reasons, and the first is the one
+that matters. Every number this repository publishes was measured on this pair: twenty-six eval
+runs, the ADR-012 comparison, the ADR-013 cost figures. A different default would make those
+artefacts describe a configuration that no longer ships. Second, both are from one family, so a
+prompt written for the strong tier behaves recognisably on the cheap one; ADR-007 lists the
+opposite as a real risk, that a prompt tuned against one tier may not transfer. Third, on the
+one occasion a second provider was actually run, recorded in
+[ADR-007's 2026-08-18 addendum](ADR/ADR-007-llm-provider-and-tiering.md), it was cheaper and
+slower: $0.0032 against $0.0144 per question, at a median of 16.91s against 8.27s over four
+questions. That is a small sample and it is labelled as one, but latency is the weaker half of
+this system's numbers and the default is the faster of the two.
 
 **Both identifiers were current on 2026-08-25, and one has a near retirement date.** Anthropic
 lists Haiku 4.5's retirement as not sooner than 2026-10-15, which is the nearest date in the
@@ -1748,7 +1776,7 @@ rather than a rewrite.
 │   ├── run_eval.py             The harness
 │   └── results/                Committed raw output, the evidence for the README's numbers.
 │                               `runNN.json` the records, `runNN.meta.json` their provenance
-├── tests/                      1,005 tests
+├── tests/                      1,019 tests
 └── docs/
     ├── ARCHITECTURE.md         This document
     └── ADR/                    Fourteen decision records
@@ -1768,7 +1796,7 @@ python db/seed.py                                 # deterministic seed
 streamlit run app.py
 ```
 
-### Test suite: 1,005 tests
+### Test suite: 1,019 tests
 
 | File                               | Tests | Scope                                                                                                                                                                               |
 | ---------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1779,33 +1807,34 @@ streamlit run app.py
 | `test_charts.py`                 | 43    | Every chart rule, at its boundaries, including the four a line refuses                                                                                                                                               |
 | `test_provenance.py`             | 37    | That a run records what produced it, and that no DSN password reaches the committed artefact                                                                                        |
 | `test_quality_triggers.py`       | 28    | Code-detected result-shape triggers (ADR-012)                                                                                                                                       |
-| `test_agent_routing.py`          | 25    | Graph topology with a stubbed LLM                                                                                                                                                   |
+| `test_agent_routing.py`          | 28    | Graph topology with a stubbed LLM                                                                                                                                                   |
 | `test_runtime_verification.py`   | 33    | That runtime verification stays advisory (ADR-012), and that reading-only adds a description and nothing else (ADR-013)                                                             |
 | `test_config_defaults.py`        | 36    | That RUNTIME_VERIFICATION and SQL_READING parse to their intended defaults                                                                                                          |
 | `test_security_boundary.py`      | 19    | That GRANTs hold with the read-only guard disabled                                                                                                                                  |
 | `test_llm_extraction.py`         | 18    | Parsing model output; raise rather than half-parse                                                                                                                                  |
 | `test_multi_turn.py`             | 15    | Bounded multi-turn behaviour (ADR-011)                                                                                                                                              |
 | `test_executor.py`               | 13    | Row cap, statement timeout, verbatim execution, errors                                                                                                                              |
-| `test_schema.py`                 | 14    | Catalog introspection; composed identifiers are quoted; the sidebar's column listing carries its units                                                                              |
+| `test_schema.py`                 | 16    | Catalog introspection; composed identifiers are quoted; the sidebar's column listing carries its units                                                                              |
 | `test_schema_labels.py`          | 12    | Turning a table's COMMENT ON into a sidebar label, including the split it gets wrong                                                                                                |
 | `test_notices.py`                | 23    | Which captions and warnings sit beside an answer, their order, and what one turn cost                                                                                               |
-| `test_telemetry.py`              | 30    | The Observability page's arithmetic: SQL aggregates over stored turns, the eval-run reader, per-category scores, and how a cost is written                                          |
+| `test_telemetry.py`              | 32    | The Observability page's arithmetic: SQL aggregates over stored turns, the eval-run reader, per-category scores, and how a cost is written                                          |
 | `test_conversations.py`          | 31    | That a turn is saved before it is shown, and what New chat, reopen and delete do to the open one                                                                                    |
 | `test_app_smoke.py`              | 17    | Both pages under Streamlit's AppTest harness: reopen renders its table and chart, a missing store degrades to a caption, the panel's metrics and the four eval tiles match the artefacts |
 | `test_store.py`                  | 18    | Conversation persistence: round trip, ordering, cascade delete, concurrency                                                                                                         |
 | `test_store_isolation.py`        | 6     | That the agent's role cannot connect to the store (ADR-014)                                                                                                                         |
 | `test_store_titles.py`           | 5     | Deriving a chat title from its first question                                                                                                                                       |
-| `test_repo_hygiene.py`           | 5     | That no document is both untracked and unignored, so preparation material cannot ship by accident                                                                                   |
+| `test_repo_hygiene.py`           | 6     | That no document is both untracked and unignored, so preparation material cannot ship by accident                                                                                   |
 | `test_visuals.py`                | 14    | That the presentation frame's schema claims match `db/01_schema.sql`: columns, declared types, key roles and join paths                                                              |
 | `test_seed_characterization.py`  | 7     | Data digests, planted patterns, crane/terminal invariant                                                                                                                            |
 | `test_second_order_injection.py` | 5     | Injection arriving through query results                                                                                                                                            |
 | `test_forecast_grounding.py`     | 5     | A historical figure is never reported as a forecast                                                                                                                                 |
 | `test_data_coverage.py`          | 3     | The sidebar date range is derived from the data                                                                                                                                     |
+| `test_brand_lockup.py`           | 6     | The sidebar wordmark: joined with `<br>` because streamlit 1.61.1 drops a newline there, and `AppTest` cannot see the difference                    |
 
 Integration tests are marked, so unit tests run without a database:
 
 ```bash
-pytest -m "not integration"   # 776 unit tests, no database, no network
+pytest -m "not integration"   # 798 unit tests, no database, no network
 pytest                        # everything (needs a seeded DB; injection tests need an API key)
 ruff check src/ tests/ eval/ db/ app.py
 python eval/run_eval.py                                # shipped config, 10 to 15 min

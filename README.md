@@ -159,6 +159,29 @@ boundary should not be a prompt and a chart rule should be testable.
 An answered question costs **four model calls**: classify, generate SQL, a short reading of what
 the SQL measured, and the summary. A refusal or a clarification costs one.
 
+**Why a fixed graph rather than an agent that decides its own next step.** The path here is known
+before the question arrives: understand it, write SQL, check the SQL, run it, describe the result.
+Fixing that path buys three things a loop cannot. `validate` sits on the only edge into `execute`,
+so no path reaches the database unchecked. Cost and latency have a ceiling instead of a tail. And
+the failure modes can be listed, because there are four ways out.
+
+**Why LangGraph.** Plain functions and an `if` would also carry a graph this size, and that
+alternative is argued rather than dismissed in
+[ADR-002](docs/ADR/ADR-002-fixed-path-graph-over-agent-loop.md). The library earns its place on
+two counts: a typed state object, so what flows between stages is declared rather than implied,
+and a topology declared as edges, so the diagram above and the code cannot drift apart. The
+comparison against CrewAI, the Microsoft Agent Framework, LlamaIndex Workflows and the rest is
+in [docs/ARCHITECTURE.md §4](docs/ARCHITECTURE.md#4-technology-stack), including the one that is
+a genuine alternative rather than a straw one.
+
+**Why these two models.** `claude-sonnet-5` writes the SQL, at $2 and $10 per million tokens in
+and out. `claude-haiku-4-5` does everything else, at $1 and $5. SQL generation gets the better
+model because its mistakes are the hardest to see: a wrong query still parses, still passes the
+validator, and still returns numbers that look right, while a clumsy summary sits next to the
+table it describes. The pair is also the one every published number here was
+measured on, and switching provider is two environment variables
+([docs/ARCHITECTURE.md §4](docs/ARCHITECTURE.md#4-technology-stack)).
+
 The schema is not hard-coded and not explored per query. It is introspected once at startup,
 including the `COMMENT ON` text, which carries units and grain that the column types cannot:
 `berth_wait_hours` being hours is not recoverable from `numeric(10,2)`, and a model guessing wrong
@@ -241,12 +264,12 @@ metric cannot see. Raw output for every run is committed under `eval/results/`.
 ## Tests
 
 ```bash
-pytest -m "not integration"   # 797 tests, no database and no network
-pytest                        # all 1,013; needs the seeded database, and a few call the model
+pytest -m "not integration"   # 798 tests, no database and no network
+pytest                        # all 1,019; needs the seeded database, and a few call the model
 ruff check src/ tests/ eval/ db/ app.py views/
 ```
 
-Much of that count is parametrization over the 108 gold questions rather than 1,013 hand-written
+Much of that count is parametrization over the 108 gold questions rather than 1,019 hand-written
 cases, so read it as a regression net rather than as breadth of coverage.
 
 Three are worth reading rather than just running, because each one records something that was
@@ -285,7 +308,7 @@ views/             The chat page, the observability page, shared state
 db/                Schema with COMMENT ON, roles, the conversation store, the seed generator
 src/               agent, validator, executor, schema, charts, store, telemetry, prompts, llm
 eval/              The gold questions, the harness, and committed raw results
-tests/             1,013 tests
+tests/             1,019 tests
 docs/              Architecture, data, guardrails, charts, evaluation
 ```
 

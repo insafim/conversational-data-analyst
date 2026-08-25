@@ -494,3 +494,77 @@ def test_langgraph_replaces_dict_state_so_timings_must_accumulate() -> None:
         "LangGraph now merges dict state; the accumulate-by-reference design in "
         "Timings may no longer be necessary"
     )
+
+
+def test_an_answered_question_costs_four_model_calls(stub) -> None:
+    """The count is quoted, so the count is asserted.
+
+    README.md and `docs/ARCHITECTURE.md` §4 and §6 all state four calls on an answered
+    question in the shipped configuration: classify, generate_sql, the reading, and
+    summarize. `contextualize` is not among them, because a first turn has no history to
+    rewrite, which is what makes four rather than five the right number.
+
+    Its sibling `test_a_retried_question_pays_for_a_second_reading` pins six on the retry
+    path, and `test_a_refused_question_costs_one_model_call` pins the short circuit. Between
+    them the three published counts are all held by a test rather than by prose.
+    """
+    stubbed = stub()
+    result = agent_module.ask("How many terminals are there?")
+
+    assert result.outcome == Outcome.ANSWERED
+    assert result.llm_calls == 4, (
+        f"the documents say four calls on an answered question, got {result.llm_calls}"
+    )
+    assert [
+        len(stubbed.calls[node])
+        for node in ("contextualize", "classify", "generate_sql", "verify", "summarize")
+    ] == [0, 1, 1, 1, 1]
+
+
+def test_the_two_tiers_serve_the_nodes_the_documents_name(stub) -> None:
+    """Four nodes on the cheap tier, `generate_sql` alone on the strong one.
+
+    `docs/ARCHITECTURE.md` §4 and §14 and ADR-007's 2026-08-25 addendum all state this
+    split, and it is the whole of the cost argument: the tier is chosen per node at design
+    time rather than per request at runtime. Nothing else asserted it, so moving a node to
+    the other tier would have contradicted three documents silently.
+
+    The strong side is asserted as an identity rather than a count, because "one strong
+    call" would still pass if that call came from the wrong node.
+    """
+    stubbed = stub()
+    agent_module.ask("How many terminals are there?")
+
+    assert stubbed.calls["generate_sql"] and len(stubbed.strong_calls) == 1, (
+        "the strong tier serves generate_sql, once, and nothing else"
+    )
+    assert [
+        len(stubbed.calls[node]) for node in ("contextualize", "classify", "verify", "summarize")
+    ] == [0, 1, 1, 1], (
+        "the cheap tier serves classify, the reading and summarize on a first turn, and "
+        "contextualize only when there is history"
+    )
+
+
+def test_both_switches_off_costs_three_model_calls(stub) -> None:
+    """The third published call count, and the one the comparison runs were measured on.
+
+    `docs/ARCHITECTURE.md` §6 states four calls shipped, six on a retry and three with both
+    switches off, and runs 21, 23 and 25 are the artefacts for that last figure. The other
+    two counts are pinned by tests; this one was not, which left the baseline of the
+    ADR-012 comparison resting on prose.
+
+    `reading=False` is the half that matters here: with `verification=False` alone the
+    reading still runs, because ADR-013 ships it independently.
+    """
+    stubbed = stub()
+    result = agent_module.ask(
+        "How many terminals are there?", verification=False, reading=False
+    )
+
+    assert result.outcome == Outcome.ANSWERED
+    assert result.llm_calls == 3, (
+        f"both switches off is the three-call baseline, got {result.llm_calls}"
+    )
+    assert stubbed.calls["verify"] == [], "the reading ran with both switches off"
+

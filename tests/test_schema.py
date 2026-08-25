@@ -374,3 +374,64 @@ def test_port_name_is_disambiguated_from_terminal_name() -> None:
     assert "Jebel Ali" in port_comment, (
         "the ambiguous value itself should appear as an example port name"
     )
+
+
+def test_three_of_the_five_model_prompts_carry_the_schema() -> None:
+    """`docs/ARCHITECTURE.md` §4 says three of the five model-calling nodes interpolate the
+    schema in full, and names them, which is the sentence that stops a reader believing the
+    schema is what the strong tier is paying for.
+
+    Asserted as a set rather than by checking the three named templates, so that a fourth
+    prompt gaining `{schema}` fails here instead of quietly making the document wrong.
+    """
+    from src import prompts
+
+    carriers = {
+        name
+        for name in dir(prompts)
+        if name.endswith("_USER")
+        and isinstance(getattr(prompts, name), str)
+        and "{schema}" in getattr(prompts, name)
+    }
+    assert carriers == {"CLASSIFY_USER", "GENERATE_SQL_USER", "VERIFY_USER"}
+
+
+def test_the_strong_tier_prompt_is_not_materially_larger_than_the_cheap_ones() -> None:
+    """The claim in `docs/ARCHITECTURE.md` §4 is a relationship, not three digits.
+
+    That section quotes rendered sizes measured on 2026-08-25 and concludes the three
+    prompts sit within eight percent of each other, so the strong tier is not buying a
+    bigger context. The digits move whenever anyone edits a prompt or a column comment,
+    and pinning them would make every such edit fail here for no reason. The conclusion is
+    what a reader relies on, so the conclusion is what this asserts.
+
+    The bound is deliberately looser than the eight percent the document quotes. Eight is a
+    measurement on a date; the claim is that no one prompt is materially larger than
+    another. At eight the headroom is
+    around a hundred characters, so a couple of added sentences would fail it while the
+    claim stayed true. Fifteen still catches the regression worth catching: from today's
+    spread it trips when one prompt gains roughly 800 characters, about a tenth of its
+    length, which is a paragraph rather than a sentence.
+
+    Growth in the schema itself cannot trip this: it is interpolated into all three
+    templates, so it adds the same characters to each and moves the spread toward zero.
+    """
+    from src import prompts
+    from src.schema import get_schema_context
+
+    context = get_schema_context()
+    question = "Which terminal has the longest average berth wait?"
+    rendered = {
+        "classify": len(prompts.CLASSIFY_SYSTEM)
+        + len(prompts.CLASSIFY_USER.format(schema=context, question=question)),
+        "generate_sql": len(prompts.GENERATE_SQL_SYSTEM)
+        + len(prompts.GENERATE_SQL_USER.format(schema=context, question=question)),
+        "verify": len(prompts.VERIFY_SYSTEM)
+        + len(prompts.VERIFY_USER.format(schema=context, question=question, sql="SELECT 1")),
+    }
+    spread = (max(rendered.values()) - min(rendered.values())) / max(rendered.values())
+    assert spread < 0.15, (
+        f"one of these prompts has become materially larger than the others: {rendered}, "
+        f"spread {spread:.1%}. docs/ARCHITECTURE.md §4 says they are comparable in size"
+    )
+
