@@ -15,16 +15,12 @@ if you would rather have the file.
 ## Stack
 
 - **Python**, packaged with [uv](https://docs.astral.sh/uv/).
-- **PostgreSQL** in Docker, reached through `psycopg`. No ORM anywhere: generated or
-  hand-written, everything that reaches the database is SQL.
-- **LangGraph** for the pipeline: a fixed set of nodes and a fixed set of edges, rather than a
-  model deciding what to call next.
-- **LiteLLM** for model access, which is why the provider is a model string rather than a code
-  change.
+- **PostgreSQL** in Docker, reached through `psycopg`. No ORM.
+- **LangGraph** for the pipeline.
+- **LiteLLM** for model access.
 - **sqlglot** to parse generated SQL before it runs.
-- **Pydantic** for the models the pipeline passes between nodes, **pandas** for the result
-  frames the charts read.
-- **Streamlit** for the UI, using its built-in charts.
+- **Pydantic** for the state between nodes, **pandas** for the result frames.
+- **Streamlit** for the UI and its charts.
 - **pytest** and **ruff**.
 
 Versions are pinned in [`pyproject.toml`](pyproject.toml) and tabulated in

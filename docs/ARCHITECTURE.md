@@ -213,7 +213,8 @@ breaks in all four places.
 | **Tests / lint**    | `pytest` 9.1.1, `ruff` 0.16.2                          | see left                |
 | **Packaging**       | `uv` + `pyproject.toml`                                | n/a                     |
 
-**Notably absent:** no ORM (the queries are model-generated SQL, so an ORM has nothing to
+**Notably absent:** no ORM (the agent's queries are model-generated SQL and the rest, the
+schema, the seed and the eval's reference queries, is hand-written, so an ORM has nothing to
 do), no migration tool (the schema is created once from `db/01_schema.sql`), no vector
 database (the schema fits in context, see [§7](#7-schema-handling)), no task queue, and no
 cache tier.
