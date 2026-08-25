@@ -178,3 +178,27 @@ that moved were found by hand, and **the harness has never been pointed at OpenA
 roughly $0.35 at the per-question rate above and would produce the artefact this addendum lacks.
 Until that run exists, the claim supported here is only the narrow one the decision makes, that the
 switch is configuration rather than a rewrite, and nothing about accuracy anywhere except Anthropic.
+
+## Addendum, 2026-08-25: what the cheap tier serves now, and what the models cost
+
+The table above says `MODEL_CHEAP` is used by `classify` and `summarize`. **It serves four
+nodes now**: `contextualize` was added by ADR-011 and `verify` by ADR-012, whose reading half
+ships under ADR-013. `MODEL_STRONG` still serves `generate_sql` alone, which is the split this
+decision is actually about, and it is unchanged.
+
+Prices, read from Anthropic's pricing page on 2026-08-25 and cross-checked the same day against
+the `litellm` 1.96.0 registry this application bills through, which agrees on every figure:
+
+| Tier | Identifier | Input | Output | Context |
+| --- | --- | --- | --- | --- |
+| cheap | `anthropic/claude-haiku-4-5` | $1 / MTok | $5 / MTok | 200K |
+| strong | `anthropic/claude-sonnet-5` | $2 / MTok | $10 / MTok | 1M |
+
+**The strong tier is twice the cheap tier per token, not an order of magnitude**, so the
+routing argument above rests on capability at the node where a mistake is silent rather than on
+a large saving. The consequence this record already lists, that model identifiers move faster
+than code, has a date attached to it now: Anthropic lists Haiku 4.5's retirement as not sooner
+than 2026-10-15, against not sooner than 2027-06-30 for Sonnet 5. When it goes, four of the
+five model-calling nodes lose their default, and the remedy is the environment variable this
+decision exists to provide.
+

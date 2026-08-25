@@ -233,6 +233,91 @@ coverage line (`views/state.py`, `st.cache_data`). Reading the schema from the c
 every question would add latency for no benefit, since DDL does not change while the process
 runs; serving an answer from a cache would change what the measured numbers mean.
 
+### Why LangGraph, and what it was chosen over
+
+[ADR-002](ADR/ADR-002-fixed-path-graph-over-agent-loop.md) argues the shape: a path known in
+advance, so the graph decides flow and the model decides content. It compares that shape
+against an autonomous tool-calling loop, against one mega-prompt, and against plain Python
+functions. What it does not do is compare the library against the other libraries a reader
+would name, and that is a fair question to ask of any framework dependency.
+
+Each entry below was checked against the project's own documentation and its package registry
+entry on 2026-08-25. The version column is the latest release on that date, which is what
+says whether a project is still moving, and is not what this repository installs.
+
+| Framework | Latest release on 2026-08-25 | Its primitive | Why not here |
+| --- | --- | --- | --- |
+| **LangGraph** | 1.2.11, 2026-08-11 | Nodes and edges over a typed state object | Chosen. A declared topology with `add_conditional_edges` is what this pipeline is. This repository requires `>=1.2.10,<2` and runs 1.2.10, the version in the table above |
+| **Microsoft Agent Framework** | 1.15.0, 2026-08-21 | Agents, plus graph-based Workflows | The real alternative. See below |
+| **CrewAI** | 1.15.17, 2026-08-20 | A crew of role-playing agents that delegate to each other | Deterministic control exists in Flows, but the framework's purpose is autonomous collaboration between roles. There are no roles here |
+| **LlamaIndex Workflows** | `llama-index-core` 0.14.24, 2026-08-19 | Steps wired implicitly by event type | Explicitly not a fixed graph: its documentation says branches are ordinary `if` statements. Topology is inferable, not declared |
+| **OpenAI Agents SDK** | 0.22.0, 2026-08-19 | Agents that hand off to other agents | The handoff is chosen by the model. `max_turns` bounds the loop, but the route is not an artefact anyone can read |
+| **Semantic Kernel** | 1.44.1, 2026-08-06 | A kernel that translates model function calls into plugin calls | Function-calling middleware rather than a graph runtime, and its own publisher now calls it superseded |
+| **AutoGen** | 0.7.5, 2025-09-30 | Teams of agents in conversation | In maintenance mode by its maintainer's own README, no release in eleven months, migration guide points at the Agent Framework |
+| **Pydantic AI** | not verified | A typed agent loop | The graph is an adjunct, for when plain control flow is not enough. Here the graph is the substrate, which is the inverse framing |
+| **DSPy** | 3.3.1, 2026-08-21 | Signatures, modules and optimisers | A different category. It optimises what a prompt says, not what runs next, so it would complement `generate_sql` rather than replace this graph |
+
+**The honest comparison is with the Microsoft Agent Framework, and it is close.** It is the
+declared successor to both AutoGen and Semantic Kernel, by the teams that wrote them, and it
+ships graph-based workflows whose own guidance says to use them when the process has
+well-defined steps and explicit control over execution order is wanted. That is this system.
+The distinction is not that one can express a fixed topology and the other cannot, and any
+document claiming so is arguing against a straw version of the alternative. The reasons this
+project runs on LangGraph are narrower: its centre of gravity is the Python data ecosystem
+rather than Azure, its graph runtime is the older of the two, and the retry edge and the typed
+state in [§6](#6-the-agent-pipeline) map onto its primitives without adaptation. Those are
+preferences with reasons, not a refutation.
+
+**One thing LangGraph is not doing here, stated so the credit lands correctly.** The bounded
+retry is enforced by this repository, not by the framework: `_route_after_execute` compares a
+counter carried in state against `MAX_SQL_RETRIES`, which defaults to 1. LangGraph's own
+`recursion_limit` defaults to 1000, per its graph-API documentation read on 2026-08-25, and
+exists to stop a runaway graph, so it is a backstop three orders of magnitude above the
+ceiling this pipeline actually holds itself to.
+
+### Why these two models
+
+| Tier | Default identifier | Price per million tokens | Context | Used by |
+| --- | --- | --- | --- | --- |
+| cheap | `anthropic/claude-haiku-4-5` | $1 in, $5 out | 200K | `contextualize`, `classify`, `verify`, `summarize` |
+| strong | `anthropic/claude-sonnet-5` | $2 in, $10 out | 1M | `generate_sql` |
+
+Prices and context windows were read from Anthropic's pricing and model pages on 2026-08-25
+and cross-checked the same day against the LiteLLM registry that this application bills
+against, `litellm` 1.96.0, which agrees on all four figures. That agreement is the reason the
+cost numbers in [§14](#14-cost-latency--observability) can be trusted as arithmetic rather
+than as an estimate.
+
+The split follows the consequence of a mistake, which
+[ADR-007](ADR/ADR-007-llm-provider-and-tiering.md) sets out: `generate_sql` is the one node
+where a weaker model produces SQL that parses, passes the validator, executes cleanly and
+returns the wrong numbers, which is the only failure in this system that is silent. Everything
+else either routes between three labels or phrases rows that have already been fetched.
+
+**The strong tier costs twice the cheap tier per token, not ten times.** Worth stating plainly,
+because it bounds what the tiering claim is worth: this is not a dramatic saving, and the
+argument for the split is capability where correctness is measured rather than economy.
+
+**The schema is not what separates them either.** Three of the five model-calling nodes
+interpolate it in full, `classify`, `generate_sql` and `verify`, so its roughly 1,500 tokens
+([§7](#7-schema-handling)) are paid three times on an answered question rather than once.
+Rendered against the shipped schema on 2026-08-25, the three prompts measure 7,932, 8,522 and
+8,492 characters with system and user parts together, which puts them within eight percent of
+each other. So the strong tier is not carrying a materially larger prompt; it is carrying the
+one task where being wrong is silent.
+
+**Both identifiers were current on 2026-08-25, and one has a near retirement date.** Anthropic
+lists Haiku 4.5's retirement as not sooner than 2026-10-15, which is the nearest date in the
+current lineup, against not sooner than 2027-06-30 for Sonnet 5. When it retires, four of the
+five model-calling nodes lose their default. That is a configuration change rather than a code
+change, which is the point of [ADR-007](ADR/ADR-007-llm-provider-and-tiering.md), and it is
+also why `MODEL_CHEAP` and `MODEL_STRONG` are environment variables rather than constants.
+
+Anthropic is the default rather than a requirement. LiteLLM resolves the provider from the
+prefix of the model string, so `openai/…` or `gemini/…` is an environment change; ADR-007's
+2026-08-18 addendum records the one occasion that was actually run, with what it did and did
+not establish.
+
 ---
 
 ## 5. Runtime Topology

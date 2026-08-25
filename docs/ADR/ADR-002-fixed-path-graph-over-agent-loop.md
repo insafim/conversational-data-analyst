@@ -144,3 +144,33 @@ hidden.
   planner node or a supervised loop.
 - Three sequential LLM calls set a latency floor that a single call would not have. Mitigated by
   routing two of the three to a fast, cheap model tier ([ADR-007](ADR-007-llm-provider-and-tiering.md)).
+
+## Addendum, 2026-08-25: the node count, the call count, and the libraries this never named
+
+Two figures in the record above are historical and are left in place, because an ADR records
+what was decided when. Both have moved.
+
+**Six nodes are now thirteen**, five of which call a model, after ADR-011 added `contextualize`
+and ADR-012 and ADR-013 added `verify`, `ground_check` and `review`. The "honest assessment of
+the framework choice" section above should be read against thirteen rather than six. It argued
+that plain Python functions would work at six nodes, and that argument gets weaker with each
+conditional router added; there are five of them now, plus a fan-out where `verify` runs beside
+`execute`. The decision is unchanged and the reasoning is not restated, because what the
+document records is what was known on 2026-08-04.
+
+**Three LLM calls per question is four in the shipped configuration**, and six on a retried
+answered question, since ADR-013's reading runs on every answered question and the retry pays
+for a second reading. Both switches off is still three, which is what runs 21, 23 and 25
+measured. [ARCHITECTURE.md §6](../ARCHITECTURE.md#6-the-agent-pipeline) carries the current
+figure.
+
+**The alternatives section above compares shapes, not libraries.** It weighs an autonomous
+loop, a single mega-prompt and plain Python functions, which are the three shapes this pipeline
+could have taken, and it names no competing framework. That comparison now exists in
+[ARCHITECTURE.md §4](../ARCHITECTURE.md#4-technology-stack), checked against each project's own
+documentation on 2026-08-25. The one worth knowing about here is the Microsoft Agent Framework,
+the declared successor to both AutoGen and Semantic Kernel, which ships graph-based workflows
+with explicit execution paths and is therefore a real alternative rather than a straw one. The
+grounds for preferring LangGraph are narrower than this ADR's argument against autonomous loops
+and are stated as preferences there.
+
